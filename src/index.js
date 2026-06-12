@@ -3,7 +3,7 @@ require('dotenv').config();
 const express = require('express');
 const { appendRow } = require('./sheets');
 const { parseMessage, formatConfirmation } = require('./parser');
-const { sendWhatsAppMessage, extractPhoneNumber } = require('./whatsapp');
+const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react } = require('./whatsapp');
 const { handleQuestion, detectIntent } = require('./analytics');
 
 const app = express();
@@ -53,6 +53,9 @@ app.post('/webhook', async (req, res) => {
 
       console.log(`Message from ${senderName} (${senderPhone}): ${text}`);
 
+      // Mark message as read (blue checkmarks)
+      await markAsRead(message.id);
+
       // Check if it's an analytical question
       const intent = detectIntent(text);
       if (intent) {
@@ -60,6 +63,7 @@ app.post('/webhook', async (req, res) => {
           const answer = await handleQuestion(text, senderName);
           if (answer) {
             await sendWhatsAppMessage(senderPhone, answer);
+            await react(message.id, '\u2705');
             console.log('Analytics answer sent for intent:', intent);
             continue;
           }
@@ -70,14 +74,17 @@ app.post('/webhook', async (req, res) => {
 
       // Otherwise, try to register as gasto/ingreso
       try {
+        await react(message.id, '\u23F3');
         const row = parseMessage(text, senderName || 'Rene');
         await appendRow(row);
 
         const confirmation = formatConfirmation(row);
         await sendWhatsAppMessage(senderPhone, confirmation);
+        await react(message.id, '\u2705');
         console.log('Row added:', row);
       } catch (error) {
         console.error('Error processing message:', error);
+        await react(message.id, '\u274C');
         await sendWhatsAppMessage(senderPhone, '❌ Error al procesar tu mensaje. Intenta de nuevo.');
       }
     }
