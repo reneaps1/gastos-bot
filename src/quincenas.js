@@ -39,8 +39,8 @@ function getQuincenaForDate(date) {
   return q ? q.codigo : SIN_QUINCENA;
 }
 
-function getCurrentQuincena() {
-  return getQuincenaForDate(new Date());
+function getCurrentQuincena(date) {
+  return getQuincenaForDate(date || new Date());
 }
 
 module.exports = { QUINCENAS, SIN_QUINCENA, getQuincenaForDate, getCurrentQuincena };
