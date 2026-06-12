@@ -40,6 +40,23 @@ El proyecto está en **Fase 1**. No saltar fases.
 | Decisión sobre Google Sheets | cerrado | Solo como respaldo/exportación, no fuente principal |
 | Decisión sobre Excel histórico | cerrado | Fuente oficial de migración inicial |
 
+### Fase 1 — Issues
+
+| Issue | Estado | Titulo |
+|-------|--------|--------|
+| #6 | pendiente | Instalar PostgreSQL |
+| #7 | pendiente | Setup Prisma y schema |
+| #8 | pendiente | Seed de datos semilla |
+| #9 | pendiente | Generar cliente Prisma |
+| #10 | pendiente | Vista de dashboard principal |
+| #11 | pendiente | Script de verificacion |
+
+### Prerequisitos Fase 1
+
+**ANTES de cualquier tarea de Fase 1:**
+- Instalar PostgreSQL 17+ (ver Issue #6 en `ISSUES_FASE1.md`)
+- Opciones: Windows installer, Docker, o cloud (Supabase/Neon)
+
 ## Stack Oficial
 
 - **Next.js** full-stack

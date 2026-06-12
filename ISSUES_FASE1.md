@@ -1,34 +1,208 @@
 # Issues Fase 1 - DDL Final Y Base De Datos
 
-## Issue #6: Setup PostgreSQL y Prisma
+## Issue #6: Instalar PostgreSQL
 
-**Title:** `Fase 1 - Setup PostgreSQL y Prisma`
+**Title:** `Fase 1 - Instalar PostgreSQL`
 
 **Body:**
 ```
 ## Objetivo
-Configurar la infraestructura de base de datos para el proyecto.
+Tener PostgreSQL funcionando en la maquina de desarrollo.
 
-## Contexto
-El DDL esta definido en ddl_plan.md. Ahora hay que convertirlo en una base real.
+## Prerequisito
+PostgreSQL no esta instalado. Hay que instalarlo antes de cualquier otro task.
+
+## Opciones de instalacion (elegir una)
+1. **Windows**: Descargar desde https://www.postgresql.org/download/windows/ y ejecutar instalador
+2. **winget**: `winget install PostgreSQL.PostgreSQL.17`
+3. **Docker**: `docker run -d --name gastos-pg -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:17`
+4. **Cloud**: Usar Supabase (supabase.com) o Neon (neon.tech) - tier gratuito
+
+## Configuracion minima
+- Puerto: 5432 (default)
+- Usuario: postgres
+- Password: definir en .env
+- Base de datos: gastos
+
+## Verificacion
+- `psql --version` funciona
+- `psql -U postgres -c "SELECT 1"` retorna 1
+
+## Criterio de aceptacion
+- PostgreSQL esta corriendo y accesible
+- Se puede crear la base de datos "gastos"
+```
+
+**Labels:** `fase-1`, `prioridad-alta`, `prerequisito`
+
+---
+
+## Issue #7: Setup Prisma y schema
+
+**Title:** `Fase 1 - Setup Prisma y schema`
+
+**Body:**
+```
+## Objetivo
+Configurar Prisma con el schema basado en el DDL.
+
+## Prerequisito
+Issue #6 completado (PostgreSQL instalado y corriendo).
 
 ## Tarea
-1. Crear schema de Prisma basado en el DDL de ddl_plan.md
-2. Configurar conexion a PostgreSQL (usar .env.example como referencia)
-3. Crear migracion inicial con prisma migrate
-4. Verificar que la DB crea todas las tablas correctamente
-5. Crear script de seed que inserte los datos semilla (usuarios, categorias, metodos_pago, cuentas, quincenas)
+1. Crear prisma/schema.prisma basado en ddl_plan.md
+2. Configurar DATABASE_URL en .env
+3. Ejecutar prisma migrate dev --name init
+4. Verificar que todas las tablas se crean
 
 ## Archivos a crear
 - prisma/schema.prisma
-- prisma/seed.ts o prisma/seed.js
-- Actualizar .env.example con DATABASE_URL
+- Actualizar .env con DATABASE_URL
 
 ## Criterio de aceptacion
 - prisma migrate dev crea todas las tablas
-- prisma db seed inserta datos semilla
-- No hay errores de integridad referencial
+- prisma studio muestra las tablas vacias
 ```
+
+**Labels:** `fase-1`, `prioridad-alta`
+
+---
+
+## Issue #8: Seed de datos semilla
+
+**Title:** `Fase 1 - Crear seed de datos semilla`
+
+**Body:**
+```
+## Objetivo
+Insertar datos iniciales: usuarios, categorias, metodos de pago, cuentas, quincenas.
+
+## Prerequisito
+Issue #7 completado (schema creado y migrado).
+
+## Tarea
+1. Crear prisma/seed.js con:
+   - 2 usuarios (Rene, Mariana)
+   - 9 categorias oficiales
+   - 4 metodos de pago
+   - 7 cuentas
+   - 20 quincenas (Q23-Q42)
+2. Configurar package.json para usar seed
+3. Ejecutar prisma db seed
+
+## Archivos a crear
+- prisma/seed.js
+- Actualizar package.json
+
+## Criterio de aceptacion
+- prisma db seed ejecuta sin errores
+- Conteos: 2 users, 9 categorias, 4 metodos, 7 cuentas, 20 quincenas
+```
+
+**Labels:** `fase-1`, `prioridad-alta`
+
+---
+
+## Issue #9: Generar cliente Prisma
+
+**Title:** `Fase 1 - Generar cliente Prisma y tipos`
+
+**Body:**
+```
+## Objetivo
+Generar el cliente de Prisma para usar en la app.
+
+## Prerequisito
+Issue #7 completado.
+
+## Tarea
+1. Ejecutar prisma generate
+2. Crear src/lib/prisma.js con instancia singleton
+3. Verificar que se puede importar y hacer queries basicas
+
+## Archivos a crear
+- src/lib/prisma.js
+
+## Criterio de aceptacion
+- prisma generate no tiene errores
+- Se puede hacer una query basica desde src/lib/prisma.js
+```
+
+**Labels:** `fase-1`, `prioridad-alta`
+
+---
+
+## Issue #10: Vista de dashboard principal
+
+**Title:** `Fase 1 - Crear vista de dashboard principal`
+
+**Body:**
+```
+## Objetivo
+Crear vista SQL que resuma el Dashboard del Excel.
+
+## Tarea
+1. Crear vista v_dashboard_resumen con:
+   - Ingresos por quincena
+   - Presupuesto total
+   - Gastado real
+   - Pendiente
+   - Margen
+   - % consumido
+2. Validar contra datos del Excel
+
+## Criterio de aceptacion
+- Vista retorna datos correctos para Q24, Q25, Q26
+- Totales coinciden con Excel
+```
+
+**Labels:** `fase-1`, `prioridad-media`
+
+---
+
+## Issue #11: Script de verificacion
+
+**Title:** `Fase 1 - Script de verificacion de DDL`
+
+**Body:**
+```
+## Objetivo
+Script que verifique que todo se creo correctamente.
+
+## Tarea
+1. Crear scripts/verify.js que verifique:
+   - Todas las tablas existen
+   - Todas las vistas existen
+   - Seeds insertados correctamente
+   - Integridad referencial
+
+## Criterio de aceptacion
+- Script reporta "OK" en todas las verificaciones
+```
+
+**Labels:** `fase-1`, `prioridad-media`
+
+---
+
+## Resumen de Issues Fase 1
+
+| Issue | Titulo | Prioridad | Dependencias |
+|-------|--------|-----------|--------------|
+| #6 | Instalar PostgreSQL | Alta | Ninguna |
+| #7 | Setup Prisma y schema | Alta | #6 |
+| #8 | Seed de datos semilla | Alta | #7 |
+| #9 | Generar cliente Prisma | Alta | #7 |
+| #10 | Vista de dashboard | Media | #7 |
+| #11 | Script verificacion | Media | #7 |
+
+## Orden de ejecucion
+
+1. Issue #6 (Instalar PostgreSQL) - **PREREQUISITO**
+2. Issue #7 (Setup Prisma)
+3. Issue #8 (Seed)
+4. Issue #9 (Cliente Prisma)
+5. Issue #10 (Vista dashboard)
+6. Issue #11 (Verificacion)
 
 **Labels:** `fase-1`, `prioridad-alta`
 
