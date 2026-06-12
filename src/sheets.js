@@ -4,10 +4,12 @@ const path = require('path');
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const SHEET_NAME = 'Sheet1';
+const SHEETS_ENABLED = process.env.GOOGLE_SHEETS_ENABLED !== 'false';
 
 let sheets = null;
 
 async function getSheetsClient() {
+  if (!SHEETS_ENABLED) return null;
   if (sheets) return sheets;
 
   let auth;
@@ -32,10 +34,11 @@ async function getSheetsClient() {
 
 async function appendRow(row) {
   const client = await getSheetsClient();
+  if (!client) return false;
 
   await client.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:K`,
+    range: `${SHEET_NAME}!A:L`,
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {
@@ -48,13 +51,14 @@ async function appendRow(row) {
 
 async function getRows() {
   const client = await getSheetsClient();
+  if (!client) return [];
 
   const res = await client.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A2:K`,
+    range: `${SHEET_NAME}!A2:L`,
   });
 
   return res.data.values || [];
 }
 
-module.exports = { appendRow, getRows };
+module.exports = { appendRow, getRows, SHEETS_ENABLED };

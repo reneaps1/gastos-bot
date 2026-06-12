@@ -76,7 +76,7 @@ app.post('/webhook', async (req, res) => {
       // Otherwise, try to register as gasto/ingreso
       try {
         await react(senderPhone, message.id, '\u23F3');
-        const row = parseMessage(text, senderName || 'Rene');
+        const row = parseMessage(text, senderName || 'Rene', senderPhone);
         await appendRow(row);
 
         const confirmation = formatConfirmation(row);

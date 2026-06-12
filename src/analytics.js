@@ -14,6 +14,7 @@ function parseRows(rows) {
     quincena: r[8] || '',
     estatus: r[9] || '',
     fechaFormat: r[10] || '',
+    phone: r[11] || '',
   }));
 }
 

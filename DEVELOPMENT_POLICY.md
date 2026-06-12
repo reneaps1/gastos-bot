@@ -202,6 +202,45 @@ Reglas:
 - "Audífonos", "Fórmula Leo", "Medicina Mariana" van en **Personal**.
 - "Coppel", "Abono deuda", "Pago truck" van en **Deudas**.
 
+### Usuarios Del Sistema (Fase 0 - Cerrado)
+
+| Usuario  | Rol      | WhatsApp                  |
+|----------|----------|---------------------------|
+| Rene     | Admin    | Se identifica por número  |
+| Mariana  | Usuario  | Se identifica por número  |
+
+Reglas:
+- Cada usuario tiene su propio registro en tabla `users`.
+- El bot identifica al usuario por el número de WhatsApp (`message.from`).
+- Si el número no está en la DB, se usa el nombre del perfil de WhatsApp.
+- Si no hay nombre de perfil, se usa 'Rene' como fallback.
+- Las transacciones se asocian a un usuario via `user_id` FK.
+- El campo `quien` de texto plano se reemplaza por `user_id` FK.
+
+### Rol De Google Sheets (Fase 0 - Cerrado)
+
+Decisión: **Google Sheets queda como respaldo/export, no como fuente principal.**
+
+Reglas:
+- PostgreSQL es la fuente oficial de verdad.
+- Google Sheets puede seguir recibiendo datos como backup mientras se migra a DB.
+- Se puede deshabilitar Sheets con `GOOGLE_SHEETS_ENABLED=false` en `.env`.
+- Una vez que la DB esté operativa, Sheets se usa solo para exportación histórica.
+- El bot puede seguir escribiendo a Sheets opcionalmente durante la transición.
+
+Flujo transitorio:
+```text
+WhatsApp → Bot → PostgreSQL (fuente oficial)
+                     ↓
+              Google Sheets (backup opcional)
+```
+
+Flujo final:
+```text
+WhatsApp → Bot → PostgreSQL
+Web/Dashboard → PostgreSQL
+```
+
 ### Fase 1: DDL Final Y Base De Datos
 
 Explicación simple:

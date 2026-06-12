@@ -135,7 +135,7 @@ function extractDescription(text, amount) {
   return desc || 'Sin descripcion';
 }
 
-function parseMessage(text, senderName) {
+function parseMessage(text, senderName, senderPhone) {
   const tipo = detectType(text);
   const monto = extractAmount(text);
   const descripcion = extractDescription(text, monto);
@@ -159,6 +159,7 @@ function parseMessage(text, senderName) {
     quincena,
     estatus,
     fechaFormat,
+    senderPhone || '',
   ];
 }
 
@@ -173,7 +174,7 @@ function formatConfirmation(row) {
     `📝 ${descripcion}`,
     `🏷️ ${categoria}`,
     `💳 ${formaPago}`,
-    `📊 ${quincena} - ${clasificacion}`,
+    `📊 ${quincena} - ${clasificacion || ''}`,
     `✅ ${estatus}`,
   ].join('\n');
 }
