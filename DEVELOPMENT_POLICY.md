@@ -143,6 +143,42 @@ Entregables:
 - Decisión sobre Sheets.
 - Decisión sobre Excel histórico.
 
+### Reglas Oficiales De Quincenas (Fase 0 - Cerrado)
+
+Las quincenas son secuenciales y siguen la numeración del Excel: `Q23`, `Q24`, `Q25`, en adelante hasta `Q42` (y continúa). La numeración no se reinicia por mes ni por año.
+
+Cada quincena tiene un rango de fechas definido. La fuente oficial es la hoja `semanas` del Excel `milo_tracker_v6.xlsm`, reflejada en la tabla `quincenas` (ver `ddl_plan.md`) y en `src/quincenas.js`.
+
+| Quincena | Inicio     | Fin        | Origen |
+|----------|------------|------------|--------|
+| Q23      | 2026-03-01 | 2026-03-29 | Histórica, inferida de la hoja `Captura` |
+| Q24      | 2026-03-30 | 2026-04-14 | Histórica, inferida de la hoja `Captura` |
+| Q25      | 2026-04-15 | 2026-04-29 | Oficial, hoja `semanas` |
+| Q26      | 2026-04-30 | 2026-05-13 | Oficial, hoja `semanas` |
+| Q27      | 2026-05-15 | 2026-05-28 | Oficial, hoja `semanas` |
+| Q28      | 2026-05-29 | 2026-06-15 | Oficial, hoja `semanas` |
+| Q29      | 2026-06-16 | 2026-06-29 | Oficial, hoja `semanas` |
+| Q30      | 2026-06-30 | 2026-07-14 | Oficial, hoja `semanas` |
+| Q31      | 2026-07-15 | 2026-07-29 | Oficial, hoja `semanas` |
+| Q32      | 2026-07-30 | 2026-08-13 | Oficial, hoja `semanas` |
+| Q33      | 2026-08-14 | 2026-08-27 | Oficial, hoja `semanas` |
+| Q34      | 2026-08-28 | 2026-09-14 | Oficial, hoja `semanas` |
+| Q35      | 2026-09-15 | 2026-09-29 | Oficial, hoja `semanas` |
+| Q36      | 2026-09-30 | 2026-10-13 | Oficial, hoja `semanas` |
+| Q37      | 2026-10-14 | 2026-10-29 | Proyectada, validar contra nómina |
+| Q38      | 2026-10-30 | 2026-11-12 | Proyectada, validar contra nómina |
+| Q39      | 2026-11-13 | 2026-11-29 | Proyectada, validar contra nómina |
+| Q40      | 2026-11-30 | 2026-12-14 | Proyectada, validar contra nómina |
+| Q41      | 2026-12-15 | 2026-12-30 | Proyectada, validar contra nómina |
+| Q42      | 2026-12-31 | 2027-01-14 | Proyectada, validar contra nómina |
+
+Reglas:
+
+- La quincena nunca se calcula con fórmulas de calendario. Se resuelve buscando la fecha en la tabla de rangos.
+- Los rangos siguen días reales de pago, por lo que pueden existir fechas que no pertenecen a ninguna quincena (ejemplo: 2026-05-14, entre `Q26` y `Q27`).
+- Si una fecha no cae en ninguna quincena conocida, el sistema reporta `Sin quincena`.
+- Las quincenas proyectadas (`Q37` a `Q42`) deben confirmarse contra las fechas reales de pago antes de usarse en migración o presupuesto.
+
 ### Catálogo Oficial de Categorías (Fase 0 - Cerrado)
 
 Las categorías del sistema son las del Excel `milo_tracker_v6.xlsm`. No usar categorías externas.
