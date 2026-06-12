@@ -143,6 +143,29 @@ Entregables:
 - Decisión sobre Sheets.
 - Decisión sobre Excel histórico.
 
+### Catálogo Oficial de Categorías (Fase 0 - Cerrado)
+
+Las categorías del sistema son las del Excel `milo_tracker_v6.xlsm`. No usar categorías externas.
+
+| Categoría     | Tipo     | Clasificación | Ejemplos                                              |
+|---------------|----------|---------------|--------------------------------------------------------|
+| Hogar         | Gasto    | Fijo          | Renta, Agua, Luz, Gas, Internet                       |
+| Salud         | Gasto    | Fijo          | Medicamentos, Terapia, Pediatra, Gine, Tradea         |
+| Familia       | Gasto    | Variable      | Super, Pañales, Niñera, Guardería, Croquetas, Fórmula |
+| Transporte    | Gasto    | Variable      | Gasolina, Gas auto, Casetas, Control vehicular         |
+| Suscripciones | Gasto    | Fijo          | Netflix, Spotify, Disney+, YouTube, ChatGPT, Claude   |
+| Deudas        | Gasto    | Fijo          | Préstamos, Coppel, Tanda, Kueski, Pago truck          |
+| Personal      | Gasto    | Variable      | Diversión, Yoga, GYM, Audífonos, Educación, Ropa      |
+| Ingresos      | Ingreso  | NULL          | Salario, Vales, Bono, Prima, Anticipo                  |
+| Ahorro        | Ahorro   | NULL          | Fondo emergencia, Meta vacaciones, Ahorro pareja       |
+
+Reglas:
+- No existe "Otros" como categoría. Todo debe clasificarse en una de estas 9.
+- "Comida" y "Super" van en **Familia**.
+- "Diversion", "Ropa" y "Educación" van en **Personal**.
+- "Audífonos", "Fórmula Leo", "Medicina Mariana" van en **Personal**.
+- "Coppel", "Abono deuda", "Pago truck" van en **Deudas**.
+
 ### Fase 1: DDL Final Y Base De Datos
 
 Explicación simple:

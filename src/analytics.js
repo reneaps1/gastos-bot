@@ -1,4 +1,5 @@
 const { getRows } = require('./sheets');
+const { getCurrentQuincena } = require('./quincenas');
 
 function parseRows(rows) {
   return rows.map(r => ({
@@ -33,14 +34,6 @@ function thisWeekStart() {
   const diff = d.getDate() - day + (day === 0 ? -6 : 1);
   d.setDate(diff);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function getCurrentQuincena() {
-  const now = new Date();
-  const day = now.getDate();
-  const month = now.getMonth() + 1;
-  const quincenaNum = Math.ceil((day > 15 ? 2 : 1) + (month - 1) * 2);
-  return `Q${quincenaNum}`;
 }
 
 function getCurrentMonth() {
@@ -238,15 +231,24 @@ function gastoMes(data, name) {
 
 function gastoCategoria(data, text, name) {
   const lower = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const cats = ['comida', 'transporte', 'entretenimiento', 'salud', 'hogar', 'ropa', 'educacion', 'ahorro', 'otros'];
+  const cats = ['hogar', 'salud', 'familia', 'transporte', 'suscripciones', 'deudas', 'personal', 'ahorro'];
   let found = cats.find(c => lower.includes(c));
   if (!found) {
-    const aliases = { mcdonalds: 'comida', pizza: 'comida', helado: 'comida', cafe: 'comida', starbucks: 'comida', uber: 'transporte', didi: 'transporte', taxi: 'transporte', gasolina: 'transporte', netflix: 'entretenimiento', spotify: 'entretenimiento', cine: 'entretenimiento', farmacia: 'salud', medico: 'salud', doctor: 'salud', luz: 'hogar', agua: 'hogar', internet: 'hogar', telefono: 'hogar' };
+    const aliases = {
+      super: 'familia', mercado: 'familia', comida: 'familia', tacos: 'familia', pizza: 'familia',
+      mcdonalds: 'familia', starbucks: 'familia', cafe: 'familia', tortillas: 'familia',
+      uber: 'transporte', didi: 'transporte', taxi: 'transporte', gasolina: 'transporte',
+      gas: 'transporte', netflix: 'suscripciones', spotify: 'suscripciones', disney: 'suscripciones',
+      youtube: 'suscripciones', farmacia: 'salud', medico: 'salud', doctor: 'salud',
+      gine: 'salud', terapia: 'salud', luz: 'hogar', agua: 'hogar', internet: 'hogar',
+      telefono: 'hogar', coppel: 'deudas', deuda: 'deudas', diversion: 'personal',
+      gym: 'personal', audifonos: 'personal', ropa: 'personal', educacion: 'personal'
+    };
     for (const [alias, cat] of Object.entries(aliases)) {
       if (lower.includes(alias)) { found = cat; break; }
     }
   }
-  if (!found) return `No detecté la categoría. Prueba con: comida, transporte, salud, hogar, etc.`;
+  if (!found) return `No detecté la categoría. Prueba con: hogar, salud, familia, transporte, suscripciones, deudas, personal.`;
 
   const month = getCurrentMonth();
   const gastos = data.filter(d => d.fechaFormat.startsWith(month) && d.tipo === 'Gasto' && d.categoria.toLowerCase() === found);
@@ -458,9 +460,10 @@ function help() {
     `• cuanto gaste este mes`,
     ``,
     `*Por categoría:*`,
-    `• cuanto gaste en comida`,
+    `• cuanto gaste en familia`,
     `• cuanto gaste en transporte`,
     `• cuanto gaste en salud`,
+    `• cuanto gaste en personal`,
     ``,
     `*Por algo específico:*`,
     `• cuanto gaste en McDonalds`,

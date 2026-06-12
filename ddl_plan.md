@@ -318,16 +318,34 @@ INSERT INTO cuentas (nombre, tipo) VALUES
   ('Vales Despensa', 'Vales'),
   ('Vales Gasolina', 'Vales');
 
--- Quincenas conocidas (ampliar según sea necesario)
+-- Quincenas oficiales Q23-Q42 (fuente: hoja "semanas" del Excel milo_tracker_v6.xlsm)
+-- Q23-Q24: historicas, inferidas del historial de la hoja "Captura" (no aparecen en "semanas")
+-- Q25-Q36: oficiales, copiadas textualmente de la hoja "semanas"
+-- Q37-Q42: proyectadas siguiendo el patron de dias de pago; validar contra nomina real
+--          (Q39-Q42 aparecen en "semanas" solo como codigo, sin fechas; Q37-Q38 no aparecen)
+-- Nota: los rangos siguen dias reales de pago, por lo que existen fechas sin quincena
+--       (ej. 2026-05-14 entre Q26 y Q27). Una fecha fuera de todo rango = "Sin quincena".
 INSERT INTO quincenas (codigo, fecha_inicio, fecha_fin) VALUES
-  ('Q23', '2026-03-01', '2026-03-14'),
-  ('Q24', '2026-03-15', '2026-03-30'),
+  ('Q23', '2026-03-01', '2026-03-29'),
+  ('Q24', '2026-03-30', '2026-04-14'),
   ('Q25', '2026-04-15', '2026-04-29'),
   ('Q26', '2026-04-30', '2026-05-13'),
   ('Q27', '2026-05-15', '2026-05-28'),
   ('Q28', '2026-05-29', '2026-06-15'),
   ('Q29', '2026-06-16', '2026-06-29'),
-  ('Q30', '2026-06-30', '2026-07-14');
+  ('Q30', '2026-06-30', '2026-07-14'),
+  ('Q31', '2026-07-15', '2026-07-29'),
+  ('Q32', '2026-07-30', '2026-08-13'),
+  ('Q33', '2026-08-14', '2026-08-27'),
+  ('Q34', '2026-08-28', '2026-09-14'),
+  ('Q35', '2026-09-15', '2026-09-29'),
+  ('Q36', '2026-09-30', '2026-10-13'),
+  ('Q37', '2026-10-14', '2026-10-29'),
+  ('Q38', '2026-10-30', '2026-11-12'),
+  ('Q39', '2026-11-13', '2026-11-29'),
+  ('Q40', '2026-11-30', '2026-12-14'),
+  ('Q41', '2026-12-15', '2026-12-30'),
+  ('Q42', '2026-12-31', '2027-01-14');
 ```
 
 ---

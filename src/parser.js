@@ -1,13 +1,15 @@
+const { getCurrentQuincena } = require('./quincenas');
+
 const CATEGORIAS = {
-  comida: ['comida', 'comer', 'restaurante', 'mcdonalds', 'pizza', 'tacos', 'helado', 'cafe', 'café', 'starbucks', 'subway', 'burger', 'sushi', 'denny', 'wendys', 'wings', 'taqueria', 'taquería', 'lonchera', 'almuerzo', 'cena', 'desayuno', 'comida rapida'],
-  transporte: ['transporte', 'gasolina', 'gas', 'uber', 'didí', 'didi', 'taxi', 'estacionamiento', 'parking', 'metro', 'autobus', 'camion', 'peaje', 'caseta', 'uber', 'blablacar', 'tren'],
-  entretenimiento: ['entretenimiento', 'pelicula', 'cine', 'netflix', 'spotify', 'disney', 'hbo', 'amazon prime', 'videojuego', 'juego', 'party', 'fiesta', 'bar', 'cerveza', 'tequila', 'vodka', 'ron', 'whisky'],
-  salud: ['salud', 'medico', 'doctor', 'farmacia', 'medicina', 'medicinas', 'hospital', 'dentista', 'oftalmologo', 'consulta', 'examen', 'vitamina', 'suplemento'],
-  hogar: ['hogar', 'casa', 'renta', 'luz', 'agua', 'internet', 'telefono', 'celular', ' electricidad', 'gas natural', 'mantenimiento', 'limpieza', 'lavanderia', 'lavandería'],
-  ropa: ['ropa', 'zapatos', 'camisa', 'pantalon', 'pantalón', 'tenis', 'zapatillas', 'vestido', 'falda', 'chaqueta', 'abrigo'],
-  educacion: ['educacion', 'educación', 'curso', 'clase', 'libro', 'escuela', 'universidad', 'taller', 'diplomado', 'certificacion'],
-  ahorro: ['ahorro', 'inversion', 'inversión', 'fondo', 'crypto', 'bitcoin', 'acciones', 'bonos'],
-  otros: ['otro', 'otros', 'miscelanea', 'miscelánea', 'varios', 'general'],
+  hogar: ['hogar', 'casa', 'renta', 'luz', 'agua', 'internet', 'telefono', 'celular', 'electricidad', 'gas natural', 'gas de casa', 'mantenimiento', 'limpieza', 'lavanderia', 'lavandería'],
+  salud: ['salud', 'medico', 'doctor', 'farmacia', 'medicina', 'medicinas', 'hospital', 'dentista', 'oftalmologo', 'consulta', 'examen', 'vitamina', 'suplemento', 'gine', 'terapia', 'pediatra', 'tradea', 'sertralina'],
+  familia: ['familia', 'super', 'mercado', 'tienda', 'pañales', 'ninera', 'guarderia', 'guardería', 'croquetas', 'comida', 'comer', 'restaurante', 'mcdonalds', 'pizza', 'tacos', 'helado', 'cafe', 'café', 'starbucks', 'subway', 'burger', 'sushi', 'denny', 'wendys', 'wings', 'taqueria', 'taquería', 'lonchera', 'almuerzo', 'cena', 'desayuno', 'comida rapida', 'pollo', 'tortillas', 'coca', 'queso', 'chiles', 'paletas', 'vasos', '3b', 'aurrera', 'bodega', 'tiendita'],
+  transporte: ['transporte', 'gasolina', 'gas', 'gas spark', 'gas corolla', 'gasolina corolla', 'uber', 'didí', 'didi', 'taxi', 'estacionamiento', 'parking', 'metro', 'autobus', 'camion', 'peaje', 'caseta', 'blablacar', 'tren', 'control vehicular', 'control vehicular'],
+  suscripciones: ['suscripciones', 'suscripción', 'netflix', 'spotify', 'disney', 'disney+', 'youtube', 'youtube premium', 'hbo', 'amazon prime', 'chatgpt', 'chat gpt', 'obsidian', 'claude'],
+  deudas: ['deudas', 'deuda', 'prestamo', 'préstamo', 'coppel', 'tanda', 'kueski', 'abono deuda', 'pago plata', 'pago truck', 'pago cesar', 'pago de truck'],
+  personal: ['personal', 'diversion', 'diversión', 'yoga', 'gym', 'gy m', 'maestria', 'maestría', 'corte', 'pelo', 'ropa', 'zapatos', 'camisa', 'pantalon', 'pantalón', 'tenis', 'zapatillas', 'vestido', 'falda', 'chaqueta', 'abrigo', 'educacion', 'educación', 'curso', 'clase', 'libro', 'escuela', 'universidad', 'taller', 'diplomado', 'certificacion', 'carritos', 'audifonos', 'audífonos', 'formula leo', 'fórmula leo', 'medicina mariana', 'terapia juano', 'terapia mariana', 'telefono mariana', 'telefono de mariana'],
+  ingresos: ['ingreso', 'ingresos', 'pago', 'cobro', 'cobrado', 'salario', 'nomina', 'nómina', 'sueldo', 'freelance', 'bono', 'extra', 'recibido', 'ganancia', 'ganado', 'vales', 'vales despensa', 'anticipo'],
+  ahorro: ['ahorro', 'ahorro pareja', 'inversion', 'inversión', 'fondo', 'crypto', 'bitcoin', 'acciones', 'bonos'],
 };
 
 const FORMAS_PAGO = {
@@ -24,16 +26,24 @@ const USUARIO_DEFAULT = 'Rene';
 const FORMA_PAGO_DEFAULT = 'Efectivo';
 const TIPO_DEFAULT_GASTO = 'Gasto';
 const TIPO_DEFAULT_INGRESO = 'Ingreso';
-const CLASIFICACION_DEFAULT_GASTO = 'Variable';
-const CLASIFICACION_DEFAULT_INGRESO = 'Ingreso';
 const ESTATUS_DEFAULT = 'Pagado';
 
-function getCurrentQuincena() {
-  const now = new Date();
-  const day = now.getDate();
-  const month = now.getMonth() + 1;
-  const quincenaNum = Math.ceil((day > 15 ? 2 : 1) + (month - 1) * 2);
-  return `Q${quincenaNum}`;
+const CLASIFICACION_POR_CATEGORIA = {
+  Hogar: 'Fijo',
+  Salud: 'Fijo',
+  Familia: 'Variable',
+  Transporte: 'Variable',
+  Suscripciones: 'Fijo',
+  Deudas: 'Fijo',
+  Personal: 'Variable',
+  Ingresos: null,
+  Ahorro: null,
+};
+
+function getClasificacion(categoria, tipo) {
+  if (tipo === 'Ingreso') return null;
+  if (tipo === 'Ahorro') return null;
+  return CLASIFICACION_POR_CATEGORIA[categoria] || 'Variable';
 }
 
 function getCurrentDateFormatted() {
@@ -131,7 +141,7 @@ function parseMessage(text, senderName) {
   const descripcion = extractDescription(text, monto);
   const categoria = detectCategory(text);
   const formaPago = detectPaymentMethod(text);
-  const clasificacion = tipo === 'Ingreso' ? CLASIFICACION_DEFAULT_INGRESO : CLASIFICACION_DEFAULT_GASTO;
+  const clasificacion = getClasificacion(categoria, tipo);
   const quincena = getCurrentQuincena();
   const estatus = ESTATUS_DEFAULT;
   const timestamp = getCurrentTimestamp();
