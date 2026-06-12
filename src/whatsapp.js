@@ -19,9 +19,10 @@ async function markAsRead(messageId) {
   });
 }
 
-async function react(messageId, emoji) {
+async function react(to, messageId, emoji) {
   return apiCall('post', `https://graph.facebook.com/v18.0/${META_PHONE_NUMBER_ID}/messages`, {
     messaging_product: 'whatsapp',
+    to,
     type: 'reaction',
     reaction: { message_id: messageId, emoji },
   });

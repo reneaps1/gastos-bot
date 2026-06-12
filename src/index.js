@@ -63,7 +63,7 @@ app.post('/webhook', async (req, res) => {
           const answer = await handleQuestion(text, senderName);
           if (answer) {
             await sendWhatsAppMessage(senderPhone, answer);
-            await react(message.id, '\u2705');
+            await react(senderPhone, message.id, '\u2705');
             console.log('Analytics answer sent for intent:', intent);
             continue;
           }
@@ -74,17 +74,17 @@ app.post('/webhook', async (req, res) => {
 
       // Otherwise, try to register as gasto/ingreso
       try {
-        await react(message.id, '\u23F3');
+        await react(senderPhone, message.id, '\u23F3');
         const row = parseMessage(text, senderName || 'Rene');
         await appendRow(row);
 
         const confirmation = formatConfirmation(row);
         await sendWhatsAppMessage(senderPhone, confirmation);
-        await react(message.id, '\u2705');
+        await react(senderPhone, message.id, '\u2705');
         console.log('Row added:', row);
       } catch (error) {
         console.error('Error processing message:', error);
-        await react(message.id, '\u274C');
+        await react(senderPhone, message.id, '\u274C');
         await sendWhatsAppMessage(senderPhone, '❌ Error al procesar tu mensaje. Intenta de nuevo.');
       }
     }
