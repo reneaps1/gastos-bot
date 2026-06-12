@@ -1,0 +1,8 @@
+node_modules/
+.env
+google-credentials.json
+*.log
+ngrok.log
+ngrok.exe
+ngrok.zip
+cloudflared.exe
