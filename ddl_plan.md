@@ -56,6 +56,24 @@ CREATE TYPE clasificacion_gasto AS ENUM ('Fijo', 'Variable');
 CREATE TYPE estatus_pago        AS ENUM ('Pagado', 'Pendiente');
 ```
 
+### Usuarios
+
+```sql
+CREATE TABLE users (
+    id              SERIAL PRIMARY KEY,
+    nombre          VARCHAR(50)  NOT NULL UNIQUE,
+    phone_whatsapp  VARCHAR(20)  UNIQUE,
+    activo          BOOLEAN      DEFAULT TRUE,
+    fecha_registro  TIMESTAMPTZ  DEFAULT NOW()
+);
+```
+
+Reglas:
+- Un usuario por cada persona que usa el sistema.
+- `phone_whatsapp` se usa para identificar quién habla desde WhatsApp.
+- Si el número no está registrado, se usa el nombre del perfil de WhatsApp.
+- Si no hay nombre de perfil, se usa 'Rene' como fallback.
+
 ### Catálogos
 
 ```sql
@@ -95,6 +113,7 @@ CREATE TABLE transacciones (
     id              SERIAL PRIMARY KEY,
     fecha           DATE                NOT NULL,
     quincena_id     INT                 NOT NULL REFERENCES quincenas(id),
+    user_id         INT                 REFERENCES users(id),
     descripcion     VARCHAR(200)        NOT NULL,
     categoria_id    INT                 NOT NULL REFERENCES categorias(id),
     clasificacion   clasificacion_gasto,                    -- puede sobreescribir la de la categoría
@@ -102,8 +121,8 @@ CREATE TABLE transacciones (
     monto           NUMERIC(12,2)       NOT NULL CHECK (monto > 0),
     metodo_pago_id  INT                 REFERENCES metodos_pago(id),
     estatus         estatus_pago        NOT NULL DEFAULT 'Pendiente',
-    quien           VARCHAR(50),                            -- 'Rene' / 'Mariana'
     notas           TEXT,
+    source          VARCHAR(20)         DEFAULT 'whatsapp', -- 'whatsapp', 'web', 'import', 'sheets'
     fecha_registro  TIMESTAMPTZ         DEFAULT NOW()
 );
 
@@ -166,6 +185,73 @@ CREATE TABLE deudas (
     -- los abonos se registran como transacciones con categoria = 'Deudas'
 );
 ```
+
+### Mensajes WhatsApp (audit trail del bot)
+
+```sql
+CREATE TABLE whatsapp_messages (
+    id              SERIAL PRIMARY KEY,
+    wa_message_id   VARCHAR(100)    UNIQUE,          -- ID de Meta API
+    from_number     VARCHAR(20)     NOT NULL,
+    from_name       VARCHAR(100),
+    user_id         INT             REFERENCES users(id),
+    body            TEXT            NOT NULL,
+    tipo            VARCHAR(20),                     -- 'text', 'image', 'audio', etc.
+    procesado       BOOLEAN         DEFAULT FALSE,
+    transaccion_id  INT             REFERENCES transacciones(id),
+    error           TEXT,                            -- descripcion del error si fallo
+    fecha_mensaje   TIMESTAMPTZ     NOT NULL,
+    fecha_registro  TIMESTAMPTZ     DEFAULT NOW()
+);
+
+CREATE INDEX idx_wa_from    ON whatsapp_messages(from_number);
+CREATE INDEX idx_wa_fecha   ON whatsapp_messages(fecha_mensaje);
+CREATE INDEX idx_wa_user    ON whatsapp_messages(user_id);
+```
+
+### Lotes de importacion
+
+```sql
+CREATE TABLE import_batches (
+    id              SERIAL PRIMARY KEY,
+    fuente          VARCHAR(30)     NOT NULL,         -- 'excel', 'sheets', 'manual'
+    archivo         VARCHAR(200),                    -- nombre del archivo original
+    total_filas     INT             DEFAULT 0,
+    importadas      INT             DEFAULT 0,
+    rechazadas      INT             DEFAULT 0,
+    errores         TEXT,
+    estado          VARCHAR(20)     DEFAULT 'pendiente',  -- 'pendiente', 'en_proceso', 'completado', 'fallido'
+    fecha_inicio    TIMESTAMPTZ     DEFAULT NOW(),
+    fecha_fin       TIMESTAMPTZ,
+    usuario_id      INT             REFERENCES users(id)
+);
+```
+
+### Auditoria de cambios
+
+```sql
+CREATE TABLE audit_log (
+    id              SERIAL PRIMARY KEY,
+    tabla           VARCHAR(50)     NOT NULL,
+    registro_id     INT             NOT NULL,
+    operacion       VARCHAR(10)     NOT NULL,         -- 'INSERT', 'UPDATE', 'DELETE'
+    campo           VARCHAR(50),                     -- campo modificado (para UPDATE)
+    valor_anterior  TEXT,
+    valor_nuevo     TEXT,
+    user_id         INT             REFERENCES users(id),
+    source          VARCHAR(20),                     -- 'whatsapp', 'web', 'import'
+    fecha           TIMESTAMPTZ     DEFAULT NOW()
+);
+
+CREATE INDEX idx_audit_tabla  ON audit_log(tabla, registro_id);
+CREATE INDEX idx_audit_fecha  ON audit_log(fecha);
+```
+
+Reglas de auditoria (segun DEVELOPMENT_POLICY.md):
+- Se auditan: transacciones editadas/eliminadas, presupuestos modificados,
+  deudas modificadas, cortes de liquidez modificados.
+- Operaciones INSERT desde bot (source='whatsapp') no requieren auditoria si
+  el mensaje original esta en `whatsapp_messages`.
 
 ### Liquidez (snapshots de caja)
 
@@ -270,6 +356,38 @@ LEFT JOIN transacciones t
 GROUP BY q.codigo, p.descripcion, c.nombre, p.monto_presupuestado;
 ```
 
+### v_corte_liquidez (reporte de caja por quincena)
+
+```sql
+CREATE VIEW v_corte_liquidez AS
+SELECT
+    q.codigo                                                            AS quincena,
+    q.fecha_fin                                                         AS fecha_corte_quincena,
+    ls.fecha_corte,
+    ls.bbva,
+    ls.banamex,
+    ls.uala,
+    ls.uala_inversion,
+    ls.efectivo,
+    ls.vales_despensa,
+    ls.vales_gasolina,
+    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
+     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)             AS total_caja,
+    ls.falta_pagar,
+    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
+     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)
+      - ls.falta_pagar                                                  AS margen_real,
+    ls.teorico,
+    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
+     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)
+      - ls.teorico                                                       AS arqueo,
+    ls.validado,
+    ls.notas
+FROM liquidez_snapshots ls
+JOIN quincenas q ON q.id = ls.quincena_id
+ORDER BY q.fecha_inicio;
+```
+
 ### v_liquidez (snapshot más reciente con campos calculados)
 
 ```sql
@@ -292,17 +410,22 @@ FROM liquidez_snapshots ls;
 ## Datos semilla
 
 ```sql
--- Categorías
+-- Usuarios
+INSERT INTO users (nombre, phone_whatsapp) VALUES
+  ('Rene',    NULL),   -- Se actualizará con su número real de WhatsApp
+  ('Mariana', NULL);   -- Se actualizará con su número real de WhatsApp
+
+-- Categorias oficiales (Fase 0 - Cerrado)
 INSERT INTO categorias (nombre, tipo, clasificacion, ejemplos) VALUES
   ('Hogar',         'Gasto',   'Fijo',     'Renta, Agua, Luz, Gas, Internet'),
-  ('Salud',         'Gasto',   'Fijo',     'Medicamentos, Terapia, Pediatra, Ginecólogo'),
-  ('Familia',       'Gasto',   'Variable', 'Super, Pañales, Niñera, Guardería, Croquetas'),
-  ('Transporte',    'Gasto',   'Variable', 'Gasolina, Gas auto, Casetas'),
-  ('Suscripciones', 'Gasto',   'Fijo',     'Netflix, Spotify, Disney+, YouTube, ChatGPT'),
-  ('Deudas',        'Gasto',   'Fijo',     'Préstamos, Coppel, Tanda, Kueski'),
-  ('Personal',      'Gasto',   'Variable', 'Diversión, Yoga, GYM, Maestría, Corte pelo'),
-  ('Ingresos',      'Ingreso',  NULL,      'Salario, Vales, Bono, Prima'),
-  ('Ahorro',        'Ahorro',   NULL,      'Fondo emergencia, Meta vacaciones, Colchón');
+  ('Salud',         'Gasto',   'Fijo',     'Medicamentos, Terapia, Pediatra, Gine, Tradea, Sertralina'),
+  ('Familia',       'Gasto',   'Variable', 'Super, Pañales, Niñera, Guardería, Croquetas, Fórmula Leo'),
+  ('Transporte',    'Gasto',   'Variable', 'Gasolina, Gas auto, Casetas, Control vehicular'),
+  ('Suscripciones', 'Gasto',   'Fijo',     'Netflix, Spotify, Disney+, YouTube, ChatGPT, Claude'),
+  ('Deudas',        'Gasto',   'Fijo',     'Préstamos, Coppel, Tanda, Kueski, Pago truck'),
+  ('Personal',      'Gasto',   'Variable', 'Diversión, Yoga, GYM, Audífonos, Educación, Ropa'),
+  ('Ingresos',      'Ingreso',  NULL,      'Salario, Vales Despensa, Bono, Prima, Anticipo'),
+  ('Ahorro',        'Ahorro',   NULL,      'Fondo emergencia, Meta vacaciones, Ahorro pareja');
 
 -- Métodos de pago
 INSERT INTO metodos_pago (nombre) VALUES
