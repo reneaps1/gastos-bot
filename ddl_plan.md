@@ -473,11 +473,27 @@ INSERT INTO quincenas (codigo, fecha_inicio, fecha_fin) VALUES
 
 ---
 
+## Fuente de Migración
+
+Fuente oficial: `milo_tracker_v6.xlsm`
+
+| Hoja | Destino | Notas |
+|------|---------|-------|
+| Captura | transacciones | Ledger principal, 1056 filas, incluye "Quien" |
+| Presupuesto | presupuestos | 503 filas |
+| Liquidez | liquidez_snapshots | 40 filas |
+| Deudas v2 | deudas | 7 acreedores |
+| Semanas | quincenas | 16 registros (Q23-Q34) |
+| Registro | **NO MIGRAR** | Subconjunto de Captura sin "Quien" |
+| Categorias | **NO MIGRAR** | Ya en seeds del DDL |
+
+Rango de datos: 2026-03-01 a 2027-02-02 (Q23-Q34)
+
 ## Verificación
 
 1. Ejecutar el DDL en PostgreSQL
 2. Insertar seed data y verificar integridad referencial
-3. Importar ~20 filas de `Captura` y validar que `v_resumen_quincenal` coincide con los valores del Excel:
+3. Importar filas de `Captura` y validar que `v_resumen_quincenal` coincide con los valores del Excel:
    - Q24: Ingresos 28,330.65 | Gastos 26,029.42 | Balance 2,301.23
    - Q25: Ingresos 23,346 | Gastos 22,412.74 | Balance 933.26
 4. Verificar `v_estado_deudas` contra hoja "Deudas v2":

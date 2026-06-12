@@ -241,6 +241,39 @@ WhatsApp → Bot → PostgreSQL
 Web/Dashboard → PostgreSQL
 ```
 
+### Fuente Historica - Excel (Fase 0 - Cerrado)
+
+Decisión: **Migrar TODO desde `Captura`. Excel queda como referencia historica.**
+
+| Hoja | Filas | Acción | Razón |
+|------|-------|--------|-------|
+| Captura | 1,056 | **MIGRAR** | Ledger principal con "Quien" |
+| Registro | 487 | **NO MIGRAR** | Subconjunto de Captura sin "Quien" |
+| Presupuesto | 503 | **MIGRAR** | Metas por quincena |
+| Liquidez | 40 | **MIGRAR** | Snapshots de caja |
+| Deudas v2 | 7 | **MIGRAR** | Acreedores activos |
+| Semanas | 16 | **MIGRAR** | Calendario de quincenas |
+| Categorias | 9 | **NO MIGRAR** | Ya está en seeds del DDL |
+| Dashboard | - | **NO MIGRAR** | Vista calculada |
+| Pivot Table 1 | - | **NO MIGRAR** | Vista calculada |
+
+Reglas de migración:
+- Fuente oficial de transacciones: hoja `Captura` (tiene columna "Quien").
+- `Registro` se descarta como fuente (es un subconjunto duplicado).
+- Migrar desde Q23 hasta la última quincena con datos reales.
+- Q31 en adelante son proyecciones: migrar solo si tienen datos reales.
+- Validar totales contra el Excel después de migrar.
+- Excel queda como referencia histórica, no se edita ni usa para operar.
+
+Flujo de migración:
+```text
+Excel Captura → Script de importación → PostgreSQL transacciones
+Excel Presupuesto → Script de importación → PostgreSQL presupuestos
+Excel Liquidez → Script de importación → PostgreSQL liquidez_snapshots
+Excel Deudas v2 → Script de importación → PostgreSQL deudas
+Excel Semanas → Script de importación → PostgreSQL quincenas
+```
+
 ### Fase 1: DDL Final Y Base De Datos
 
 Explicación simple:
