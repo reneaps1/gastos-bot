@@ -4,6 +4,7 @@ const express = require('express');
 const { appendRow } = require('./sheets');
 const { parseMessage, formatConfirmation } = require('./parser');
 const { sendWhatsAppMessage, extractPhoneNumber } = require('./whatsapp');
+const { handleQuestion, detectIntent } = require('./analytics');
 
 const app = express();
 app.use(express.json());
@@ -52,26 +53,22 @@ app.post('/webhook', async (req, res) => {
 
       console.log(`Message from ${senderName} (${senderPhone}): ${text}`);
 
-      if (text.toLowerCase() === 'resumen' || text.toLowerCase() === 'help' || text.toLowerCase() === 'ayuda') {
-        await sendWhatsAppMessage(senderPhone, [
-          '📝 *Bot de Gastos*',
-          '',
-          'Escribe tu gasto o ingreso en texto libre:',
-          '',
-          '*Ejemplos:*',
-          '• gaste 149 en McDonald\'s',
-          '• compre 36 estacionamiento',
-          '• gasto 348 helado',
-          '• ingreso 3500 pago',
-          '• pague 36 estacionamiento',
-          '',
-          '*Comandos:*',
-          '• resumen - Ver esta ayuda',
-          '• ultimos - Ver ultimos registros',
-        ].join('\n'));
-        continue;
+      // Check if it's an analytical question
+      const intent = detectIntent(text);
+      if (intent) {
+        try {
+          const answer = await handleQuestion(text, senderName);
+          if (answer) {
+            await sendWhatsAppMessage(senderPhone, answer);
+            console.log('Analytics answer sent for intent:', intent);
+            continue;
+          }
+        } catch (error) {
+          console.error('Analytics error:', error);
+        }
       }
 
+      // Otherwise, try to register as gasto/ingreso
       try {
         const row = parseMessage(text, senderName || 'Rene');
         await appendRow(row);

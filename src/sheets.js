@@ -46,4 +46,15 @@ async function appendRow(row) {
   return true;
 }
 
-module.exports = { appendRow };
+async function getRows() {
+  const client = await getSheetsClient();
+
+  const res = await client.spreadsheets.values.get({
+    spreadsheetId: SHEET_ID,
+    range: `${SHEET_NAME}!A2:K`,
+  });
+
+  return res.data.values || [];
+}
+
+module.exports = { appendRow, getRows };
