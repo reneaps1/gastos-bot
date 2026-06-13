@@ -2,13 +2,13 @@ const { getCurrentQuincena } = require('./quincenas');
 
 const CATEGORIAS = {
   hogar: ['hogar', 'casa', 'renta', 'luz', 'agua', 'internet', 'telefono', 'celular', 'electricidad', 'gas natural', 'gas de casa', 'mantenimiento', 'limpieza', 'lavanderia', 'lavandería'],
-  salud: ['salud', 'medico', 'doctor', 'farmacia', 'medicina', 'medicinas', 'hospital', 'dentista', 'oftalmologo', 'consulta', 'examen', 'vitamina', 'suplemento', 'gine', 'terapia', 'pediatra', 'tradea', 'sertralina'],
-  familia: ['familia', 'super', 'mercado', 'tienda', 'pañales', 'ninera', 'guarderia', 'guardería', 'croquetas', 'comida', 'comer', 'restaurante', 'mcdonalds', 'pizza', 'tacos', 'helado', 'cafe', 'café', 'starbucks', 'subway', 'burger', 'sushi', 'denny', 'wendys', 'wings', 'taqueria', 'taquería', 'lonchera', 'almuerzo', 'cena', 'desayuno', 'comida rapida', 'pollo', 'tortillas', 'coca', 'queso', 'chiles', 'paletas', 'vasos', '3b', 'aurrera', 'bodega', 'tiendita'],
-  transporte: ['transporte', 'gasolina', 'gas', 'gas spark', 'gas corolla', 'gasolina corolla', 'uber', 'didí', 'didi', 'taxi', 'estacionamiento', 'parking', 'metro', 'autobus', 'camion', 'peaje', 'caseta', 'blablacar', 'tren', 'control vehicular', 'control vehicular'],
+  salud: ['salud', 'medico', 'doctor', 'farmacia', 'medicina', 'medicinas', 'hospital', 'dentista', 'oftalmologo', 'consulta', 'examen', 'vitamina', 'suplemento', 'gine', 'terapia', 'pediatra', 'tradea', 'sertralina', 'medicamento'],
+  familia: ['familia', 'super', 'mercado', 'tienda', 'pañales', 'ninera', 'guarderia', 'guardería', 'croquetas', 'comida', 'comer', 'restaurante', 'mcdonalds', 'pizza', 'tacos', 'helado', 'cafe', 'tortillas', 'formula', 'fórmula'],
+  transporte: ['transporte', 'gasolina', 'gas', 'gas spark', 'gas corolla', 'gasolina corolla', 'uber', 'didí', 'didi', 'taxi', 'estacionamiento', 'parking', 'metro', 'autobus', 'camion', 'peaje', 'caseta'],
   suscripciones: ['suscripciones', 'suscripción', 'netflix', 'spotify', 'disney', 'disney+', 'youtube', 'youtube premium', 'hbo', 'amazon prime', 'chatgpt', 'chat gpt', 'obsidian', 'claude'],
   deudas: ['deudas', 'deuda', 'prestamo', 'préstamo', 'coppel', 'tanda', 'kueski', 'abono deuda', 'pago plata', 'pago truck', 'pago cesar', 'pago de truck'],
-  personal: ['personal', 'diversion', 'diversión', 'yoga', 'gym', 'gy m', 'maestria', 'maestría', 'corte', 'pelo', 'ropa', 'zapatos', 'camisa', 'pantalon', 'pantalón', 'tenis', 'zapatillas', 'vestido', 'falda', 'chaqueta', 'abrigo', 'educacion', 'educación', 'curso', 'clase', 'libro', 'escuela', 'universidad', 'taller', 'diplomado', 'certificacion', 'carritos', 'audifonos', 'audífonos', 'formula leo', 'fórmula leo', 'medicina mariana', 'terapia juano', 'terapia mariana', 'telefono mariana', 'telefono de mariana'],
-  ingresos: ['ingreso', 'ingresos', 'pago', 'cobro', 'cobrado', 'salario', 'nomina', 'nómina', 'sueldo', 'freelance', 'bono', 'extra', 'recibido', 'ganancia', 'ganado', 'vales', 'vales despensa', 'anticipo'],
+  personal: ['personal', 'diversion', 'diversión', 'yoga', 'gym', 'gy m', 'maestria', 'maestría', 'corte', 'pelo', 'ropa', 'zapatos', 'camisa', 'pantalon', 'pantalón', 'tenis', 'zapatillas', 'viaje', 'vacaciones', 'educacion', 'educación', 'audifonos', 'audífonos', 'libro', 'cursos'],
+  ingresos: ['ingreso', 'ingresos', 'pago', 'cobro', 'cobrado', 'salario', 'nomina', 'nómina', 'sueldo', 'freelance', 'bono', 'extra', 'recibido', 'ganancia', 'ganado', 'vales', 'vales despensa', 'prima', 'anticipo'],
   ahorro: ['ahorro', 'ahorro pareja', 'inversion', 'inversión', 'fondo', 'crypto', 'bitcoin', 'acciones', 'bonos'],
 };
 
@@ -135,7 +135,30 @@ function extractDescription(text, amount) {
   return desc || 'Sin descripcion';
 }
 
-function parseMessage(text, senderName, senderPhone) {
+/**
+ * Parsea un mensaje de WhatsApp y extrae información de la transacción
+ * @param {string} text - Texto del mensaje
+ * @param {string} senderName - Nombre del remitente
+ * @param {string} senderPhone - Teléfono del remitente
+ * @param {string} messageId - ID del mensaje de Meta (para deduplicación)
+ * @returns {Array} - Fila con datos de la transacción + messageId en columna M
+ * 
+ * Columnas:
+ * A: Timestamp (dd/mm/yyyy hh:mm:ss AM/PM)
+ * B: Usuario
+ * C: Monto
+ * D: Descripción
+ * E: Categoría
+ * F: Forma de Pago
+ * G: Tipo (Gasto/Ingreso/Ahorro)
+ * H: Clasificación (Fijo/Variable)
+ * I: Quincena
+ * J: Estatus (Pagado/Pendiente)
+ * K: Fecha (yyyy-mm-dd)
+ * L: Teléfono
+ * M: Message ID de Meta (deduplicación)
+ */
+function parseMessage(text, senderName, senderPhone, messageId) {
   const tipo = detectType(text);
   const monto = extractAmount(text);
   const descripcion = extractDescription(text, monto);
@@ -148,18 +171,19 @@ function parseMessage(text, senderName, senderPhone) {
   const fechaFormat = getCurrentDateFormatted();
 
   return [
-    timestamp,
-    senderName || USUARIO_DEFAULT,
-    monto || 0,
-    descripcion,
-    categoria,
-    formaPago,
-    tipo,
-    clasificacion,
-    quincena,
-    estatus,
-    fechaFormat,
-    senderPhone || '',
+    timestamp,           // A: Timestamp
+    senderName || USUARIO_DEFAULT,  // B: Usuario
+    monto || 0,          // C: Monto
+    descripcion,         // D: Descripción
+    categoria,           // E: Categoría
+    formaPago,           // F: Forma de Pago
+    tipo,                // G: Tipo
+    clasificacion,       // H: Clasificación
+    quincena,            // I: Quincena
+    estatus,             // J: Estatus
+    fechaFormat,         // K: Fecha
+    senderPhone || '',   // L: Teléfono
+    messageId || '',     // M: Message ID (deduplicación)
   ];
 }
 
