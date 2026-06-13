@@ -1,6 +1,34 @@
 services:
   - type: web
-    name: milo-gastos-dashboard
+    name: gastos-bot
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node src/index.js
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gastos-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: META_VERIFY_TOKEN
+        sync: false
+      - key: META_ACCESS_TOKEN
+        sync: false
+      - key: META_PHONE_NUMBER_ID
+        sync: false
+      - key: GOOGLE_SHEET_ID
+        sync: false
+      - key: GOOGLE_SHEETS_ENABLED
+        value: "false"
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false
+    healthCheckPath: /health
+    autoDeploy: true
+
+  - type: web
+    name: gastos-dashboard
     runtime: node
     plan: free
     buildCommand: cd dashboard && npm install && npx prisma generate && npm run build
@@ -8,21 +36,15 @@ services:
     envVars:
       - key: DATABASE_URL
         fromDatabase:
-          name: milo-gastos-db
+          name: gastos-db
           property: connectionString
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
-      - key: NEXTAUTH_URL
-        fromService:
-          name: milo-gastos-dashboard
-          property: url
     healthCheckPath: /
     autoDeploy: true
 
 databases:
-  - name: milo-gastos-db
+  - name: gastos-db
     plan: free
     databaseName: gastos
-    user: milo_gastos
+    user: gastos_user
