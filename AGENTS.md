@@ -16,15 +16,15 @@ No tomar decisiones de implementación sin consultar primero esta política.
 
 ## Fases Actuales
 
-El proyecto está en **Fase 1**. No saltar fases.
+El proyecto está en **Fase 4**. No saltar fases.
 
 | Fase | Estado |
 |------|--------|
 | 0 - Alinear Reglas Del Negocio | cerrado |
-| 1 - DDL Final Y Base De Datos | en progreso |
-| 2 - Setup Técnico De La App | pendiente |
-| 3 - Migración De Datos | pendiente |
-| 4 - Refactor Del Bot | pendiente |
+| 1 - DDL Final Y Base De Datos | cerrado |
+| 2 - Setup Técnico De La App | cerrado |
+| 3 - Migración De Datos | cerrado |
+| 4 - Refactor Del Bot | cerrado |
 | 5 - API Interna | pendiente |
 | 6 - Dashboard MVP | pendiente |
 | 7 - Administración | pendiente |
@@ -44,18 +44,43 @@ El proyecto está en **Fase 1**. No saltar fases.
 
 | Issue | Estado | Titulo |
 |-------|--------|--------|
-| #6 | pendiente | Instalar PostgreSQL |
-| #7 | pendiente | Setup Prisma y schema |
-| #8 | pendiente | Seed de datos semilla |
-| #9 | pendiente | Generar cliente Prisma |
-| #10 | pendiente | Vista de dashboard principal |
-| #11 | pendiente | Script de verificacion |
+| #6 | completado | Instalar PostgreSQL |
+| #7 | completado | Setup Prisma y schema |
+| #8 | completado | Seed de datos semilla |
+| #9 | completado | Generar cliente Prisma |
+| #10 | completado | Vista de dashboard principal |
+| #11 | completado | Script de verificacion |
 
-### Prerequisitos Fase 1
+### Fase 2 — Entregables cerrados
 
-**ANTES de cualquier tarea de Fase 1:**
-- Instalar PostgreSQL 17+ (ver Issue #6 en `ISSUES_FASE1.md`)
-- Opciones: Windows installer, Docker, o cloud (Supabase/Neon)
+| Entregable | Estado | Archivo |
+|------------|--------|---------|
+| Dashboard Next.js con Prisma | cerrado | `dashboard/` |
+| Páginas: Dashboard, Transacciones, Presupuesto, Deudas | cerrado | `dashboard/src/app/` |
+| Layout con navegación | cerrado | `dashboard/src/app/layout.tsx` |
+
+### Fase 3 — Entregables cerrados
+
+| Entregable | Estado | Detalle |
+|------------|--------|---------|
+| Script de migración | cerrado | `scripts/migrate-excel.js` |
+| 239 transacciones migradas | cerrado | Desde hoja Captura |
+| 166 presupuestos migrados | cerrado | Desde hoja Presupuesto |
+| 10 snapshots liquidez | cerrado | Desde hoja Liquidez |
+| 5 deudas migradas | cerrado | Desde hoja Deudas v2 |
+| Validación Q24-Q28 | cerrado | 5/5 OK contra Excel |
+
+### Fase 4 — Issues
+
+| Issue | Estado | Titulo |
+|-------|--------|--------|
+| #12 | completado | Separar lógica del bot en módulos |
+| #13 | completado | Corregir cálculo de quincena |
+| #14 | completado | Guardar mensajes recibidos en DB |
+| #15 | completado | Guardar transacciones en PostgreSQL |
+| #16 | completado | Mantener export opcional a Sheets |
+| #17 | completado | Mejorar parser |
+| #18 | completado | Asociar movimientos a usuario, categoría, concepto y método de pago |
 
 ## Stack Oficial
 

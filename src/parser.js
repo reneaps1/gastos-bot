@@ -1,4 +1,4 @@
-const { getCurrentQuincena } = require('./quincenas');
+const { getCurrentQuincena } = require('./quincenas')
 
 const CATEGORIAS = {
   hogar: ['hogar', 'casa', 'renta', 'luz', 'agua', 'internet', 'telefono', 'celular', 'electricidad', 'gas natural', 'gas de casa', 'mantenimiento', 'limpieza', 'lavanderia', 'lavandería'],
@@ -10,23 +10,16 @@ const CATEGORIAS = {
   personal: ['personal', 'diversion', 'diversión', 'yoga', 'gym', 'gy m', 'maestria', 'maestría', 'corte', 'pelo', 'ropa', 'zapatos', 'camisa', 'pantalon', 'pantalón', 'tenis', 'zapatillas', 'viaje', 'vacaciones', 'educacion', 'educación', 'audifonos', 'audífonos', 'libro', 'cursos'],
   ingresos: ['ingreso', 'ingresos', 'pago', 'cobro', 'cobrado', 'salario', 'nomina', 'nómina', 'sueldo', 'freelance', 'bono', 'extra', 'recibido', 'ganancia', 'ganado', 'vales', 'vales despensa', 'prima', 'anticipo'],
   ahorro: ['ahorro', 'ahorro pareja', 'inversion', 'inversión', 'fondo', 'crypto', 'bitcoin', 'acciones', 'bonos'],
-};
+}
 
 const FORMAS_PAGO = {
   efectivo: ['efectivo', 'efec', 'ef', 'cash', 'dinero'],
-  tarjeta: ['tarjeta', 'tar', 'visa', 'mastercard', 'amex', 'credito', 'crédito', 'debito', 'débito', 'nómina', 'nomina'],
-  transferencia: ['transferencia', 'trans', 'transfer', 'spei', 'clabe', 'banco'],
-  mercadopago: ['mercadopago', 'mercado pago', 'mp'],
-};
+  debito: ['tarjeta', 'tar', 'visa', 'mastercard', 'amex', 'debito', 'débito', 'nómina', 'nomina'],
+  spei: ['transferencia', 'trans', 'transfer', 'spei', 'clabe', 'banco'],
+  vales: ['vales', 'vale', 'vales despensa', 'vales gasolina'],
+}
 
-const INGRESO_KEYWORDS = ['ingreso', 'ingresos', 'pago', 'cobro', 'cobrado', 'salario', 'nomina', 'nómina', 'sueldo', 'freelance', 'bono', 'extra', 'recibido', 'ganancia', 'ganado'];
-const GASTO_KEYWORDS = ['gasto', 'gasté', 'gaste', 'pagué', 'pague', 'compré', 'compre', 'pago', 'compra', 'gastamos', 'pagamos'];
-
-const USUARIO_DEFAULT = 'Rene';
-const FORMA_PAGO_DEFAULT = 'Efectivo';
-const TIPO_DEFAULT_GASTO = 'Gasto';
-const TIPO_DEFAULT_INGRESO = 'Ingreso';
-const ESTATUS_DEFAULT = 'Pagado';
+const INGRESO_KEYWORDS = ['ingreso', 'ingresos', 'pago', 'cobro', 'cobrado', 'salario', 'nomina', 'nómina', 'sueldo', 'freelance', 'bono', 'extra', 'recibido', 'ganancia', 'ganado']
 
 const CLASIFICACION_POR_CATEGORIA = {
   Hogar: 'Fijo',
@@ -38,169 +31,115 @@ const CLASIFICACION_POR_CATEGORIA = {
   Personal: 'Variable',
   Ingresos: null,
   Ahorro: null,
-};
+}
 
 function getClasificacion(categoria, tipo) {
-  if (tipo === 'Ingreso') return null;
-  if (tipo === 'Ahorro') return null;
-  return CLASIFICACION_POR_CATEGORIA[categoria] || 'Variable';
-}
-
-function getCurrentDateFormatted() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function getCurrentTimestamp() {
-  const now = new Date();
-  const options = {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  };
-  return now.toLocaleString('es-MX', options);
+  if (tipo === 'Ingreso' || tipo === 'Ahorro') return null
+  return CLASIFICACION_POR_CATEGORIA[categoria] || 'Variable'
 }
 
 function detectCategory(text) {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase()
   for (const [cat, keywords] of Object.entries(CATEGORIAS)) {
     for (const kw of keywords) {
-      if (lower.includes(kw)) return cat.charAt(0).toUpperCase() + cat.slice(1);
+      if (lower.includes(kw)) return cat.charAt(0).toUpperCase() + cat.slice(1)
     }
   }
-  return 'Otros';
+  return null
 }
 
 function detectPaymentMethod(text) {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase()
   for (const [method, keywords] of Object.entries(FORMAS_PAGO)) {
     for (const kw of keywords) {
-      if (lower.includes(kw)) return method.charAt(0).toUpperCase() + method.slice(1);
+      if (lower.includes(kw)) return method.charAt(0).toUpperCase() + method.slice(1)
     }
   }
-  return FORMA_PAGO_DEFAULT;
+  return null
 }
 
 function detectType(text) {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase()
   for (const kw of INGRESO_KEYWORDS) {
-    if (lower.includes(kw)) return TIPO_DEFAULT_INGRESO;
+    if (lower.includes(kw)) return 'Ingreso'
   }
-  return TIPO_DEFAULT_GASTO;
+  return 'Gasto'
 }
 
 function extractAmount(text) {
   const patterns = [
     /\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/,
     /(\d+(?:\.\d{1,2})?)/,
-  ];
-
+  ]
   for (const pattern of patterns) {
-    const match = text.match(pattern);
+    const match = text.match(pattern)
     if (match) {
-      const numStr = match[1].replace(/,/g, '');
-      const num = parseFloat(numStr);
-      if (!isNaN(num) && num > 0) return num;
+      const numStr = match[1].replace(/,/g, '')
+      const num = parseFloat(numStr)
+      if (!isNaN(num) && num > 0) return num
     }
   }
-  return null;
+  return null
 }
 
 function extractDescription(text, amount) {
-  let desc = text;
+  let desc = text
   if (amount !== null) {
-    desc = desc.replace(new RegExp(`\\$?\\s*${amount.toString().replace('.', '\\.').replace(/,/g, ',')}\\s*`), ' ');
+    desc = desc.replace(new RegExp(`\\$?\\s*${amount.toString().replace('.', '\\.').replace(/,/g, ',')}\\s*`), ' ')
   }
-
   const removeWords = [
     'gasté', 'gaste', 'pagué', 'pague', 'compré', 'compre',
     'gasto', 'pago', 'compra', 'ingreso', 'cobro', 'recibí', 'recibi',
     'en', 'de', 'para', 'con', 'por', 'el', 'la', 'los', 'las',
     'un', 'una', 'unos', 'unas', 'del', 'al',
-  ];
+  ]
   for (const w of removeWords) {
-    desc = desc.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' ');
+    desc = desc.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' ')
   }
-
-  desc = desc.replace(/\s+/g, ' ').trim();
-  if (desc.length > 50) desc = desc.substring(0, 50);
-
-  return desc || 'Sin descripcion';
+  desc = desc.replace(/\s+/g, ' ').trim()
+  if (desc.length > 200) desc = desc.substring(0, 200)
+  return desc || 'Sin descripcion'
 }
 
-/**
- * Parsea un mensaje de WhatsApp y extrae información de la transacción
- * @param {string} text - Texto del mensaje
- * @param {string} senderName - Nombre del remitente
- * @param {string} senderPhone - Teléfono del remitente
- * @param {string} messageId - ID del mensaje de Meta (para deduplicación)
- * @returns {Array} - Fila con datos de la transacción + messageId en columna M
- * 
- * Columnas:
- * A: Timestamp (dd/mm/yyyy hh:mm:ss AM/PM)
- * B: Usuario
- * C: Monto
- * D: Descripción
- * E: Categoría
- * F: Forma de Pago
- * G: Tipo (Gasto/Ingreso/Ahorro)
- * H: Clasificación (Fijo/Variable)
- * I: Quincena
- * J: Estatus (Pagado/Pendiente)
- * K: Fecha (yyyy-mm-dd)
- * L: Teléfono
- * M: Message ID de Meta (deduplicación)
- */
 function parseMessage(text, senderName, senderPhone, messageId) {
-  const tipo = detectType(text);
-  const monto = extractAmount(text);
-  const descripcion = extractDescription(text, monto);
-  const categoria = detectCategory(text);
-  const formaPago = detectPaymentMethod(text);
-  const clasificacion = getClasificacion(categoria, tipo);
-  const quincena = getCurrentQuincena();
-  const estatus = ESTATUS_DEFAULT;
-  const timestamp = getCurrentTimestamp();
-  const fechaFormat = getCurrentDateFormatted();
+  const tipo = detectType(text)
+  const monto = extractAmount(text)
+  const descripcion = extractDescription(text, monto)
+  const categoria = detectCategory(text)
+  const formaPago = detectPaymentMethod(text)
+  const clasificacion = getClasificacion(categoria, tipo)
+  const quincena = getCurrentQuincena()
 
-  return [
-    timestamp,           // A: Timestamp
-    senderName || USUARIO_DEFAULT,  // B: Usuario
-    monto || 0,          // C: Monto
-    descripcion,         // D: Descripción
-    categoria,           // E: Categoría
-    formaPago,           // F: Forma de Pago
-    tipo,                // G: Tipo
-    clasificacion,       // H: Clasificación
-    quincena,            // I: Quincena
-    estatus,             // J: Estatus
-    fechaFormat,         // K: Fecha
-    senderPhone || '',   // L: Teléfono
-    messageId || '',     // M: Message ID (deduplicación)
-  ];
+  return {
+    timestamp: new Date(),
+    fecha: new Date(),
+    usuario: senderName || 'Rene',
+    phone: senderPhone || null,
+    monto: monto || 0,
+    descripcion,
+    categoria: categoria || 'Personal',
+    formaPago: formaPago || 'Efectivo',
+    tipo,
+    clasificacion,
+    quincena,
+    estatus: 'Pagado',
+    messageId: messageId || null,
+  }
 }
 
-function formatConfirmation(row) {
-  const [fecha, usuario, monto, descripcion, categoria, formaPago, tipo, clasificacion, quincena, estatus] = row;
+function formatConfirmation(parsed) {
   return [
-    `✅ *${tipo} registrado*`,
+    `✅ *${parsed.tipo} registrado*`,
     ``,
-    `📅 ${fecha}`,
-    `👤 ${usuario}`,
-    `$${monto}`,
-    `📝 ${descripcion}`,
-    `🏷️ ${categoria}`,
-    `💳 ${formaPago}`,
-    `📊 ${quincena} - ${clasificacion || ''}`,
-    `✅ ${estatus}`,
-  ].join('\n');
+    `📅 ${parsed.fecha.toLocaleDateString('es-MX')}`,
+    `👤 ${parsed.usuario}`,
+    `$${parsed.monto}`,
+    `📝 ${parsed.descripcion}`,
+    `🏷️ ${parsed.categoria}`,
+    `💳 ${parsed.formaPago}`,
+    `📊 ${parsed.quincena} - ${parsed.clasificacion || ''}`,
+    `✅ ${parsed.estatus}`,
+  ].join('\n')
 }
 
-module.exports = { parseMessage, formatConfirmation };
+module.exports = { parseMessage, formatConfirmation }
