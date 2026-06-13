@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: milo-gastos-dashboard
+    runtime: node
+    plan: free
+    buildCommand: cd dashboard && npm install && npx prisma generate && npm run build
+    startCommand: cd dashboard && npx prisma migrate deploy && npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: milo-gastos-db
+          property: connectionString
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: NEXTAUTH_URL
+        fromService:
+          name: milo-gastos-dashboard
+          property: url
+    healthCheckPath: /
+    autoDeploy: true
+
+databases:
+  - name: milo-gastos-db
+    plan: free
+    databaseName: gastos
+    user: milo_gastos
