@@ -6,3 +6,8 @@ ngrok.log
 ngrok.exe
 ngrok.zip
 cloudflared.exe
+
+# Datos financieros sensibles - NO subir a repos públicos
+data/
+*.xlsm
+*.xlsx
