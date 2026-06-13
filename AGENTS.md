@@ -16,7 +16,7 @@ No tomar decisiones de implementación sin consultar primero esta política.
 
 ## Fases Actuales
 
-El proyecto está en **Fase 4**. No saltar fases.
+El proyecto está en **Fase 5**. No saltar fases.
 
 | Fase | Estado |
 |------|--------|
@@ -25,7 +25,7 @@ El proyecto está en **Fase 4**. No saltar fases.
 | 2 - Setup Técnico De La App | cerrado |
 | 3 - Migración De Datos | cerrado |
 | 4 - Refactor Del Bot | cerrado |
-| 5 - API Interna | pendiente |
+| 5 - API Interna | cerrado |
 | 6 - Dashboard MVP | pendiente |
 | 7 - Administración | pendiente |
 | 8 - Inteligencia Y Automatización | pendiente |
@@ -81,6 +81,22 @@ El proyecto está en **Fase 4**. No saltar fases.
 | #16 | completado | Mantener export opcional a Sheets |
 | #17 | completado | Mejorar parser |
 | #18 | completado | Asociar movimientos a usuario, categoría, concepto y método de pago |
+
+### Fase 5 — Entregables cerrados
+
+| Entregable | Estado | Detalle |
+|------------|--------|---------|
+| API Interna REST | cerrado | 10 endpoints en `dashboard/src/app/api/` |
+| /api/dashboard | cerrado | Resumen con métricas por quincena |
+| /api/transacciones | cerrado | CRUD completo con filtros y paginación |
+| /api/presupuestos | cerrado | CRUD con cálculo de ejecución vs presupuestado |
+| /api/categorias | cerrado | Catálogo de 9 categorías oficiales |
+| /api/deudas | cerrado | Listado con cálculo de saldo y progreso |
+| /api/liquidez | cerrado | Snapshots de caja por quincena |
+| /api/users | cerrado | Catálogo de usuarios |
+| /api/metodos-pago | cerrado | Catálogo de métodos de pago |
+| /api/cuentas | cerrado | Catálogo de cuentas |
+| /api/quincenas | cerrado | Catálogo de quincenas Q23-Q42 |
 
 ## Stack Oficial
 
