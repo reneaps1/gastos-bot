@@ -2,7 +2,7 @@ process.env.TZ = 'America/Mexico_City';
 require('dotenv').config();
 
 const express = require('express');
-const { appendRow } = require('./sheets');
+const { appendRow, messageExists } = require('./sheets');
 const { parseMessage, formatConfirmation } = require('./parser');
 const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react } = require('./whatsapp');
 const { handleQuestion, detectIntent } = require('./analytics');
@@ -75,8 +75,18 @@ app.post('/webhook', async (req, res) => {
 
       // Otherwise, try to register as gasto/ingreso
       try {
+        // ✅ NUEVA VALIDACIÓN: Verificar si el mensaje ya fue procesado (deduplicación)
+        const exists = await messageExists(message.id);
+        if (exists) {
+          console.log(`Mensaje duplicado detectado: ${message.id}. Ignorando.`);
+          await react(senderPhone, message.id, '\u2705');
+          continue;
+        }
+
         await react(senderPhone, message.id, '\u23F3');
-        const row = parseMessage(text, senderName || 'Rene', senderPhone);
+        
+        // ✅ CAMBIO: Pasar message.id al parser para almacenarlo en columna M
+        const row = parseMessage(text, senderName || 'Rene', senderPhone, message.id);
         await appendRow(row);
 
         const confirmation = formatConfirmation(row);
