@@ -6,19 +6,32 @@ const EMOJI: Record<string, string> = {
   Suscripciones: '📱', Deudas: '💳', Personal: '🎯', Ingresos: '💵', Ahorro: '🏦',
 }
 
-export default async function PresupuestoPage() {
+export default async function PresupuestoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ quincena?: string }>
+}) {
+  const params = await searchParams
+  const quincenaId = params.quincena ? parseInt(params.quincena) : undefined
+
   const today = new Date()
 
-  const [quincenaActual, todasQuincenas, presupuestos] = await Promise.all([
-    prisma.quincena.findFirst({
-      where: { fechaInicio: { lte: today }, fechaFin: { gte: today } },
-    }),
+  const [quincenaActual, todasQuincenas] = await Promise.all([
+    quincenaId
+      ? prisma.quincena.findUnique({ where: { id: quincenaId } })
+      : prisma.quincena.findFirst({
+          where: { fechaInicio: { lte: today }, fechaFin: { gte: today } },
+        }),
     prisma.quincena.findMany({ orderBy: { fechaInicio: 'desc' } }),
-    prisma.presupuesto.findMany({
-      include: { categoria: true, quincena: true },
-      orderBy: { categoria: { nombre: 'asc' } },
-    }),
   ])
+
+  const qId = quincenaActual?.id ?? -1
+
+  const presupuestos = await prisma.presupuesto.findMany({
+    where: { quincenaId: qId },
+    include: { categoria: true, quincena: true },
+    orderBy: { categoria: { nombre: 'asc' } },
+  })
 
   const presupuestosConGasto = await Promise.all(
     presupuestos.map(async (p) => {
@@ -39,13 +52,23 @@ export default async function PresupuestoPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-slate-800">Presupuesto</h2>
-        <select className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800">Presupuesto</h2>
+          {quincenaActual && (
+            <p className="text-sm text-slate-500 mt-1">
+              {quincenaActual.codigo} · {new Date(quincenaActual.fechaInicio).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
+              {' — '}
+              {new Date(quincenaActual.fechaFin).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
+            </p>
+          )}
+        </div>
+        <select
+          className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
+          defaultValue={quincenaActual?.id?.toString() ?? ''}
+        >
           {todasQuincenas.map(q => (
-            <option key={q.id} value={q.id} selected={q.id === quincenaActual?.id}>
-              {q.codigo}
-            </option>
+            <option key={q.id} value={q.id}>{q.codigo}</option>
           ))}
         </select>
       </div>
@@ -76,7 +99,7 @@ export default async function PresupuestoPage() {
         <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
           <p className="text-5xl mb-3">📋</p>
           <p className="font-medium">Sin presupuesto configurado</p>
-          <p className="text-sm mt-1">Importa el Excel o crea presupuestos manualmente</p>
+          <p className="text-sm mt-1">Selecciona otra quincena o importa el Excel</p>
         </div>
       ) : (
         <div className="grid gap-4">
@@ -87,7 +110,7 @@ export default async function PresupuestoPage() {
                   <span className="text-xl">{EMOJI[p.categoria.nombre] ?? '📦'}</span>
                   <div>
                     <p className="font-semibold text-slate-800">{p.descripcion}</p>
-                    <p className="text-xs text-slate-400">{p.categoria.nombre} · {p.quincena.codigo}</p>
+                    <p className="text-xs text-slate-400">{p.categoria.nombre}</p>
                   </div>
                 </div>
                 <div className="text-right">
