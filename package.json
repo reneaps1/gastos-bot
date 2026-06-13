@@ -8,15 +8,23 @@
     "dev": "node --watch src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@prisma/adapter-pg": "^7.8.0",
+    "@types/node": "^25.9.3",
     "axios": "^1.17.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "googleapis": "^173.0.0"
+    "googleapis": "^173.0.0",
+    "pg": "^8.21.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@prisma/client": "^7.8.0",

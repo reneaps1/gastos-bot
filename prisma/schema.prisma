@@ -1,0 +1,249 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TipoMovimiento {
+  Gasto
+  Ingreso
+  Ahorro
+}
+
+enum ClasificacionGasto {
+  Fijo
+  Variable
+}
+
+enum EstatusPago {
+  Pagado
+  Pendiente
+}
+
+model User {
+  id              Int               @id @default(autoincrement())
+  nombre          String            @unique @db.VarChar(50)
+  phoneWhatsapp   String?           @unique @db.VarChar(20) @map("phone_whatsapp")
+  activo          Boolean           @default(true)
+  fechaRegistro   DateTime          @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  transacciones   Transaccion[]
+  whatsappMsgs    WhatsappMessage[]
+  importBatches   ImportBatch[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model Categoria {
+  id            Int                  @id @default(autoincrement())
+  nombre        String               @unique @db.VarChar(50)
+  tipo          TipoMovimiento
+  clasificacion ClasificacionGasto?
+  ejemplos      String?
+  activo        Boolean              @default(true)
+
+  transacciones   Transaccion[]
+  entradas        EntradaRapida[]
+  presupuestos    Presupuesto[]
+
+  @@map("categorias")
+}
+
+model MetodoPago {
+  id     Int    @id @default(autoincrement())
+  nombre String @unique @db.VarChar(30)
+
+  transacciones Transaccion[]
+
+  @@map("metodos_pago")
+}
+
+model Quincena {
+  id          Int      @id @default(autoincrement())
+  codigo      String   @unique @db.VarChar(5)
+  fechaInicio DateTime @map("fecha_inicio") @db.Date
+  fechaFin    DateTime @map("fecha_fin") @db.Date
+
+  transacciones      Transaccion[]
+  entradas           EntradaRapida[]
+  presupuestos       Presupuesto[]
+  liquidezSnapshots  LiquidezSnapshot[]
+
+  @@map("quincenas")
+}
+
+model Cuenta {
+  id     Int     @id @default(autoincrement())
+  nombre String  @unique @db.VarChar(50)
+  tipo   String? @db.VarChar(30)
+
+  @@map("cuentas")
+}
+
+model Transaccion {
+  id            Int                  @id @default(autoincrement())
+  fecha         DateTime             @db.Date
+  quincenaId    Int                  @map("quincena_id")
+  userId        Int?                 @map("user_id")
+  descripcion   String               @db.VarChar(200)
+  categoriaId   Int                  @map("categoria_id")
+  clasificacion ClasificacionGasto?
+  tipo          TipoMovimiento
+  monto         Decimal              @db.Decimal(12, 2)
+  metodoPagoId  Int?                 @map("metodo_pago_id")
+  estatus       EstatusPago          @default(Pendiente)
+  notas         String?
+  source        String?              @default("whatsapp") @db.VarChar(20)
+  fechaRegistro DateTime             @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  quincena     Quincena    @relation(fields: [quincenaId], references: [id])
+  user         User?       @relation(fields: [userId], references: [id])
+  categoria    Categoria   @relation(fields: [categoriaId], references: [id])
+  metodoPago   MetodoPago? @relation(fields: [metodoPagoId], references: [id])
+
+  entradas      EntradaRapida[]
+  whatsappMsgs  WhatsappMessage[]
+
+  @@index([quincenaId], name: "idx_tx_quincena")
+  @@index([categoriaId], name: "idx_tx_categoria")
+  @@index([fecha], name: "idx_tx_fecha")
+  @@index([tipo], name: "idx_tx_tipo")
+  @@map("transacciones")
+}
+
+model EntradaRapida {
+  id            Int                  @id @default(autoincrement())
+  fecha         DateTime             @db.Date
+  descripcion   String               @db.VarChar(200)
+  monto         Decimal              @db.Decimal(12, 2)
+  categoriaId   Int?                 @map("categoria_id")
+  tipo          TipoMovimiento?
+  quincenaId    Int?                 @map("quincena_id")
+  notas         String?
+  procesado     Boolean              @default(false)
+  transaccionId Int?                 @map("transaccion_id")
+  fechaRegistro DateTime             @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  categoria   Categoria?  @relation(fields: [categoriaId], references: [id])
+  quincena    Quincena?   @relation(fields: [quincenaId], references: [id])
+  transaccion Transaccion? @relation(fields: [transaccionId], references: [id])
+
+  @@map("entrada_rapida")
+}
+
+model Presupuesto {
+  id                  Int                  @id @default(autoincrement())
+  quincenaId          Int                  @map("quincena_id")
+  descripcion         String               @db.VarChar(200)
+  categoriaId         Int                  @map("categoria_id")
+  clasificacion       ClasificacionGasto?
+  tipo                TipoMovimiento
+  montoPresupuestado  Decimal              @map("monto_presupuestado") @db.Decimal(12, 2)
+  notas               String?
+  fechaRegistro       DateTime             @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  quincena  Quincena  @relation(fields: [quincenaId], references: [id])
+  categoria Categoria @relation(fields: [categoriaId], references: [id])
+
+  @@index([quincenaId], name: "idx_presupuesto_quincena")
+  @@map("presupuesto")
+}
+
+model Deuda {
+  id            Int       @id @default(autoincrement())
+  acreedor      String    @db.VarChar(100)
+  deudaOriginal Decimal   @map("deuda_original") @db.Decimal(12, 2)
+  abonoMensual  Decimal?  @map("abono_mensual") @db.Decimal(12, 2)
+  activo        Boolean   @default(true)
+  notas         String?
+  fechaInicio   DateTime? @map("fecha_inicio") @db.Date
+  fechaRegistro DateTime  @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  @@map("deudas")
+}
+
+model WhatsappMessage {
+  id            Int       @id @default(autoincrement())
+  waMessageId   String?   @unique @map("wa_message_id") @db.VarChar(100)
+  fromNumber    String    @map("from_number") @db.VarChar(20)
+  fromName      String?   @map("from_name") @db.VarChar(100)
+  userId        Int?      @map("user_id")
+  body          String
+  tipo          String?   @db.VarChar(20)
+  procesado     Boolean   @default(false)
+  transaccionId Int?      @map("transaccion_id")
+  error         String?
+  fechaMensaje  DateTime  @map("fecha_mensaje") @db.Timestamptz()
+  fechaRegistro DateTime  @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  user        User?        @relation(fields: [userId], references: [id])
+  transaccion Transaccion? @relation(fields: [transaccionId], references: [id])
+
+  @@index([fromNumber], name: "idx_wa_from")
+  @@index([fechaMensaje], name: "idx_wa_fecha")
+  @@index([userId], name: "idx_wa_user")
+  @@map("whatsapp_messages")
+}
+
+model ImportBatch {
+  id          Int       @id @default(autoincrement())
+  fuente      String    @db.VarChar(30)
+  archivo     String?   @db.VarChar(200)
+  totalFilas  Int       @default(0) @map("total_filas")
+  importadas  Int       @default(0)
+  rechazadas  Int       @default(0)
+  errores     String?
+  estado      String    @default("pendiente") @db.VarChar(20)
+  fechaInicio DateTime  @default(now()) @map("fecha_inicio") @db.Timestamptz()
+  fechaFin    DateTime? @map("fecha_fin") @db.Timestamptz()
+  usuarioId   Int?      @map("usuario_id")
+
+  usuario User? @relation(fields: [usuarioId], references: [id])
+
+  @@map("import_batches")
+}
+
+model AuditLog {
+  id            Int      @id @default(autoincrement())
+  tabla         String   @db.VarChar(50)
+  registroId    Int      @map("registro_id")
+  operacion     String   @db.VarChar(10)
+  campo         String?  @db.VarChar(50)
+  valorAnterior String?  @map("valor_anterior")
+  valorNuevo    String?  @map("valor_nuevo")
+  userId        Int?     @map("user_id")
+  source        String?  @db.VarChar(20)
+  fecha         DateTime @default(now()) @db.Timestamptz()
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([tabla, registroId], name: "idx_audit_tabla")
+  @@index([fecha], name: "idx_audit_fecha")
+  @@map("audit_log")
+}
+
+model LiquidezSnapshot {
+  id            Int       @id @default(autoincrement())
+  fechaCorte    DateTime  @map("fecha_corte") @db.Timestamptz()
+  quincenaId    Int       @map("quincena_id")
+  bbva          Decimal   @default(0) @db.Decimal(12, 2)
+  banamex       Decimal   @default(0) @db.Decimal(12, 2)
+  uala          Decimal   @default(0) @db.Decimal(12, 2)
+  ualaInversion Decimal   @default(0) @map("uala_inversion") @db.Decimal(12, 2)
+  efectivo      Decimal   @default(0) @db.Decimal(12, 2)
+  valesDespensa Decimal   @default(0) @map("vales_despensa") @db.Decimal(12, 2)
+  valesGasolina Decimal   @default(0) @map("vales_gasolina") @db.Decimal(12, 2)
+  faltaPagar    Decimal   @default(0) @map("falta_pagar") @db.Decimal(12, 2)
+  teorico       Decimal?  @db.Decimal(12, 2)
+  notas         String?
+  validado      Boolean   @default(false)
+  fechaRegistro DateTime  @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  quincena Quincena @relation(fields: [quincenaId], references: [id])
+
+  @@index([quincenaId], name: "idx_liquidez_quincena")
+  @@map("liquidez_snapshots")
+}
