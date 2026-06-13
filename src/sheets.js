@@ -38,7 +38,7 @@ async function appendRow(row) {
 
   await client.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:L`,
+    range: `${SHEET_NAME}!A:M`,
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {
@@ -55,10 +55,32 @@ async function getRows() {
 
   const res = await client.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A2:L`,
+    range: `${SHEET_NAME}!A2:M`,
   });
 
   return res.data.values || [];
 }
 
-module.exports = { appendRow, getRows, SHEETS_ENABLED };
+/**
+ * Verifica si un mensaje ya fue procesado usando el messageId de Meta
+ * @param {string} messageId - ID del mensaje de WhatsApp (Meta)
+ * @returns {boolean} - true si el mensaje ya existe, false si no
+ */
+async function messageExists(messageId) {
+  if (!messageId) return false;
+
+  try {
+    const client = await getSheetsClient();
+    if (!client) return false;
+
+    const rows = await getRows();
+    
+    // La columna M (índice 12) contiene el messageId de Meta
+    return rows.some(row => row && row[12] === messageId);
+  } catch (error) {
+    console.error('Error checking if message exists:', error);
+    return false;
+  }
+}
+
+module.exports = { appendRow, getRows, messageExists, SHEETS_ENABLED };
