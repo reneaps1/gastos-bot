@@ -16,7 +16,7 @@ No tomar decisiones de implementación sin consultar primero esta política.
 
 ## Fases Actuales
 
-El proyecto está en **Fase 5**. No saltar fases.
+El proyecto está en **Fase 6**. No saltar fases.
 
 | Fase | Estado |
 |------|--------|
@@ -26,7 +26,7 @@ El proyecto está en **Fase 5**. No saltar fases.
 | 3 - Migración De Datos | cerrado |
 | 4 - Refactor Del Bot | cerrado |
 | 5 - API Interna | cerrado |
-| 6 - Dashboard MVP | pendiente |
+| 6 - Dashboard MVP | cerrado |
 | 7 - Administración | pendiente |
 | 8 - Inteligencia Y Automatización | pendiente |
 
@@ -97,6 +97,16 @@ El proyecto está en **Fase 5**. No saltar fases.
 | /api/metodos-pago | cerrado | Catálogo de métodos de pago |
 | /api/cuentas | cerrado | Catálogo de cuentas |
 | /api/quincenas | cerrado | Catálogo de quincenas Q23-Q42 |
+
+### Fase 6 — Entregables cerrados
+
+| Entregable | Estado | Detalle |
+|------------|--------|---------|
+| Dashboard funcional | cerrado | 6 KPIs, semáforo, gráficas, pendientes |
+| Vista por quincena | cerrado | Selector funcional en todas las páginas |
+| KPIs principales | cerrado | Ingresos, Gastos, Ahorros, Margen, Pendiente, Presupuesto |
+| Gráficas básicas | cerrado | Gastos por categoría con barras de progreso |
+| Responsive | cerrado | Mobile/desktop, columnas ocultas en móvil |
 
 ## Stack Oficial
 
