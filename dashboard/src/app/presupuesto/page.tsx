@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, Copy } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Zap, Repeat } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -15,33 +15,22 @@ const CAT_DOT: Record<string, string> = {
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
 interface Presupuesto {
-  id: number
-  descripcion: string
-  montoPresupuestado: number
-  clasificacion: string | null
-  tipo: string
-  notas: string | null
-  quincenaId: number
-  categoriaId: number
-  categoria: Categoria
-  quincena: Quincena
-  real: number
-  pct: number
+  id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
+  tipo: string; notas: string | null; quincenaId: number; categoriaId: number
+  categoria: Categoria; quincena: Quincena; real: number; pct: number
+}
+interface EntradaRapida {
+  id: number; descripcion: string; monto: number; tipo: string | null
+  categoriaId: number | null; categoria: { nombre: string } | null; procesado: boolean
 }
 
 const EMPTY_FORM = {
-  categoriaId: '',
-  descripcion: '',
-  tipo: 'Gasto',
-  montoPresupuestado: '',
-  clasificacion: '',
-  notas: '',
+  categoriaId: '', descripcion: '', tipo: 'Gasto',
+  montoPresupuestado: '', clasificacion: '', notas: '',
 }
 
 function fieldClass(err?: string) {
-  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-    err ? 'border-rose-400' : 'border-slate-200'
-  }`
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200'}`
 }
 
 function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
@@ -68,6 +57,8 @@ export default function PresupuestoPage() {
   const [deleting, setDeleting] = useState(false)
   const [copying, setCopying] = useState(false)
 
+  const [entradasRapidas, setEntradasRapidas] = useState<EntradaRapida[]>([])
+
   const [modalOpen, setModalOpen] = useState(false)
   const [editingP, setEditingP] = useState<Presupuesto | null>(null)
   const [confirmId, setConfirmId] = useState<number | null>(null)
@@ -75,7 +66,6 @@ export default function PresupuestoPage() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
-  // Load quincenas and categorias once
   useEffect(() => {
     Promise.all([
       fetch('/api/quincenas').then(r => r.json()),
@@ -83,11 +73,8 @@ export default function PresupuestoPage() {
     ]).then(([q, c]) => {
       setQuincenas(q)
       setCategorias(c)
-      // Default: current quincena
       const today = new Date().toISOString().split('T')[0]
-      const current = q.find((x: Quincena) =>
-        x.fechaInicio <= today && x.fechaFin >= today
-      )
+      const current = q.find((x: Quincena) => x.fechaInicio <= today && x.fechaFin >= today)
       if (current) setQuincenaId(current.id.toString())
     })
   }, [])
@@ -96,13 +83,16 @@ export default function PresupuestoPage() {
     if (!quincenaId) return
     setLoading(true)
     try {
-      const res = await fetch(`/api/presupuestos?quincenaId=${quincenaId}`)
-      const data: Presupuesto[] = await res.json()
+      const [presupRes, entradasRes] = await Promise.all([
+        fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
+        fetch(`/api/entradas-rapidas?quincenaId=${quincenaId}`),
+      ])
+      const data: Presupuesto[] = await presupRes.json()
+      const entradas: EntradaRapida[] = await entradasRes.json()
       setPresupuestos(data)
+      setEntradasRapidas(entradas)
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }, [quincenaId, quincenas])
 
   useEffect(() => { fetchPresupuestos() }, [fetchPresupuestos])
@@ -117,12 +107,9 @@ export default function PresupuestoPage() {
   function openEdit(p: Presupuesto) {
     setEditingP(p)
     setForm({
-      categoriaId: p.categoriaId.toString(),
-      descripcion: p.descripcion,
-      tipo: p.tipo,
-      montoPresupuestado: p.montoPresupuestado.toString(),
-      clasificacion: p.clasificacion ?? '',
-      notas: p.notas ?? '',
+      categoriaId: p.categoriaId.toString(), descripcion: p.descripcion,
+      tipo: p.tipo, montoPresupuestado: p.montoPresupuestado.toString(),
+      clasificacion: p.clasificacion ?? '', notas: p.notas ?? '',
     })
     setFormErrors({})
     setModalOpen(true)
@@ -142,13 +129,9 @@ export default function PresupuestoPage() {
     setSaving(true)
     try {
       const body = {
-        quincenaId,
-        categoriaId: form.categoriaId,
-        descripcion: form.descripcion.trim(),
-        tipo: form.tipo,
-        montoPresupuestado: form.montoPresupuestado,
-        clasificacion: form.clasificacion || null,
-        notas: form.notas || null,
+        quincenaId, categoriaId: form.categoriaId, descripcion: form.descripcion.trim(),
+        tipo: form.tipo, montoPresupuestado: form.montoPresupuestado,
+        clasificacion: form.clasificacion || null, notas: form.notas || null,
       }
       const res = editingP
         ? await fetch(`/api/presupuestos/${editingP.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -157,11 +140,7 @@ export default function PresupuestoPage() {
       toast(editingP ? 'Presupuesto actualizado' : 'Presupuesto creado')
       setModalOpen(false)
       fetchPresupuestos()
-    } catch {
-      toast('Error al guardar', 'error')
-    } finally {
-      setSaving(false)
-    }
+    } catch { toast('Error al guardar', 'error') } finally { setSaving(false) }
   }
 
   async function handleDelete() {
@@ -173,64 +152,53 @@ export default function PresupuestoPage() {
       toast('Presupuesto eliminado')
       setConfirmId(null)
       fetchPresupuestos()
-    } catch {
-      toast('Error al eliminar', 'error')
-    } finally {
-      setDeleting(false)
-    }
+    } catch { toast('Error al eliminar', 'error') } finally { setDeleting(false) }
   }
 
   async function handleCopiar() {
-    // Find previous quincena
     const idx = quincenas.findIndex(q => q.id.toString() === quincenaId)
-    if (idx < 0 || idx >= quincenas.length - 1) {
-      toast('No hay quincena anterior disponible', 'error')
-      return
-    }
-    const prevQ = quincenas[idx + 1] // sorted desc, so idx+1 is earlier
+    if (idx < 0 || idx >= quincenas.length - 1) { toast('No hay quincena anterior disponible', 'error'); return }
+    const prevQ = quincenas[idx + 1]
     setCopying(true)
     try {
       const res = await fetch(`/api/presupuestos?quincenaId=${prevQ.id}`)
       const prev: Presupuesto[] = await res.json()
-      if (prev.length === 0) {
-        toast('La quincena anterior no tiene presupuesto', 'error')
-        return
-      }
-      await Promise.all(
-        prev.map(p =>
-          fetch('/api/presupuestos', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              quincenaId,
-              categoriaId: p.categoriaId.toString(),
-              descripcion: p.descripcion,
-              tipo: p.tipo,
-              montoPresupuestado: p.montoPresupuestado.toString(),
-              clasificacion: p.clasificacion,
-              notas: p.notas,
-            }),
-          })
-        )
-      )
+      if (prev.length === 0) { toast('La quincena anterior no tiene presupuesto', 'error'); return }
+      await Promise.all(prev.map(p =>
+        fetch('/api/presupuestos', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            quincenaId, categoriaId: p.categoriaId.toString(), descripcion: p.descripcion,
+            tipo: p.tipo, montoPresupuestado: p.montoPresupuestado.toString(),
+            clasificacion: p.clasificacion, notas: p.notas,
+          }),
+        })
+      ))
       toast(`${prev.length} presupuestos copiados de ${prevQ.codigo}`)
       fetchPresupuestos()
-    } catch {
-      toast('Error al copiar presupuestos', 'error')
-    } finally {
-      setCopying(false)
-    }
+    } catch { toast('Error al copiar presupuestos', 'error') } finally { setCopying(false) }
   }
 
   const totalPresupuestado = presupuestos.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
   const totalGastado = presupuestos.reduce((s, p) => s + p.real, 0)
   const pctGlobal = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0
 
+  const entradasPorCategoria = entradasRapidas.reduce((acc, e) => {
+    const catId = e.categoriaId
+    if (catId) {
+      if (!acc[catId]) acc[catId] = { total: 0, count: 0 }
+      acc[catId].total += Number(e.monto)
+      acc[catId].count++
+    }
+    return acc
+  }, {} as Record<number, { total: number; count: number }>)
+
+  const totalRecurrente = entradasRapidas.reduce((s, e) => s + Number(e.monto), 0)
+
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Presupuesto</h2>
@@ -243,67 +211,68 @@ export default function PresupuestoPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <select
-            value={quincenaId}
-            onChange={e => setQuincenaId(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
-          >
+          <select value={quincenaId} onChange={e => setQuincenaId(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer">
             <option value="">Seleccionar quincena</option>
             {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
           </select>
           {presupuestos.length === 0 && !loading && (
-            <button
-              onClick={handleCopiar}
-              disabled={copying}
-              className="flex items-center gap-2 text-sm text-slate-600 border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50"
-            >
+            <button onClick={handleCopiar} disabled={copying}
+              className="flex items-center gap-2 text-sm text-slate-600 border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
               <Copy size={14} />
               {copying ? 'Copiando...' : 'Copiar anterior'}
             </button>
           )}
-          <button
-            onClick={openCreate}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors"
-          >
-            <Plus size={16} />
-            Nuevo presupuesto
+          <button onClick={openCreate}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
+            <Plus size={16} /> Nuevo
           </button>
         </div>
       </div>
 
-      {/* Global progress */}
+      {/* Summary cards */}
       {presupuestos.length > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-200 p-5">
-          <div className="flex justify-between items-end mb-3">
-            <div>
-              <p className="text-sm text-slate-500">Progreso global</p>
-              <p className="text-2xl font-bold text-slate-800">
-                {formatMXN(totalGastado)}{' '}
-                <span className="text-slate-400 font-normal text-base">/ {formatMXN(totalPresupuestado)}</span>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <p className="text-sm text-slate-500 mb-1">Progreso global</p>
+            <div className="flex justify-between items-end mb-2">
+              <p className="text-2xl font-bold text-slate-800 tabular-nums">
+                {formatMXN(totalGastado)}
+                <span className="text-slate-400 font-normal text-base"> / {formatMXN(totalPresupuestado)}</span>
               </p>
+              <span className={`text-lg font-bold ${pctTextColor(pctGlobal)}`}>{pctGlobal.toFixed(0)}%</span>
             </div>
-            <span className={`text-lg font-bold ${pctTextColor(pctGlobal)}`}>
-              {pctGlobal.toFixed(0)}%
-            </span>
+            <div className="w-full bg-slate-100 rounded-full h-3">
+              <div className={`h-3 rounded-full transition-all ${pctColor(pctGlobal)}`} style={{ width: `${Math.min(pctGlobal, 100)}%` }} />
+            </div>
           </div>
-          <div className="w-full bg-slate-100 rounded-full h-3">
-            <div
-              className={`h-3 rounded-full transition-all ${pctColor(pctGlobal)}`}
-              style={{ width: `${Math.min(pctGlobal, 100)}%` }}
-            />
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="flex items-center gap-2 mb-1">
+              <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
+                <Repeat size={14} className="text-amber-600" />
+              </div>
+              <p className="text-sm text-slate-500">Recurrentes</p>
+            </div>
+            <p className="text-2xl font-bold text-slate-800 tabular-nums">{formatMXN(totalRecurrente)}</p>
+            <p className="text-xs text-slate-400 mt-1">{entradasRapidas.length} conceptos configurados</p>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <p className="text-sm text-slate-500 mb-1">Restante</p>
+            <p className={`text-2xl font-bold tabular-nums ${totalPresupuestado - totalGastado >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+              {formatMXN(totalPresupuestado - totalGastado)}
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              {pctGlobal > 90 ? 'Cuidado: casi agotado' : pctGlobal > 70 ? 'Va bien, pero vigilante' : 'Suficiente para la quincena'}
+            </p>
           </div>
         </div>
       )}
 
       {/* Per-category */}
       {loading ? (
-        <div className="py-16 flex justify-center text-slate-400 text-sm gap-2">
-          <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-          </svg>
-          Cargando...
-        </div>
+        <PresupuestoSkeleton />
       ) : presupuestos.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
@@ -313,163 +282,133 @@ export default function PresupuestoPage() {
           <p className="text-sm mt-1">Crea un presupuesto o copia el de la quincena anterior</p>
         </div>
       ) : (
-        <div className="grid gap-4">
-          {presupuestos.map(p => (
-            <div key={p.id} className="bg-white rounded-xl border border-slate-200 p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
-                  <div>
-                    <p className="font-semibold text-slate-800">{p.descripcion}</p>
-                    <p className="text-xs text-slate-400">
-                      {p.categoria.nombre}
-                      {p.clasificacion && ` · ${p.clasificacion}`}
-                    </p>
+        <div className="grid gap-3">
+          {presupuestos.map(p => {
+            const recurrence = entradasPorCategoria[p.categoriaId]
+            return (
+              <div key={p.id} className="bg-white rounded-xl border border-slate-200 p-4 hover:border-indigo-200 hover:shadow-sm transition-all">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold text-slate-800 truncate">{p.descripcion}</p>
+                        {recurrence && (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full shrink-0">
+                            <Zap size={10} /> recurrente
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400">
+                        {p.categoria.nombre}
+                        {p.clasificacion && ` · ${p.clasificacion}`}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-right">
+                      <p className="font-bold text-slate-800 tabular-nums">{formatMXN(p.real)}</p>
+                      <p className="text-xs text-slate-400">de {formatMXN(Number(p.montoPresupuestado))}</p>
+                    </div>
+                    <button onClick={() => openEdit(p)}
+                      className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                      <Pencil size={14} />
+                    </button>
+                    <button onClick={() => setConfirmId(p.id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="text-right">
-                    <p className="font-bold text-slate-800">{formatMXN(p.real)}</p>
-                    <p className="text-xs text-slate-400">de {formatMXN(Number(p.montoPresupuestado))}</p>
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 bg-slate-100 rounded-full h-2">
+                    <div className={`h-2 rounded-full transition-all ${pctColor(p.pct)}`} style={{ width: `${Math.min(p.pct, 100)}%` }} />
                   </div>
-                  <button
-                    onClick={() => openEdit(p)}
-                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer"
-                    aria-label="Editar"
-                  >
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    onClick={() => setConfirmId(p.id)}
-                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
-                    aria-label="Eliminar"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <span className={`text-xs font-semibold w-10 text-right tabular-nums ${pctTextColor(p.pct)}`}>
+                    {p.pct.toFixed(0)}%
+                  </span>
                 </div>
+                {recurrence && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                    <Repeat size={11} className="text-amber-500" />
+                    {recurrence.count} {recurrence.count === 1 ? 'concepto' : 'conceptos'} recurrente{recurrence.count > 1 ? 's' : ''} · {formatMXN(recurrence.total)}
+                  </div>
+                )}
               </div>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 bg-slate-100 rounded-full h-2">
-                  <div
-                    className={`h-2 rounded-full ${pctColor(p.pct)}`}
-                    style={{ width: `${Math.min(p.pct, 100)}%` }}
-                  />
-                </div>
-                <span className={`text-xs font-semibold w-10 text-right ${pctTextColor(p.pct)}`}>
-                  {p.pct.toFixed(0)}%
-                </span>
-              </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
 
-      {/* Create/Edit Modal */}
-      <FormModal
-        open={modalOpen}
-        onOpenChange={setModalOpen}
-        title={editingP ? 'Editar presupuesto' : 'Nuevo presupuesto'}
-      >
+      <FormModal open={modalOpen} onOpenChange={setModalOpen} title={editingP ? 'Editar presupuesto' : 'Nuevo presupuesto'}>
         <div className="space-y-4">
           <div>
             <Label htmlFor="p-cat">Categoría *</Label>
-            <select
-              id="p-cat"
-              value={form.categoriaId}
-              onChange={e => setForm(f => ({ ...f, categoriaId: e.target.value }))}
-              className={fieldClass(formErrors.categoriaId)}
-            >
+            <select id="p-cat" value={form.categoriaId} onChange={e => setForm(f => ({ ...f, categoriaId: e.target.value }))} className={fieldClass(formErrors.categoriaId)}>
               <option value="">Seleccionar...</option>
               {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
             </select>
             {formErrors.categoriaId && <p className="text-xs text-rose-500 mt-1">{formErrors.categoriaId}</p>}
           </div>
-
           <div>
             <Label htmlFor="p-desc">Descripción *</Label>
-            <input
-              id="p-desc"
-              type="text"
-              placeholder="Ej: Renta, Súper quincenal..."
-              value={form.descripcion}
-              onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))}
-              className={fieldClass(formErrors.descripcion)}
-            />
+            <input id="p-desc" type="text" placeholder="Ej: Renta, Súper quincenal..." value={form.descripcion}
+              onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} className={fieldClass(formErrors.descripcion)} />
             {formErrors.descripcion && <p className="text-xs text-rose-500 mt-1">{formErrors.descripcion}</p>}
           </div>
-
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="p-monto">Monto (MXN) *</Label>
-              <input
-                id="p-monto"
-                type="number"
-                min="0"
-                step="0.01"
-                placeholder="0.00"
-                value={form.montoPresupuestado}
-                onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))}
-                className={fieldClass(formErrors.montoPresupuestado)}
-              />
+              <input id="p-monto" type="number" min="0" step="0.01" placeholder="0.00" value={form.montoPresupuestado}
+                onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))} className={fieldClass(formErrors.montoPresupuestado)} />
               {formErrors.montoPresupuestado && <p className="text-xs text-rose-500 mt-1">{formErrors.montoPresupuestado}</p>}
             </div>
             <div>
               <Label htmlFor="p-clasificacion">Clasificación</Label>
-              <select
-                id="p-clasificacion"
-                value={form.clasificacion}
-                onChange={e => setForm(f => ({ ...f, clasificacion: e.target.value }))}
-                className={fieldClass()}
-              >
+              <select id="p-clasificacion" value={form.clasificacion} onChange={e => setForm(f => ({ ...f, clasificacion: e.target.value }))} className={fieldClass()}>
                 <option value="">Sin clasificar</option>
                 <option value="Fijo">Fijo</option>
                 <option value="Variable">Variable</option>
               </select>
             </div>
           </div>
-
           <div>
             <Label htmlFor="p-notas">Notas</Label>
-            <textarea
-              id="p-notas"
-              rows={2}
-              placeholder="Notas adicionales (opcional)"
-              value={form.notas}
-              onChange={e => setForm(f => ({ ...f, notas: e.target.value }))}
-              className={`${fieldClass()} resize-none`}
-            />
+            <textarea id="p-notas" rows={2} placeholder="Notas adicionales (opcional)" value={form.notas}
+              onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} className={`${fieldClass()} resize-none`} />
           </div>
-
           <div className="flex gap-3 justify-end pt-2">
-            <button
-              type="button"
-              onClick={() => setModalOpen(false)}
-              disabled={saving}
-              className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
-            >
+            <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
+              className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer transition-colors">
               Cancelar
             </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={saving}
-              className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]"
-            >
+            <button type="button" onClick={handleSave} disabled={saving}
+              className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px] transition-colors">
               {saving ? 'Guardando...' : editingP ? 'Guardar cambios' : 'Crear'}
             </button>
           </div>
         </div>
       </FormModal>
 
-      {/* Delete confirm */}
-      <ConfirmDialog
-        open={confirmId != null}
-        onOpenChange={open => !open && setConfirmId(null)}
-        title="Eliminar presupuesto"
-        description="Se eliminará este presupuesto. El historial de transacciones no se verá afectado."
-        onConfirm={handleDelete}
-        loading={deleting}
-      />
+      <ConfirmDialog open={confirmId != null} onOpenChange={open => !open && setConfirmId(null)}
+        title="Eliminar presupuesto" description="Se eliminará este presupuesto. El historial de transacciones no se verá afectado."
+        onConfirm={handleDelete} loading={deleting} />
+    </div>
+  )
+}
+
+function PresupuestoSkeleton() {
+  return (
+    <div className="space-y-3 animate-pulse">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="bg-white rounded-xl border border-slate-200 p-4">
+          <div className="flex justify-between mb-2">
+            <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-slate-100" /><div className="h-4 bg-slate-100 rounded w-32" /></div>
+            <div className="h-4 bg-slate-100 rounded w-20" />
+          </div>
+          <div className="h-2 bg-slate-100 rounded-full" />
+        </div>
+      ))}
     </div>
   )
 }
