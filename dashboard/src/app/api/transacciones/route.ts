@@ -12,11 +12,16 @@ export async function GET(request: Request) {
     const limit = parseInt(searchParams.get('limit') ?? '50')
     const skip = (page - 1) * limit
 
+    const estatus = searchParams.get('estatus')
+    const busqueda = searchParams.get('busqueda')
+
     const where: any = {}
     if (quincenaId) where.quincenaId = parseInt(quincenaId)
     if (tipo) where.tipo = tipo
     if (categoriaId) where.categoriaId = parseInt(categoriaId)
     if (userId) where.userId = parseInt(userId)
+    if (estatus) where.estatus = estatus
+    if (busqueda) where.descripcion = { contains: busqueda, mode: 'insensitive' }
 
     const [transacciones, total] = await Promise.all([
       prisma.transaccion.findMany({

@@ -16,7 +16,7 @@ No tomar decisiones de implementación sin consultar primero esta política.
 
 ## Fases Actuales
 
-El proyecto está en **Fase 6**. No saltar fases.
+El proyecto está en **Fase 7**. No saltar fases.
 
 | Fase | Estado |
 |------|--------|
@@ -27,7 +27,7 @@ El proyecto está en **Fase 6**. No saltar fases.
 | 4 - Refactor Del Bot | cerrado |
 | 5 - API Interna | cerrado |
 | 6 - Dashboard MVP | cerrado |
-| 7 - Administración | pendiente |
+| 7 - Administración | en progreso |
 | 8 - Inteligencia Y Automatización | pendiente |
 
 ### Fase 0 — Entregables cerrados
@@ -107,6 +107,18 @@ El proyecto está en **Fase 6**. No saltar fases.
 | KPIs principales | cerrado | Ingresos, Gastos, Ahorros, Margen, Pendiente, Presupuesto |
 | Gráficas básicas | cerrado | Gastos por categoría con barras de progreso |
 | Responsive | cerrado | Mobile/desktop, columnas ocultas en móvil |
+
+### Fase 7 — Entregables en progreso
+
+| Entregable | Estado | Detalle |
+|------------|--------|---------|
+| Componentes compartidos UI | cerrado | Toast, ConfirmDialog, FormModal, NavBar en `dashboard/src/components/` |
+| CRUD Transacciones | cerrado | Crear, editar, eliminar, toggle estatus, filtros completos, paginación 25/pág |
+| CRUD Presupuesto | cerrado | Crear, editar, eliminar, copiar de quincena anterior |
+| API deudas/[id] | cerrado | GET, PUT (incluye archivar), DELETE |
+| CRUD Deudas | cerrado | Crear, editar, archivar, registrar abono manual como transacción |
+| Navegación con estado activo | cerrado | Indicador de página activa + menú hamburguesa móvil |
+| Páginas de configuración | pendiente | Categorías, usuarios, liquidez, conceptos recurrentes |
 
 ## Deploy en Producción (Render)
 
