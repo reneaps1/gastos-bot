@@ -22,7 +22,8 @@ const express = require('express')
 const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
 const { parseMessage, formatConfirmation } = require('./parser')
 const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react } = require('./whatsapp')
-const { handleQuestion, detectIntent } = require('./analytics')
+const { handleQuestion, detectIntent, getData } = require('./analytics')
+const gemini = require('./gemini')
 const db = require('./database')
 
 const app = express()
@@ -94,6 +95,7 @@ app.post('/webhook', async (req, res) => {
           continue
         }
 
+        // 1. Analytics con regex (rápido, sin costo de API)
         const intent = detectIntent(text)
         if (intent) {
           try {
@@ -119,10 +121,43 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
+        // 2. Gemini: clasifica el mensaje y mejora el parseo
+        let geminiData = null
+        if (gemini.isEnabled()) {
+          try {
+            geminiData = await gemini.classify(text)
+
+            // Si Gemini dice que es una pregunta (no un registro), responde con IA
+            if (geminiData && !geminiData.isExpense) {
+              const data = await getData()
+              const geminiAnswer = await gemini.answer(text, data, senderName)
+              if (geminiAnswer) {
+                await sendWhatsAppMessage(senderPhone, geminiAnswer)
+                await react(senderPhone, message.id, '✅')
+                await db.saveMessage({
+                  waMessageId: message.id,
+                  fromNumber: senderPhone,
+                  fromName: senderName,
+                  userId: user?.id || null,
+                  body: text,
+                  tipo: 'analytics',
+                  procesado: true,
+                  fechaMensaje: new Date(),
+                })
+                console.log('Gemini answered free-form question')
+                continue
+              }
+            }
+          } catch (error) {
+            console.error('Gemini error:', error)
+          }
+        }
+
         try {
           await react(senderPhone, message.id, '⏳')
 
-          const parsed = parseMessage(text, senderName || 'Rene', senderPhone, message.id)
+          // geminiData mejora el parseo si Gemini detectó un registro
+          const parsed = parseMessage(text, senderName || 'Rene', senderPhone, message.id, geminiData?.isExpense ? geminiData : null)
 
           const categoria = await db.findCategoria(parsed.categoria)
           const metodoPago = await db.findMetodoPago(parsed.formaPago)

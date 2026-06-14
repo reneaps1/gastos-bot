@@ -312,4 +312,4 @@ function help() {
   ].join('\n')
 }
 
-module.exports = { handleQuestion, detectIntent }
+module.exports = { handleQuestion, detectIntent, getData }

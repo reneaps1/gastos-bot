@@ -101,12 +101,12 @@ function extractDescription(text, amount) {
   return desc || 'Sin descripcion'
 }
 
-function parseMessage(text, senderName, senderPhone, messageId) {
-  const tipo = detectType(text)
-  const monto = extractAmount(text)
-  const descripcion = extractDescription(text, monto)
-  const categoria = detectCategory(text)
-  const formaPago = detectPaymentMethod(text)
+function parseMessage(text, senderName, senderPhone, messageId, geminiData = null) {
+  const tipo = geminiData?.tipo || detectType(text)
+  const monto = (geminiData?.monto > 0 ? geminiData.monto : null) ?? extractAmount(text)
+  const descripcion = geminiData?.descripcion || extractDescription(text, monto)
+  const categoria = geminiData?.categoria || detectCategory(text)
+  const formaPago = geminiData?.formaPago || detectPaymentMethod(text)
   const clasificacion = getClasificacion(categoria, tipo)
   const quincena = getCurrentQuincena()
 
