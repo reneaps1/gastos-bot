@@ -2,6 +2,8 @@ process.env.TZ = 'America/Mexico_City'
 require('dotenv').config()
 
 // Render no preserva node_modules/.prisma entre build y runtime.
+// DATABASE_URL debe existir para que prisma.config.ts cargue, aunque generate no conecta a la DB.
+process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://x:x@localhost:0/x'
 const { execSync } = require('child_process')
 try {
   execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
