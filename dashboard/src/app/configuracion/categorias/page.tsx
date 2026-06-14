@@ -1,0 +1,228 @@
+'use client'
+import { useState, useEffect, useCallback } from 'react'
+import { Pencil } from 'lucide-react'
+import { useToast } from '@/components/Toast'
+import { FormModal } from '@/components/ui/FormModal'
+
+interface Categoria {
+  id: number
+  nombre: string
+  tipo: string
+  clasificacion: string | null
+  ejemplos: string | null
+  activo: boolean
+}
+
+const EMOJI: Record<string, string> = {
+  Hogar: '🏠', Salud: '💊', Familia: '👨‍👩‍👧', Transporte: '🚗',
+  Suscripciones: '📱', Deudas: '💳', Personal: '🎯', Ingresos: '💵', Ahorro: '🏦',
+}
+
+function fieldClass(err?: string) {
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200'}`
+}
+
+function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
+  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 mb-1">{children}</label>
+}
+
+export default function CategoriasConfigPage() {
+  const { toast } = useToast()
+
+  const [categorias, setCategorias] = useState<Categoria[]>([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<Categoria | null>(null)
+  const [form, setForm] = useState({ clasificacion: '', ejemplos: '', activo: true })
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/categorias')
+      setCategorias(await res.json())
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  function openEdit(c: Categoria) {
+    setEditing(c)
+    setForm({
+      clasificacion: c.clasificacion ?? '',
+      ejemplos: c.ejemplos ?? '',
+      activo: c.activo,
+    })
+    setFormErrors({})
+    setModalOpen(true)
+  }
+
+  function validate() {
+    const errors: Record<string, string> = {}
+    if (!form.clasificacion) errors.clasificacion = 'Selecciona una clasificación'
+    return errors
+  }
+
+  async function handleSave() {
+    const errors = validate()
+    if (Object.keys(errors).length) { setFormErrors(errors); return }
+    if (!editing) return
+    setSaving(true)
+    try {
+      const res = await fetch(`/api/categorias/${editing.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clasificacion: form.clasificacion || null,
+          ejemplos: form.ejemplos || null,
+          activo: form.activo,
+        }),
+      })
+      if (!res.ok) throw new Error()
+      toast('Categoría actualizada')
+      setModalOpen(false)
+      fetchData()
+    } catch {
+      toast('Error al guardar', 'error')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const set = (key: string, val: string | boolean) => setForm(f => ({ ...f, [key]: val }))
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-800">Categorías</h2>
+        <p className="text-sm text-slate-500 mt-1">Las 9 categorías oficiales del sistema</p>
+      </div>
+
+      {/* Aviso */}
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+        Las categorías son un catálogo cerrado. No se pueden agregar ni eliminar. Solo puedes editar la clasificación, ejemplos y estado.
+      </div>
+
+      {/* Table */}
+      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+        {loading ? (
+          <div className="py-16 flex justify-center text-slate-400 text-sm gap-2">
+            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+            Cargando...
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="text-left px-5 py-3 text-slate-500 font-medium">Categoría</th>
+                  <th className="text-left px-4 py-3 text-slate-500 font-medium">Tipo</th>
+                  <th className="text-left px-4 py-3 text-slate-500 font-medium">Clasificación</th>
+                  <th className="text-left px-4 py-3 text-slate-500 font-medium hidden md:table-cell">Ejemplos</th>
+                  <th className="text-center px-4 py-3 text-slate-500 font-medium">Activo</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {categorias.map(c => (
+                  <tr key={c.id} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-5 py-3.5">
+                      <span className="flex items-center gap-2 font-medium text-slate-800">
+                        <span className="text-lg">{EMOJI[c.nombre] ?? '📦'}</span>
+                        {c.nombre}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3.5">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        c.tipo === 'Gasto' ? 'bg-rose-100 text-rose-700' :
+                        c.tipo === 'Ingreso' ? 'bg-emerald-100 text-emerald-700' :
+                        'bg-blue-100 text-blue-700'
+                      }`}>
+                        {c.tipo}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-600">
+                      {c.clasificacion ?? <span className="text-slate-400 italic">Sin clasificar</span>}
+                    </td>
+                    <td className="px-4 py-3.5 text-slate-500 text-xs max-w-[250px] truncate hidden md:table-cell">
+                      {c.ejemplos ?? '—'}
+                    </td>
+                    <td className="px-4 py-3.5 text-center">
+                      {c.activo
+                        ? <span className="text-emerald-600 text-xs font-semibold">Activo</span>
+                        : <span className="text-slate-400 text-xs">Inactivo</span>
+                      }
+                    </td>
+                    <td className="px-4 py-3.5">
+                      <button
+                        onClick={() => openEdit(c)}
+                        className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer transition-colors"
+                        aria-label="Editar"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal */}
+      <FormModal open={modalOpen} onOpenChange={setModalOpen} title={`Editar — ${editing?.nombre ?? ''}`}>
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="cat-clas">Clasificación *</Label>
+            <select id="cat-clas" value={form.clasificacion} onChange={e => set('clasificacion', e.target.value)} className={fieldClass(formErrors.clasificacion)}>
+              <option value="">Sin clasificar</option>
+              <option value="Fijo">Fijo</option>
+              <option value="Variable">Variable</option>
+            </select>
+            {formErrors.clasificacion && <p className="text-xs text-rose-500 mt-1">{formErrors.clasificacion}</p>}
+          </div>
+
+          <div>
+            <Label htmlFor="cat-ejemplos">Ejemplos</Label>
+            <textarea
+              id="cat-ejemplos"
+              rows={3}
+              placeholder="Ej: Renta, Agua, Luz..."
+              value={form.ejemplos}
+              onChange={e => set('ejemplos', e.target.value)}
+              className={`${fieldClass()} resize-none`}
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              id="cat-activo"
+              type="checkbox"
+              checked={form.activo}
+              onChange={e => set('activo', e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            />
+            <Label htmlFor="cat-activo">Activo</Label>
+          </div>
+
+          <div className="flex gap-3 justify-end pt-2">
+            <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+              Cancelar
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]">
+              {saving ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </div>
+        </div>
+      </FormModal>
+    </div>
+  )
+}

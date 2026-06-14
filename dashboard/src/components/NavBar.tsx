@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { Menu, X } from 'lucide-react'
+import { Menu, X, Settings } from 'lucide-react'
 
 const links = [
   { href: '/', label: 'Dashboard' },
@@ -10,19 +10,28 @@ const links = [
   { href: '/deudas', label: 'Deudas' },
 ]
 
+const configLinks = [
+  { href: '/configuracion/liquidez', label: 'Liquidez' },
+  { href: '/configuracion/categorias', label: 'Categorías' },
+  { href: '/configuracion/usuarios', label: 'Usuarios' },
+]
+
 export function NavBar() {
   const pathname = usePathname()
   const [open, setOpen] = useState(false)
+  const [configOpen, setConfigOpen] = useState(false)
 
   function isActive(href: string) {
     if (href === '/') return pathname === '/'
     return pathname.startsWith(href)
   }
 
+  const isConfigActive = pathname.startsWith('/configuracion')
+
   return (
     <>
       {/* Desktop nav */}
-      <nav className="hidden md:flex gap-1 text-sm font-medium">
+      <nav className="hidden md:flex items-center gap-1 text-sm font-medium">
         {links.map(l => (
           <a
             key={l.href}
@@ -36,6 +45,39 @@ export function NavBar() {
             {l.label}
           </a>
         ))}
+
+        {/* Configuración dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setConfigOpen(v => !v)}
+            onBlur={() => setTimeout(() => setConfigOpen(false), 150)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors cursor-pointer ${
+              isConfigActive
+                ? 'text-indigo-600 bg-indigo-50 font-semibold'
+                : 'text-slate-500 hover:text-indigo-600 hover:bg-slate-50'
+            }`}
+          >
+            <Settings size={14} />
+            Configuración
+          </button>
+          {configOpen && (
+            <div className="absolute top-full right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1 min-w-[160px] z-50">
+              {configLinks.map(l => (
+                <a
+                  key={l.href}
+                  href={l.href}
+                  className={`block px-4 py-2 text-sm transition-colors ${
+                    isActive(l.href)
+                      ? 'text-indigo-600 bg-indigo-50 font-semibold'
+                      : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {l.label}
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
       </nav>
 
       {/* Mobile hamburger */}
@@ -70,6 +112,19 @@ export function NavBar() {
                   {l.label}
                 </a>
               ))}
+              <div className="border-t border-slate-100 my-1" />
+              <a
+                href="/configuracion"
+                onClick={() => setOpen(false)}
+                className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 ${
+                  isConfigActive
+                    ? 'text-indigo-600 bg-indigo-50 font-semibold'
+                    : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <Settings size={14} />
+                Configuración
+              </a>
             </nav>
           </div>
         </>
