@@ -121,14 +121,33 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
-        // 2. Gemini: clasifica el mensaje y mejora el parseo
+        // 2. Gemini: clasifica el mensaje (expense / question / chat)
         let geminiData = null
         if (gemini.isEnabled()) {
           try {
             geminiData = await gemini.classify(text)
 
-            // Si Gemini dice que es una pregunta (no un registro), responde con IA
-            if (geminiData && !geminiData.isExpense) {
+            if (geminiData?.type === 'chat') {
+              const chatReply = await gemini.chat(text, senderName)
+              if (chatReply) {
+                await sendWhatsAppMessage(senderPhone, chatReply)
+                await react(senderPhone, message.id, '✅')
+                await db.saveMessage({
+                  waMessageId: message.id,
+                  fromNumber: senderPhone,
+                  fromName: senderName,
+                  userId: user?.id || null,
+                  body: text,
+                  tipo: 'chat',
+                  procesado: true,
+                  fechaMensaje: new Date(),
+                })
+                console.log('Gemini handled chat message')
+                continue
+              }
+            }
+
+            if (geminiData?.type === 'question') {
               const data = await getData()
               const geminiAnswer = await gemini.answer(text, data, senderName)
               if (geminiAnswer) {
@@ -157,7 +176,7 @@ app.post('/webhook', async (req, res) => {
           await react(senderPhone, message.id, '⏳')
 
           // geminiData mejora el parseo si Gemini detectó un registro
-          const parsed = parseMessage(text, senderName || 'Rene', senderPhone, message.id, geminiData?.isExpense ? geminiData : null)
+          const parsed = parseMessage(text, senderName || 'Rene', senderPhone, message.id, geminiData?.type === 'expense' ? geminiData : null)
 
           const categoria = await db.findCategoria(parsed.categoria)
           const metodoPago = await db.findMetodoPago(parsed.formaPago)
