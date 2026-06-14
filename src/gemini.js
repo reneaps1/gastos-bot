@@ -26,7 +26,10 @@ async function classify(text) {
     const prompt = `Eres un clasificador de mensajes para un bot de finanzas personales. Clasifica el mensaje en uno de tres tipos:
 
 REGISTRO: el usuario registra un gasto, ingreso o ahorro. Siempre incluye un monto numérico.
-  Ejemplos: "gasté 150 en uber", "compré pizza 200", "ingreso 5000 nómina", "ahorro 1000"
+  Ejemplos directos: "gasté 150 en uber", "compré pizza 200", "ingreso 5000 nómina", "ahorro 1000"
+  Ejemplos naturales: "el jueves me pagaron 3500", "hoy nos cobraron la renta 8000",
+    "ayer gasté como 250 en el super", "me descontaron 1200 del seguro",
+    "recibí mi bono de 4000", "transferí 2000 al ahorro"
 
 PREGUNTA: el usuario pregunta sobre sus finanzas.
   Ejemplos: "cuánto gasté esta semana", "cómo voy en el mes", "muéstrame mis gastos de transporte"

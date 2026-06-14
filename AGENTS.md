@@ -108,6 +108,40 @@ El proyecto está en **Fase 6**. No saltar fases.
 | Gráficas básicas | cerrado | Gastos por categoría con barras de progreso |
 | Responsive | cerrado | Mobile/desktop, columnas ocultas en móvil |
 
+## Deploy en Producción (Render)
+
+### Servicios activos
+
+| Servicio | Plataforma | Estado | URL |
+|----------|------------|--------|-----|
+| gastos-bot | Render Web Service (Node) | Live | gastos-bot.onrender.com |
+| gastos-dashboard | Render Web Service (Node) | Live | gastos-dashboard.onrender.com |
+| gastos-db | Render PostgreSQL (Free) | Live | interno: dpg-d8nburernols73dj06j0-a |
+
+### Configuración crítica de Render
+
+- El `render.yaml` define la infraestructura pero **el dashboard de Render sobreescribe** `buildCommand` y `startCommand` en servicios ya existentes. Cambios a esos campos en render.yaml no aplican a servicios ya creados — hay que actualizarlos en el dashboard o recrear el servicio.
+- `DATABASE_URL` debe configurarse **manualmente** en el Environment de cada servicio en el dashboard (el `fromDatabase` de render.yaml solo aplica en Blueprints nuevos).
+- Ambos servicios usan la URL **interna** de gastos-db (sin `.oregon-postgres.render.com`).
+
+### Prisma 7 en Render — Lecciones aprendidas
+
+- Prisma 7 valida `env("DATABASE_URL")` incluso durante `prisma generate` si está en el schema o en `prisma.config.ts`. Sin la variable, el build/runtime explota.
+- Con driver adapter (`PrismaPg`), el datasource **no necesita `url`** en `schema.prisma`. La conexión la maneja el pool directamente desde `process.env.DATABASE_URL`.
+- `prisma generate` se ejecuta dentro de `src/index.js` al arrancar (antes de los requires de Prisma), porque Render no preserva `node_modules/.prisma` entre build y runtime.
+- `prisma migrate deploy` también corre en startup del bot y del dashboard.
+- `postinstall: "prisma generate"` falla en build porque `DATABASE_URL` no está disponible en la fase de build de Render. No usar postinstall para generate.
+- Build tools (`tailwindcss`, `@tailwindcss/postcss`, `typescript`, `prisma`) deben estar en `dependencies` (no `devDependencies`) en el dashboard, porque Render instala con `NODE_ENV=production`.
+
+### Pendientes de producción
+
+| Tarea | Prioridad | Detalle |
+|-------|-----------|---------|
+| Correr views.sql en la DB | Alta | `prisma/migrations/views.sql` — vistas de resumen quincenal, deudas, presupuesto, liquidez |
+| Configurar tokens WhatsApp en gastos-bot | Alta | `META_VERIFY_TOKEN`, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID` en Render Environment |
+| Migrar datos históricos a producción | Media | 239 transacciones + presupuestos + liquidez del Excel |
+| Rotar contraseña de gastos-db | Media | Credencial expuesta en chat — gastos-db → Settings → Reset Password |
+
 ## Stack Oficial
 
 - **Next.js** full-stack

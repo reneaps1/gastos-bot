@@ -68,7 +68,7 @@ function detectType(text) {
 
 function extractAmount(text) {
   const patterns = [
-    /\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/,
+    /\$?\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/,
     /(\d+(?:\.\d{1,2})?)/,
   ]
   for (const pattern of patterns) {
