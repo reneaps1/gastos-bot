@@ -7,7 +7,7 @@
     "build": "prisma generate && next build",
     "start": "prisma migrate deploy && next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "node -e \"process.env.DATABASE_URL && require('child_process').execSync('prisma generate', {stdio:'inherit'})\" || true"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
