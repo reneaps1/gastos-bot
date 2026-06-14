@@ -23,21 +23,26 @@ async function classify(text) {
   const m = getModel()
   if (!m) return null
   try {
-    const prompt = `Eres un asistente de finanzas personales. Analiza este mensaje en español y clasifícalo en uno de tres tipos:
+    const prompt = `Eres un clasificador de mensajes para un bot de finanzas personales. Clasifica el mensaje en uno de tres tipos:
 
-1. REGISTRO: el usuario está registrando un gasto, ingreso o ahorro
-2. PREGUNTA: el usuario pregunta algo sobre sus finanzas o gastos
-3. CHAT: saludo, despedida, agradecimiento, conversación casual o cualquier otro mensaje
+REGISTRO: el usuario registra un gasto, ingreso o ahorro. Siempre incluye un monto numérico.
+  Ejemplos: "gasté 150 en uber", "compré pizza 200", "ingreso 5000 nómina", "ahorro 1000"
 
-Mensaje: "${text}"
+PREGUNTA: el usuario pregunta sobre sus finanzas.
+  Ejemplos: "cuánto gasté esta semana", "cómo voy en el mes", "muéstrame mis gastos de transporte"
 
-Categorías válidas: ${CATEGORIAS.join(', ')}
-Formas de pago válidas: ${FORMAS_PAGO.join(', ')}
+CHAT: cualquier otra cosa — saludos, despedidas, gracias, comentarios, preguntas no financieras.
+  Ejemplos: "hola", "gracias", "ok", "perfecto", "buenos días", "hasta luego", "qué tal"
+
+Mensaje a clasificar: "${text}"
+
+Categorías válidas (solo para REGISTRO): ${CATEGORIAS.join(', ')}
+Formas de pago válidas (solo para REGISTRO): ${FORMAS_PAGO.join(', ')}
 
 Responde SOLO con JSON sin markdown ni explicaciones:
-- Si es REGISTRO: {"type":"expense","monto":número,"descripcion":"descripción breve","categoria":"una categoría válida","formaPago":"una forma válida","tipo":"Gasto|Ingreso|Ahorro"}
-- Si es PREGUNTA: {"type":"question"}
-- Si es CHAT: {"type":"chat"}`
+- REGISTRO: {"type":"expense","monto":número,"descripcion":"descripción breve","categoria":"categoría válida","formaPago":"forma válida","tipo":"Gasto|Ingreso|Ahorro"}
+- PREGUNTA: {"type":"question"}
+- CHAT: {"type":"chat"}`
 
     const result = await m.generateContent(prompt)
     const raw = result.response.text().trim().replace(/```json\n?|\n?```/g, '').trim()

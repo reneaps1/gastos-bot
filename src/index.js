@@ -172,6 +172,26 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
+        // Si Gemini no lo clasificó como gasto y tampoco hay número en el texto,
+        // es un mensaje que no entendemos — responder y no procesar como gasto
+        const hasNumber = /\d/.test(text)
+        if (!hasNumber && geminiData?.type !== 'expense') {
+          await react(senderPhone, message.id, '❓')
+          await sendWhatsAppMessage(senderPhone, '🤖 No entendí ese mensaje. Puedes registrar un gasto (ej: "gasté 150 en uber") o hacerme una pregunta sobre tus finanzas.')
+          await db.saveMessage({
+            waMessageId: message.id,
+            fromNumber: senderPhone,
+            fromName: senderName,
+            userId: user?.id || null,
+            body: text,
+            tipo: 'error',
+            procesado: false,
+            error: 'mensaje no reconocido',
+            fechaMensaje: new Date(),
+          })
+          continue
+        }
+
         try {
           await react(senderPhone, message.id, '⏳')
 
