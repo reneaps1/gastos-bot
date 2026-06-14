@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN } from '@/lib/utils'
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, Target, Clock, BarChart3 } from 'lucide-react'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -15,9 +16,10 @@ interface Snapshot {
   teorico: number | null; quincena: Quincena
 }
 
-const EMOJI: Record<string, string> = {
-  Hogar: '🏠', Salud: '💊', Familia: '👨‍👩‍👧', Transporte: '🚗',
-  Suscripciones: '📱', Deudas: '💳', Personal: '🎯', Ingresos: '💵', Ahorro: '🏦',
+const CAT_DOT: Record<string, string> = {
+  Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
+  Transporte: 'bg-sky-500', Suscripciones: 'bg-violet-500', Deudas: 'bg-red-500',
+  Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
 
 function getSemaforo(margen: number, ingresos: number) {
@@ -148,12 +150,12 @@ export default function DashboardPage() {
         <>
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon="💵" color="text-emerald-600" bg="bg-emerald-50" />
-            <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} icon="💸" color="text-rose-600" bg="bg-rose-50" />
-            <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon="🏦" color="text-blue-600" bg="bg-blue-50" />
-            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? '📈' : '📉'} color={metricas.margen >= 0 ? 'text-indigo-600' : 'text-orange-600'} bg={metricas.margen >= 0 ? 'bg-indigo-50' : 'bg-orange-50'} />
-            <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon="⏳" color="text-amber-600" bg="bg-amber-50" />
-            <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon="📊" color={metricas.pctPresup > 90 ? 'text-rose-600' : metricas.pctPresup > 70 ? 'text-amber-600' : 'text-emerald-600'} bg={metricas.pctPresup > 90 ? 'bg-rose-50' : metricas.pctPresup > 70 ? 'bg-amber-50' : 'bg-emerald-50'} />
+            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600" />} color="text-emerald-600" bg="bg-emerald-50" />
+            <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} icon={<TrendingDown size={20} className="text-rose-600" />} color="text-rose-600" bg="bg-rose-50" />
+            <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600" />} color="text-blue-600" bg="bg-blue-50" />
+            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600" /> : <TrendingDown size={20} className="text-orange-600" />} color={metricas.margen >= 0 ? 'text-indigo-600' : 'text-orange-600'} bg={metricas.margen >= 0 ? 'bg-indigo-50' : 'bg-orange-50'} />
+            <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600" />} color="text-amber-600" bg="bg-amber-50" />
+            <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon={<BarChart3 size={20} className={metricas.pctPresup > 90 ? 'text-rose-600' : metricas.pctPresup > 70 ? 'text-amber-600' : 'text-emerald-600'} />} color={metricas.pctPresup > 90 ? 'text-rose-600' : metricas.pctPresup > 70 ? 'text-amber-600' : 'text-emerald-600'} bg={metricas.pctPresup > 90 ? 'bg-rose-50' : metricas.pctPresup > 70 ? 'bg-amber-50' : 'bg-emerald-50'} />
           </div>
 
           {/* Gastos por categoría + Pendientes */}
@@ -170,7 +172,7 @@ export default function DashboardPage() {
                     <div key={cat.nombre}>
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-sm text-slate-700 flex items-center gap-1.5">
-                          <span>{EMOJI[cat.nombre] ?? '📦'}</span>
+                          <span className={`w-2 h-2 rounded-full ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`} />
                           {cat.nombre}
                         </span>
                         <span className="text-sm font-semibold text-slate-800">{formatMXN(cat.monto)}</span>
@@ -202,9 +204,9 @@ export default function DashboardPage() {
               ) : (
                 <div className="space-y-2">
                   {gastosPendientes.slice(0, 6).map(tx => (
-                    <div key={tx.id} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
+                      <div key={tx.id} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-base">{EMOJI[tx.categoria.nombre] ?? '📦'}</span>
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
                         <div>
                           <p className="text-sm font-medium text-slate-700">{tx.descripcion}</p>
                           <p className="text-xs text-slate-400">{tx.categoria.nombre} · {tx.user?.nombre ?? '—'}</p>
@@ -228,10 +230,10 @@ export default function DashboardPage() {
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                 {transacciones.map(tx => (
-                  <div key={tx.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-slate-50">
-                    <div className="flex items-center gap-3">
-                      <span className="text-lg">{EMOJI[tx.categoria.nombre] ?? '📦'}</span>
-                      <div>
+                      <div key={tx.id} className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-slate-50">
+                     <div className="flex items-center gap-3">
+                       <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
+                       <div>
                         <p className="text-sm font-medium text-slate-700">{tx.descripcion}</p>
                         <p className="text-xs text-slate-400">{tx.categoria.nombre} · {tx.user?.nombre ?? 'Rene'}</p>
                       </div>
@@ -295,11 +297,11 @@ export default function DashboardPage() {
 }
 
 function KpiCard({ label, value, icon, color, bg }: {
-  label: string; value: string; icon: string; color: string; bg: string
+  label: string; value: string; icon: React.ReactNode; color: string; bg: string
 }) {
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">
-      <div className={`w-10 h-10 rounded-lg ${bg} flex items-center justify-center text-xl shrink-0`}>
+      <div className={`w-10 h-10 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
         {icon}
       </div>
       <div className="min-w-0">

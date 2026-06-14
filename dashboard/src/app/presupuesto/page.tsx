@@ -6,9 +6,10 @@ import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 
-const EMOJI: Record<string, string> = {
-  Hogar: '🏠', Salud: '💊', Familia: '👨‍👩‍👧', Transporte: '🚗',
-  Suscripciones: '📱', Deudas: '💳', Personal: '🎯', Ingresos: '💵', Ahorro: '🏦',
+const CAT_DOT: Record<string, string> = {
+  Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
+  Transporte: 'bg-sky-500', Suscripciones: 'bg-violet-500', Deudas: 'bg-red-500',
+  Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
@@ -315,7 +316,7 @@ export default function PresupuestoPage() {
             <div key={p.id} className="bg-white rounded-xl border border-slate-200 p-4">
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">
-                  <span className="text-xl">{EMOJI[p.categoria.nombre] ?? '📦'}</span>
+                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
                   <div>
                     <p className="font-semibold text-slate-800">{p.descripcion}</p>
                     <p className="text-xs text-slate-400">
