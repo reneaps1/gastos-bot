@@ -118,7 +118,7 @@ El proyecto está en **Fase 7**. No saltar fases.
 | API deudas/[id] | cerrado | GET, PUT (incluye archivar), DELETE |
 | CRUD Deudas | cerrado | Crear, editar, archivar, registrar abono manual como transacción |
 | Navegación con estado activo | cerrado | Indicador de página activa + menú hamburguesa móvil |
-| Páginas de configuración | pendiente | Categorías, usuarios, liquidez, conceptos recurrentes |
+| Páginas de configuración | cerrado | Categorías, usuarios, liquidez |
 
 ## Deploy en Producción (Render)
 
