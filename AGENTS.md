@@ -16,7 +16,7 @@ No tomar decisiones de implementación sin consultar primero esta política.
 
 ## Fases Actuales
 
-El proyecto está en **Fase 7**. No saltar fases.
+El proyecto está en **Fase 8**. No saltar fases.
 
 | Fase | Estado |
 |------|--------|
@@ -27,8 +27,8 @@ El proyecto está en **Fase 7**. No saltar fases.
 | 4 - Refactor Del Bot | cerrado |
 | 5 - API Interna | cerrado |
 | 6 - Dashboard MVP | cerrado |
-| 7 - Administración | en progreso |
-| 8 - Inteligencia Y Automatización | pendiente |
+| 7 - Administración | cerrado |
+| 8 - Inteligencia Y Automatización | en progreso |
 
 ### Fase 0 — Entregables cerrados
 
@@ -108,7 +108,7 @@ El proyecto está en **Fase 7**. No saltar fases.
 | Gráficas básicas | cerrado | Gastos por categoría con barras de progreso |
 | Responsive | cerrado | Mobile/desktop, columnas ocultas en móvil |
 
-### Fase 7 — Entregables en progreso
+### Fase 7 — Entregables cerrados
 
 | Entregable | Estado | Detalle |
 |------------|--------|---------|
@@ -118,7 +118,7 @@ El proyecto está en **Fase 7**. No saltar fases.
 | API deudas/[id] | cerrado | GET, PUT (incluye archivar), DELETE |
 | CRUD Deudas | cerrado | Crear, editar, archivar, registrar abono manual como transacción |
 | Navegación con estado activo | cerrado | Indicador de página activa + menú hamburguesa móvil |
-| Páginas de configuración | cerrado | Categorías, usuarios, liquidez |
+| Páginas de configuración | cerrado | Categorías, usuarios, liquidez, conceptos recurrentes, audit log |
 
 ## Deploy en Producción (Render)
 
