@@ -3,7 +3,7 @@ services:
     name: gastos-bot
     runtime: node
     plan: free
-    buildCommand: npm install && npx prisma generate
+    buildCommand: npm install
     startCommand: node src/index.js
     envVars:
       - key: DATABASE_URL
