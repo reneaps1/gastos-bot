@@ -12,8 +12,10 @@ const links = [
 
 const configLinks = [
   { href: '/configuracion/liquidez', label: 'Liquidez' },
+  { href: '/configuracion/entradas-rapidas', label: 'Conceptos Recurrentes' },
   { href: '/configuracion/categorias', label: 'Categorías' },
   { href: '/configuracion/usuarios', label: 'Usuarios' },
+  { href: '/configuracion/audit-log', label: 'Audit Log' },
 ]
 
 export function NavBar() {

@@ -1,4 +1,4 @@
-import { Droplets, Tag, Users } from 'lucide-react'
+import { Droplets, Tag, Users, Zap, ClipboardList } from 'lucide-react'
 
 const sections = [
   {
@@ -8,6 +8,14 @@ const sections = [
     icon: Droplets,
     color: 'text-blue-600',
     bg: 'bg-blue-50',
+  },
+  {
+    href: '/configuracion/entradas-rapidas',
+    title: 'Conceptos Recurrentes',
+    description: 'Gastos e ingresos frecuentes que se repiten cada quincena.',
+    icon: Zap,
+    color: 'text-amber-600',
+    bg: 'bg-amber-50',
   },
   {
     href: '/configuracion/categorias',
@@ -25,6 +33,14 @@ const sections = [
     color: 'text-emerald-600',
     bg: 'bg-emerald-50',
   },
+  {
+    href: '/configuracion/audit-log',
+    title: 'Audit Log',
+    description: 'Historial de cambios en el sistema. Quién hizo qué y cuándo.',
+    icon: ClipboardList,
+    color: 'text-rose-600',
+    bg: 'bg-rose-50',
+  },
 ]
 
 export default function ConfiguracionPage() {
@@ -35,7 +51,7 @@ export default function ConfiguracionPage() {
         <p className="text-sm text-slate-500 mt-1">Administra los catálogos y datos del sistema</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {sections.map(s => (
           <a
             key={s.href}
