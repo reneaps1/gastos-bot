@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     buildCommand: npm install && DATABASE_URL="postgresql://x:x@localhost:0/x" npx prisma generate
-    startCommand: node src/index.js
+    startCommand: npx prisma generate && node src/index.js
     envVars:
       - key: DATABASE_URL
         fromDatabase:
