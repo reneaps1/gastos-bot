@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { ClipboardList } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 
 interface AuditEntry {
@@ -88,8 +89,10 @@ export default function AuditLogPage() {
           </div>
         ) : data.logs.length === 0 ? (
           <div className="text-center py-20 text-slate-400">
-            <p className="text-5xl mb-3">📋</p>
-            <p className="font-medium">Sin registros de auditoría</p>
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
+              <ClipboardList size={28} className="text-slate-300" />
+            </div>
+            <p className="font-medium text-slate-600">Sin registros de auditoría</p>
             <p className="text-sm mt-1">Los cambios en el sistema aparecerán aquí</p>
           </div>
         ) : (

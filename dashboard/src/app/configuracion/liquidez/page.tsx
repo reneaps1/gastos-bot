@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Droplets } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -215,8 +215,10 @@ export default function LiquidezConfigPage() {
           </div>
         ) : snapshots.length === 0 ? (
           <div className="text-center py-20 text-slate-400">
-            <p className="text-5xl mb-3">💧</p>
-            <p className="font-medium">Sin snapshots de liquidez</p>
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-blue-100 flex items-center justify-center">
+              <Droplets size={28} className="text-blue-400" />
+            </div>
+            <p className="font-medium text-slate-600">Sin snapshots de liquidez</p>
             <p className="text-sm mt-1">Crea un snapshot para registrar el estado de tus cuentas</p>
           </div>
         ) : (

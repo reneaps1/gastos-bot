@@ -306,8 +306,10 @@ export default function PresupuestoPage() {
         </div>
       ) : presupuestos.length === 0 ? (
         <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
-          <p className="text-5xl mb-3">📋</p>
-          <p className="font-medium">Sin presupuesto configurado</p>
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
+            <Copy size={28} className="text-slate-300" />
+          </div>
+          <p className="font-medium text-slate-600">Sin presupuesto configurado</p>
           <p className="text-sm mt-1">Crea un presupuesto o copia el de la quincena anterior</p>
         </div>
       ) : (

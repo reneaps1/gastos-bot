@@ -13,9 +13,10 @@ interface Categoria {
   activo: boolean
 }
 
-const EMOJI: Record<string, string> = {
-  Hogar: '🏠', Salud: '💊', Familia: '👨‍👩‍👧', Transporte: '🚗',
-  Suscripciones: '📱', Deudas: '💳', Personal: '🎯', Ingresos: '💵', Ahorro: '🏦',
+const CAT_DOT: Record<string, string> = {
+  Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
+  Transporte: 'bg-sky-500', Suscripciones: 'bg-violet-500', Deudas: 'bg-red-500',
+  Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
 
 function fieldClass(err?: string) {
@@ -135,7 +136,7 @@ export default function CategoriasConfigPage() {
                   <tr key={c.id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-5 py-3.5">
                       <span className="flex items-center gap-2 font-medium text-slate-800">
-                        <span className="text-lg">{EMOJI[c.nombre] ?? '📦'}</span>
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[c.nombre] ?? 'bg-slate-400'}`} />
                         {c.nombre}
                       </span>
                     </td>
