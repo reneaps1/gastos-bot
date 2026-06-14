@@ -3,7 +3,7 @@ services:
     name: gastos-bot
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && DATABASE_URL="postgresql://x:x@localhost:0/x" npx prisma generate
     startCommand: node src/index.js
     envVars:
       - key: DATABASE_URL
@@ -24,6 +24,8 @@ services:
         value: "false"
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
     healthCheckPath: /health
     autoDeploy: true
 
@@ -31,7 +33,7 @@ services:
     name: gastos-dashboard
     runtime: node
     plan: free
-    buildCommand: cd dashboard && npm install && npx prisma generate && npm run build
+    buildCommand: cd dashboard && npm install && DATABASE_URL="postgresql://x:x@localhost:0/x" npx prisma generate && npm run build
     startCommand: cd dashboard && npx prisma migrate deploy && npm start
     envVars:
       - key: DATABASE_URL
