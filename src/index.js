@@ -1,12 +1,18 @@
 process.env.TZ = 'America/Mexico_City'
 require('dotenv').config()
 
-// Render no preserva node_modules/.prisma entre build y runtime, por eso generate corre aquí.
+// Render no preserva node_modules/.prisma entre build y runtime.
 const { execSync } = require('child_process')
 try {
   execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
 } catch (e) {
   console.error('prisma generate failed:', e.message)
+  process.exit(1)
+}
+try {
+  execSync('node_modules/.bin/prisma migrate deploy', { stdio: 'inherit' })
+} catch (e) {
+  console.error('prisma migrate deploy failed:', e.message)
   process.exit(1)
 }
 
