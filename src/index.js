@@ -1,6 +1,15 @@
 process.env.TZ = 'America/Mexico_City'
 require('dotenv').config()
 
+// Render no preserva node_modules/.prisma entre build y runtime, por eso generate corre aquí.
+const { execSync } = require('child_process')
+try {
+  execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
+} catch (e) {
+  console.error('prisma generate failed:', e.message)
+  process.exit(1)
+}
+
 const express = require('express')
 const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
 const { parseMessage, formatConfirmation } = require('./parser')
