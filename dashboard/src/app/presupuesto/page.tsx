@@ -331,6 +331,7 @@ export default function PresupuestoPage() {
                       <p className="text-xs text-slate-400 dark:text-slate-500">
                         {p.categoria.nombre}
                         {p.clasificacion && ` · ${p.clasificacion}`}
+                        {!p.recurrente && p.diaCobro && ` · vence día ${p.diaCobro}`}
                       </p>
                     </div>
                   </div>
@@ -385,21 +386,31 @@ export default function PresupuestoPage() {
               onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} className={fieldClass(formErrors.descripcion)} />
             {formErrors.descripcion && <p className="text-xs text-rose-500 mt-1">{formErrors.descripcion}</p>}
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
               <Label htmlFor="p-monto">Monto (MXN) *</Label>
               <input id="p-monto" type="number" min="0" step="0.01" placeholder="0.00" value={form.montoPresupuestado}
                 onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))} className={fieldClass(formErrors.montoPresupuestado)} />
               {formErrors.montoPresupuestado && <p className="text-xs text-rose-500 mt-1">{formErrors.montoPresupuestado}</p>}
             </div>
             <div>
-              <Label htmlFor="p-clasificacion">Clasificación</Label>
-              <select id="p-clasificacion" value={form.clasificacion} onChange={e => setForm(f => ({ ...f, clasificacion: e.target.value }))} className={fieldClass()}>
-                <option value="">Sin clasificar</option>
-                <option value="Fijo">Fijo</option>
-                <option value="Variable">Variable</option>
-              </select>
+              <Label htmlFor="p-diacobro">Vence el día</Label>
+              <div className="relative">
+                <input id="p-diacobro" type="number" min="1" max="31" placeholder="—"
+                  value={form.diaCobro}
+                  onChange={e => setForm(f => ({ ...f, diaCobro: e.target.value }))}
+                  className={`${fieldClass()} pr-8`} />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 pointer-events-none">mes</span>
+              </div>
             </div>
+          </div>
+          <div>
+            <Label htmlFor="p-clasificacion">Clasificación</Label>
+            <select id="p-clasificacion" value={form.clasificacion} onChange={e => setForm(f => ({ ...f, clasificacion: e.target.value }))} className={fieldClass()}>
+              <option value="">Sin clasificar</option>
+              <option value="Fijo">Fijo</option>
+              <option value="Variable">Variable</option>
+            </select>
           </div>
           <div>
             <Label htmlFor="p-notas">Notas</Label>
