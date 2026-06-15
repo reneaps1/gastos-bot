@@ -104,8 +104,11 @@ export default function CategoriasConfigPage() {
       </div>
 
       {/* Aviso */}
-      <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 text-sm text-amber-800 dark:text-amber-300">
-        Las categorías son un catálogo cerrado. No se pueden agregar ni eliminar. Solo puedes editar la clasificación, ejemplos y estado.
+      <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-xl p-4 text-sm text-indigo-800 dark:text-indigo-300">
+        Esta vista rápida permite ajustar clasificación, ejemplos y estado. Para crear, eliminar, importar/exportar o administrar categorías avanzadas usa{' '}
+        <a href="/admin/categorias" className="font-semibold underline underline-offset-2 hover:text-indigo-600 dark:hover:text-indigo-200">
+          Admin Categorías
+        </a>.
       </div>
 
       {/* Table */}
