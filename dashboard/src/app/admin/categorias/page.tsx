@@ -68,7 +68,6 @@ export default function AdminCategoriasPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const [deleteTarget, setDeleteTarget] = useState<Categoria | null>(null)
-  const [bulkAction, setBulkAction] = useState<'activate' | 'deactivate' | null>(null)
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -187,9 +186,9 @@ export default function AdminCategoriasPage() {
     }
   }
 
-  async function handleBulkAction() {
-    if (!bulkAction || selected.size === 0) return
-    const activo = bulkAction === 'activate'
+  async function handleBulkAction(action: 'activate' | 'deactivate') {
+    if (selected.size === 0) return
+    const activo = action === 'activate'
     try {
       await Promise.all(
         Array.from(selected).map(id =>
@@ -202,7 +201,6 @@ export default function AdminCategoriasPage() {
       )
       toast(`${selected.size} categoría${selected.size > 1 ? 's' : ''} ${activo ? 'activada' : 'desactivada'}${selected.size > 1 ? 's' : ''}`)
       setSelected(new Set())
-      setBulkAction(null)
       fetchData()
     } catch {
       toast('Error en operación masiva', 'error')
@@ -344,11 +342,11 @@ export default function AdminCategoriasPage() {
             {selected.size} seleccionada{selected.size > 1 ? 's' : ''}
           </span>
           <div className="flex items-center gap-2">
-            <button onClick={() => { setBulkAction('activate'); handleBulkAction() }}
+            <button onClick={() => handleBulkAction('activate')}
               className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 px-3 py-1.5 rounded-lg cursor-pointer font-medium transition-colors">
               <ArchiveRestore size={13} /> Activar
             </button>
-            <button onClick={() => { setBulkAction('deactivate'); handleBulkAction() }}
+            <button onClick={() => handleBulkAction('deactivate')}
               className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 px-3 py-1.5 rounded-lg cursor-pointer font-medium transition-colors">
               <Archive size={13} /> Desactivar
             </button>
