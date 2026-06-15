@@ -46,3 +46,30 @@ export function getDefaultQuincenaId(quincenas: SelectableQuincena[], dateString
 export function getInitialQuincenaId(quincenas: SelectableQuincena[]) {
   return getStoredQuincenaId(quincenas) || getDefaultQuincenaId(quincenas)
 }
+
+export function getQuincenaIdForDate(quincenas: SelectableQuincena[], dateString: string) {
+  const sorted = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
+  const first = sorted[0]
+  if (!first || dateString < first.fechaInicio) return ''
+
+  const active = sorted.find(q => q.fechaInicio <= dateString && dateString < q.fechaFin)
+  if (active) return active.id.toString()
+
+  const next = sorted.find(q => dateString < q.fechaFin)
+  return next?.id.toString() ?? ''
+}
+
+export function formatQuincenaRange(quincena: SelectableQuincena) {
+  const format = (value: string) => new Intl.DateTimeFormat('es-MX', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${value}T00:00:00.000Z`))
+
+  return `${format(quincena.fechaInicio)} - ${format(quincena.fechaFin)}`
+}
+
+export function formatQuincenaOption(quincena: SelectableQuincena) {
+  return `${quincena.codigo} · ${formatQuincenaRange(quincena)}`
+}

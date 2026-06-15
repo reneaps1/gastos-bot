@@ -5,7 +5,7 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
-import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
+import { formatQuincenaOption, formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, persistQuincenaId } from '@/lib/quincena-selection'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -129,9 +129,15 @@ export default function TransaccionesPage() {
 
   function openCreate() {
     setEditingTx(null)
-    setForm({ ...EMPTY_FORM, quincenaId })
+    const dateQuincenaId = getQuincenaIdForDate(quincenas, EMPTY_FORM.fecha)
+    setForm({ ...EMPTY_FORM, quincenaId: dateQuincenaId || quincenaId })
     setFormErrors({})
     setModalOpen(true)
+  }
+
+  function setFormDate(fecha: string) {
+    const dateQuincenaId = getQuincenaIdForDate(quincenas, fecha)
+    setForm(f => ({ ...f, fecha, quincenaId: dateQuincenaId || f.quincenaId }))
   }
 
   function openEdit(tx: Transaccion) {
@@ -210,6 +216,9 @@ export default function TransaccionesPage() {
   const totalPages = Math.ceil(total / LIMIT)
   const totalGastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
   const totalIngresos = txs.filter(t => t.tipo === 'Ingreso').reduce((s, t) => s + Number(t.monto), 0)
+  const formQuincena = quincenas.find(q => q.id.toString() === form.quincenaId)
+  const suggestedQuincenaId = form.fecha ? getQuincenaIdForDate(quincenas, form.fecha) : ''
+  const suggestedQuincena = quincenas.find(q => q.id.toString() === suggestedQuincenaId)
 
   return (
     <div className="space-y-6">
@@ -445,15 +454,34 @@ export default function TransaccionesPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="tx-fecha">Fecha *</Label>
-              <input id="tx-fecha" type="date" value={form.fecha} onChange={e => setForm(f => ({ ...f, fecha: e.target.value }))} className={fieldClass(formErrors.fecha)} />
+              <input id="tx-fecha" type="date" value={form.fecha} onChange={e => setFormDate(e.target.value)} className={fieldClass(formErrors.fecha)} />
               {formErrors.fecha && <p className="text-xs text-rose-500 mt-1">{formErrors.fecha}</p>}
             </div>
             <div>
               <Label htmlFor="tx-quincena">Quincena *</Label>
               <select id="tx-quincena" value={form.quincenaId} onChange={e => setForm(f => ({ ...f, quincenaId: e.target.value }))} className={fieldClass(formErrors.quincenaId)}>
                 <option value="">Seleccionar...</option>
-                {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
+                {quincenas.map(q => <option key={q.id} value={q.id}>{formatQuincenaOption(q)}</option>)}
               </select>
+              {formQuincena && (
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+                  {formQuincena.codigo}: {formatQuincenaRange(formQuincena)}
+                </p>
+              )}
+              {!formQuincena && form.fecha && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  No hay Q configurada para esta fecha.
+                </p>
+              )}
+              {suggestedQuincena && form.quincenaId !== suggestedQuincena.id.toString() && (
+                <button
+                  type="button"
+                  onClick={() => setForm(f => ({ ...f, quincenaId: suggestedQuincena.id.toString() }))}
+                  className="text-xs text-indigo-600 dark:text-indigo-400 font-medium mt-1 cursor-pointer hover:underline"
+                >
+                  Usar {suggestedQuincena.codigo} según fecha
+                </button>
+              )}
               {formErrors.quincenaId && <p className="text-xs text-rose-500 mt-1">{formErrors.quincenaId}</p>}
             </div>
           </div>
