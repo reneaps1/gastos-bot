@@ -337,7 +337,7 @@ export default function TransaccionesPage() {
                   <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Fecha</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>
                   <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>
                   <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estatus</th>
@@ -362,7 +362,7 @@ export default function TransaccionesPage() {
                       <td className="px-4 py-3.5">
                         <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{formatDate(tx.fecha)}</td>
+                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(tx.fecha)}</td>
                       <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>
                       <td className="px-4 py-3.5 text-center">
                         <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
@@ -431,7 +431,14 @@ export default function TransaccionesPage() {
               </div>
 
               <div className="space-y-3">
-                <DetailRow icon={<Calendar size={16} />} label="Fecha" value={formatDate(detailTx.fecha)} />
+                <DetailRow icon={<Calendar size={16} />} label="Fecha" value={
+                  <div className="text-right">
+                    <span className="text-sm font-medium text-slate-800 dark:text-slate-100">{formatDate(detailTx.fecha)}</span>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">
+                      {detailTx.quincena.codigo} · {formatDate(detailTx.quincena.fechaInicio)} – {formatDate(detailTx.quincena.fechaFin)}
+                    </p>
+                  </div>
+                } />
                 <DetailRow icon={<CreditCard size={16} />} label="Quincena" value={
                   <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{detailTx.quincena.codigo}</span>
                 } />
