@@ -147,6 +147,8 @@ export default function DashboardPage() {
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
+  const sinAsignar = metricas.ingresos - metricas.presupTotal
+  const pctPresupAsignado = metricas.ingresos > 0 ? (metricas.presupTotal / metricas.ingresos) * 100 : 0
 
   return (
     <div className="space-y-6">
@@ -194,6 +196,39 @@ export default function DashboardPage() {
             <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50" />
             <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon={<BarChart3 size={20} className={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-300' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'} />} color={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'} bg={metricas.pctPresup > 90 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' : metricas.pctPresup > 70 ? 'bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'} />
           </div>
+
+          {/* Planificación del presupuesto */}
+          {metricas.ingresos > 0 && (
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Planificación del presupuesto</h3>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${sinAsignar < 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : sinAsignar === 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+                  {sinAsignar < 0 ? 'Over-budget' : sinAsignar === 0 ? 'Totalmente asignado' : 'Sin asignar'}
+                </span>
+              </div>
+              <div className="grid grid-cols-3 gap-4 mb-3">
+                <div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Ingresos</p>
+                  <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.ingresos)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Presupuestado</p>
+                  <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.presupTotal)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Sin asignar</p>
+                  <p className={`text-base font-bold tabular-nums ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
+                </div>
+              </div>
+              <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full transition-all ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                  style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">{pctPresupAsignado.toFixed(0)}% del ingreso asignado al presupuesto</p>
+            </div>
+          )}
 
           {/* Presupuesto por categoría */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
