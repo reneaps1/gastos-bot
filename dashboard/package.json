@@ -4,8 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && next build",
-    "start": "prisma migrate deploy && next start",
+    "generate": "node -e \"process.env.DATABASE_URL ||= 'postgresql://x:x@localhost:0/x'; require('child_process').execSync('prisma generate', {stdio:'inherit'})\"",
+    "build": "npm run generate && next build",
+    "start": "prisma generate && prisma migrate deploy && next start",
     "lint": "eslint",
     "postinstall": "node -e \"process.env.DATABASE_URL && require('child_process').execSync('prisma generate', {stdio:'inherit'})\" || true"
   },

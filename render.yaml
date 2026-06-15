@@ -33,8 +33,8 @@ services:
     name: gastos-dashboard
     runtime: node
     plan: free
-    buildCommand: cd dashboard && npm install && DATABASE_URL="postgresql://x:x@localhost:0/x" npx prisma generate && npm run build
-    startCommand: cd dashboard && npx prisma migrate deploy && npm start
+    buildCommand: cd dashboard && npm install && npm run build
+    startCommand: cd dashboard && npm start
     envVars:
       - key: DATABASE_URL
         fromDatabase:
