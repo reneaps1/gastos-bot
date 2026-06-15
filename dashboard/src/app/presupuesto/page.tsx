@@ -26,6 +26,9 @@ interface EntradaRapida {
   id: number; descripcion: string; monto: number; tipo: string | null
   categoriaId: number | null; categoria: { nombre: string } | null; procesado: boolean
 }
+interface GastoSinPresupuesto {
+  categoriaId: number; categoriaNombre: string; total: number; count: number
+}
 
 const EMPTY_FORM = {
   categoriaId: '', descripcion: '', tipo: 'Gasto',
@@ -65,6 +68,7 @@ export default function PresupuestoPage() {
   const [copying, setCopying] = useState(false)
 
   const [entradasRapidas, setEntradasRapidas] = useState<EntradaRapida[]>([])
+  const [gastosSinPresupuesto, setGastosSinPresupuesto] = useState<GastoSinPresupuesto[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingP, setEditingP] = useState<Presupuesto | null>(null)
@@ -93,15 +97,36 @@ export default function PresupuestoPage() {
     if (!quincenaId) return
     setLoading(true)
     try {
-      const [presupRes, entradasRes] = await Promise.all([
+      const [presupRes, entradasRes, txRes] = await Promise.all([
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
         fetch(`/api/entradas-rapidas?quincenaId=${quincenaId}`),
+        fetch(`/api/transacciones?quincenaId=${quincenaId}&tipo=Gasto&limit=500`),
       ])
       const data: Presupuesto[] = await presupRes.json()
       const entradas: EntradaRapida[] = await entradasRes.json()
+      const txData = await txRes.json()
+      const transacciones: Array<{ categoriaId: number; monto: number; categoria: { nombre: string } }> = txData.data ?? []
+
       setPresupuestos(data)
       setEntradasRapidas(entradas)
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
+
+      const budgetedCatIds = new Set(data.map((p: Presupuesto) => p.categoriaId))
+      const noPresupMap: Record<number, GastoSinPresupuesto> = {}
+      for (const tx of transacciones) {
+        if (!budgetedCatIds.has(tx.categoriaId)) {
+          if (!noPresupMap[tx.categoriaId]) {
+            noPresupMap[tx.categoriaId] = {
+              categoriaId: tx.categoriaId,
+              categoriaNombre: tx.categoria?.nombre ?? 'Sin categoría',
+              total: 0, count: 0,
+            }
+          }
+          noPresupMap[tx.categoriaId].total += Number(tx.monto)
+          noPresupMap[tx.categoriaId].count++
+        }
+      }
+      setGastosSinPresupuesto(Object.values(noPresupMap).sort((a, b) => b.total - a.total))
     } finally { setLoading(false) }
   }, [quincenaId, quincenas])
 
@@ -124,6 +149,13 @@ export default function PresupuestoPage() {
       terminaCon: 'sin_fin', numOcurrencias: '6',
       diaCobro: p.diaCobro?.toString() ?? '',
     })
+    setFormErrors({})
+    setModalOpen(true)
+  }
+
+  function openCreateFromUnbudgeted(catId: number, categoriaNombre: string) {
+    setEditingP(null)
+    setForm({ ...EMPTY_FORM, categoriaId: catId.toString(), descripcion: categoriaNombre })
     setFormErrors({})
     setModalOpen(true)
   }
@@ -382,6 +414,46 @@ export default function PresupuestoPage() {
               </div>
             )
           })}
+        </div>
+      )}
+
+      {/* Gastos sin presupuesto */}
+      {!loading && gastosSinPresupuesto.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl border border-amber-200 dark:border-amber-800/50 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
+            <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Gastos sin presupuesto</h3>
+            <span className="ml-auto text-xs text-amber-600 dark:text-amber-500">esta quincena</span>
+          </div>
+          <div className="space-y-2.5">
+            {gastosSinPresupuesto.map(g => (
+              <div key={g.categoriaId} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[g.categoriaNombre] ?? 'bg-slate-400'}`} />
+                  <span className="text-sm text-amber-900 dark:text-amber-200 truncate">{g.categoriaNombre}</span>
+                  <span className="text-xs text-amber-500 dark:text-amber-500 shrink-0">
+                    {g.count} {g.count === 1 ? 'gasto' : 'gastos'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">{formatMXN(g.total)}</span>
+                  <button
+                    onClick={() => openCreateFromUnbudgeted(g.categoriaId, g.categoriaNombre)}
+                    className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                  >
+                    <Plus size={11} />
+                    Agregar al presupuesto
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3.5 pt-3 border-t border-amber-200 dark:border-amber-800/50 flex justify-between items-center">
+            <span className="text-xs text-amber-600 dark:text-amber-500">Total fuera de plan</span>
+            <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">
+              {formatMXN(gastosSinPresupuesto.reduce((s, g) => s + g.total, 0))}
+            </span>
+          </div>
         </div>
       )}
 
