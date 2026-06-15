@@ -33,6 +33,16 @@ const CLASIFICACION_POR_CATEGORIA = {
   Ahorro: null,
 }
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function includesKeyword(text, keyword) {
+  const boundary = 'a-záéíóúüñ0-9'
+  const pattern = new RegExp(`(^|[^${boundary}])${escapeRegExp(keyword)}($|[^${boundary}])`, 'i')
+  return pattern.test(text)
+}
+
 function getClasificacion(categoria, tipo) {
   if (tipo === 'Ingreso' || tipo === 'Ahorro') return null
   return CLASIFICACION_POR_CATEGORIA[categoria] || 'Variable'
@@ -42,7 +52,7 @@ function detectCategory(text) {
   const lower = text.toLowerCase()
   for (const [cat, keywords] of Object.entries(CATEGORIAS)) {
     for (const kw of keywords) {
-      if (lower.includes(kw)) return cat.charAt(0).toUpperCase() + cat.slice(1)
+      if (includesKeyword(lower, kw)) return cat.charAt(0).toUpperCase() + cat.slice(1)
     }
   }
   return null
@@ -52,7 +62,7 @@ function detectPaymentMethod(text) {
   const lower = text.toLowerCase()
   for (const [method, keywords] of Object.entries(FORMAS_PAGO)) {
     for (const kw of keywords) {
-      if (lower.includes(kw)) return method.charAt(0).toUpperCase() + method.slice(1)
+      if (includesKeyword(lower, kw)) return method.charAt(0).toUpperCase() + method.slice(1)
     }
   }
   return null
@@ -96,16 +106,24 @@ function extractDescription(text, amount) {
   for (const w of removeWords) {
     desc = desc.replace(new RegExp(`\\b${w}\\b`, 'gi'), ' ')
   }
-  desc = desc.replace(/\s+/g, ' ').trim()
-  if (desc.length > 200) desc = desc.substring(0, 200)
-  return desc || 'Sin descripcion'
+  return cleanDescription(desc)
+}
+
+function cleanDescription(desc) {
+  const cleaned = String(desc || '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s,;:=-]+|[\s,;:=-]+$/g, '')
+    .trim()
+
+  if (cleaned.length > 200) return cleaned.substring(0, 200)
+  return cleaned || 'Sin descripcion'
 }
 
 function parseMessage(text, senderName, senderPhone, messageId, geminiData = null) {
   const tipo = geminiData?.tipo || detectType(text)
   const monto = (geminiData?.monto > 0 ? geminiData.monto : null) ?? extractAmount(text)
-  const descripcion = geminiData?.descripcion || extractDescription(text, monto)
-  const categoria = geminiData?.categoria || detectCategory(text)
+  const descripcion = cleanDescription(geminiData?.descripcion || extractDescription(text, monto))
+  const categoria = detectCategory(text) || geminiData?.categoria
   const formaPago = geminiData?.formaPago || detectPaymentMethod(text)
   const clasificacion = getClasificacion(categoria, tipo)
   const quincena = getCurrentQuincena()
