@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { formatMXN, formatDate } from '@/lib/utils'
+import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
 import { TrendingUp, TrendingDown, Wallet, PiggyBank, Clock, BarChart3, ArrowRight, Zap, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, persistQuincenaId } from '@/lib/quincena-selection'
@@ -158,9 +158,9 @@ export default function DashboardPage() {
           </h1>
           {qActual && (
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-              {new Date(qActual.fechaInicio + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
+              {formatDateStr(qActual.fechaInicio, { day: '2-digit', month: 'long' })}
               {' — '}
-              {new Date(qActual.fechaFin + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
+              {formatDateStr(qActual.fechaFin, { day: '2-digit', month: 'long', year: 'numeric' })}
             </p>
           )}
         </div>
@@ -443,7 +443,7 @@ export default function DashboardPage() {
                   >
                     <p className={`font-bold text-sm ${isActual ? 'text-white' : 'text-slate-800 dark:text-slate-100'}`}>{q.codigo}</p>
                     <p className={`text-xs mt-1 ${isActual ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                      {new Date(q.fechaInicio + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
+                      {formatDateStr(q.fechaInicio, { day: '2-digit', month: 'short' })}
                     </p>
                   </button>
                 )

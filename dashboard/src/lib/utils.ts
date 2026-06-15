@@ -16,3 +16,13 @@ export function formatDate(date: Date | string | null | undefined): string {
   if (isNaN(d.getTime())) return '—'
   return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }).format(d)
 }
+
+export function formatDateStr(
+  date: string | null | undefined,
+  options: Intl.DateTimeFormatOptions,
+): string {
+  if (!date) return '—'
+  const d = new Date(`${date}T00:00:00`)
+  if (isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat('es-MX', options).format(d)
+}
