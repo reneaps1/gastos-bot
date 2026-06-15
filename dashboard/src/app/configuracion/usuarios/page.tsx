@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Pencil } from 'lucide-react'
+import { Pencil, Plus } from 'lucide-react'
 import { formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { FormModal } from '@/components/ui/FormModal'
@@ -45,6 +45,13 @@ export default function UsuariosConfigPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  function openCreate() {
+    setEditing(null)
+    setForm({ nombre: '', phoneWhatsapp: '', activo: true })
+    setFormErrors({})
+    setModalOpen(true)
+  }
+
   function openEdit(u: User) {
     setEditing(u)
     setForm({
@@ -65,24 +72,36 @@ export default function UsuariosConfigPage() {
   async function handleSave() {
     const errors = validate()
     if (Object.keys(errors).length) { setFormErrors(errors); return }
-    if (!editing) return
     setSaving(true)
     try {
-      const res = await fetch(`/api/users/${editing.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nombre: form.nombre.trim(),
-          phoneWhatsapp: form.phoneWhatsapp || null,
-          activo: form.activo,
-        }),
-      })
-      if (!res.ok) throw new Error()
-      toast('Usuario actualizado')
+      const res = editing
+        ? await fetch(`/api/users/${editing.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              nombre: form.nombre.trim(),
+              phoneWhatsapp: form.phoneWhatsapp || null,
+              activo: form.activo,
+            }),
+          })
+        : await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              nombre: form.nombre.trim(),
+              phoneWhatsapp: form.phoneWhatsapp || null,
+            }),
+          })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error ?? 'Error')
+      }
+      toast(editing ? 'Usuario actualizado' : 'Usuario creado')
       setModalOpen(false)
       fetchData()
-    } catch {
-      toast('Error al guardar', 'error')
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Error al guardar'
+      toast(msg === 'User already exists' ? 'Ya existe un usuario con ese nombre' : msg, 'error')
     } finally {
       setSaving(false)
     }
@@ -92,9 +111,17 @@ export default function UsuariosConfigPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Usuarios</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Administrar usuarios del sistema</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Usuarios</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Administrar usuarios del sistema y sus teléfonos WhatsApp</p>
+        </div>
+        <button
+          onClick={openCreate}
+          className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors shrink-0"
+        >
+          <Plus size={16} /> Nuevo usuario
+        </button>
       </div>
 
       {/* Table */}
@@ -156,7 +183,7 @@ export default function UsuariosConfigPage() {
       </div>
 
       {/* Modal */}
-      <FormModal open={modalOpen} onOpenChange={setModalOpen} title={`Editar — ${editing?.nombre ?? ''}`}>
+      <FormModal open={modalOpen} onOpenChange={setModalOpen} title={editing ? `Editar — ${editing.nombre}` : 'Nuevo usuario'}>
         <div className="space-y-4">
           <div>
             <Label htmlFor="u-nombre">Nombre *</Label>
@@ -166,7 +193,8 @@ export default function UsuariosConfigPage() {
 
           <div>
             <Label htmlFor="u-phone">Teléfono WhatsApp</Label>
-            <input id="u-phone" type="text" placeholder="Ej: +521234567890" value={form.phoneWhatsapp} onChange={e => set('phoneWhatsapp', e.target.value)} className={fieldClass()} />
+            <input id="u-phone" type="text" placeholder="Ej: 5215512345678" value={form.phoneWhatsapp} onChange={e => set('phoneWhatsapp', e.target.value)} className={fieldClass()} />
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Formato: código país + número sin + ni espacios (52 + 10 dígitos)</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -185,7 +213,7 @@ export default function UsuariosConfigPage() {
               Cancelar
             </button>
             <button type="button" onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]">
-              {saving ? 'Guardando...' : 'Guardar cambios'}
+              {saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Crear usuario'}
             </button>
           </div>
         </div>
