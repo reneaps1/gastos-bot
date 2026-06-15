@@ -5,7 +5,8 @@ import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
-import { getInitialQuincenaId, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
+import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
+import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -264,6 +265,7 @@ export default function PresupuestoPage() {
 
   const totalRecurrente = entradasRapidas.reduce((s, e) => s + Number(e.monto), 0)
 
+  const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
 
   return (
@@ -282,7 +284,12 @@ export default function PresupuestoPage() {
         <div className="flex items-center gap-3">
           <select value={quincenaId} onChange={e => selectQuincena(e.target.value)}
             className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer">
-            {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
+            {quincenas.map(q => {
+              const ini = q.fechaInicio.split('T')[0]
+              const fin = q.fechaFin.split('T')[0]
+              const isActive = today >= ini && today <= fin
+              return <option key={q.id} value={q.id}>{isActive ? '● ' : ''}{q.codigo}{isActive ? ' · En curso' : ''}</option>
+            })}
           </select>
           {presupuestos.length === 0 && !loading && (
             <button onClick={handleCopiar} disabled={copying}
@@ -297,6 +304,8 @@ export default function PresupuestoPage() {
           </button>
         </div>
       </div>
+
+      <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
       {/* Summary cards */}
       {presupuestos.length > 0 && (

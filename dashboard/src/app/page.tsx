@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
 import { TrendingUp, TrendingDown, Wallet, PiggyBank, Clock, BarChart3, ArrowRight, Zap, ChevronRight, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
-import { getInitialQuincenaId, persistQuincenaId } from '@/lib/quincena-selection'
+import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
+import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -150,6 +151,7 @@ export default function DashboardPage() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  const today = getMexicoDateString()
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
   const totalLiquidez = snapshot ? snapshot.bbva + snapshot.banamex + snapshot.uala + snapshot.ualaInversion + snapshot.efectivo : 0
@@ -186,12 +188,17 @@ export default function DashboardPage() {
             onChange={e => selectQuincena(e.target.value)}
             className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm dark:shadow-none"
           >
-            {quincenas.map(q => (
-              <option key={q.id} value={q.id}>{q.codigo}</option>
-            ))}
+            {quincenas.map(q => {
+              const ini = q.fechaInicio.split('T')[0]
+              const fin = q.fechaFin.split('T')[0]
+              const isActive = today >= ini && today <= fin
+              return <option key={q.id} value={q.id}>{isActive ? '● ' : ''}{q.codigo}{isActive ? ' · En curso' : ''}</option>
+            })}
           </select>
         </div>
       </div>
+
+      <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
       {loading ? (
         <DashboardSkeleton />

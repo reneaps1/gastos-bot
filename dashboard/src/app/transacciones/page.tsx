@@ -6,6 +6,7 @@ import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 import { formatQuincenaOption, formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, persistQuincenaId } from '@/lib/quincena-selection'
+import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -243,6 +244,7 @@ export default function TransaccionesPage() {
     } catch { toast('Error al actualizar estatus', 'error') } finally { setTogglingId(null) }
   }
 
+  const today = getMexicoDateString()
   const totalPages = Math.ceil(total / LIMIT)
   const totalGastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
   const totalIngresos = txs.filter(t => t.tipo === 'Ingreso').reduce((s, t) => s + Number(t.monto), 0)
@@ -264,7 +266,12 @@ export default function TransaccionesPage() {
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <select value={quincenaId} onChange={e => selectQuincena(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
-            {quincenas.map(q => <option key={q.id} value={q.id}>{formatQuincenaOption(q)}</option>)}
+            {quincenas.map(q => {
+              const ini = q.fechaInicio.split('T')[0]
+              const fin = q.fechaFin.split('T')[0]
+              const isActive = today >= ini && today <= fin
+              return <option key={q.id} value={q.id}>{isActive ? '● ' : ''}{formatQuincenaOption(q)}{isActive ? ' · En curso' : ''}</option>
+            })}
           </select>
           <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             <option value="">Todos los tipos</option>
@@ -290,6 +297,9 @@ export default function TransaccionesPage() {
             <input type="text" placeholder="Buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
               className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-3 py-2 bg-white text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
+        </div>
+        <div className="mt-3">
+          <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
         </div>
       </div>
 
