@@ -5,6 +5,7 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
+import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -31,7 +32,7 @@ interface Transaccion {
 }
 
 const EMPTY_FORM = {
-  fecha: new Date().toISOString().split('T')[0], descripcion: '', categoriaId: '',
+  fecha: getMexicoDateString(), descripcion: '', categoriaId: '',
   tipo: 'Gasto', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
   estatus: 'Pendiente', notas: '',
 }
@@ -89,10 +90,23 @@ export default function TransaccionesPage() {
       fetch('/api/categorias').then(r => r.json()),
       fetch('/api/users').then(r => r.json()),
       fetch('/api/metodos-pago').then(r => r.json()),
-    ]).then(([q, c, u, m]) => { setQuincenas(q); setCategorias(c); setUsers(u); setMetodosPago(m) })
+    ]).then(([q, c, u, m]) => {
+      setQuincenas(q)
+      setCategorias(c)
+      setUsers(u)
+      setMetodosPago(m)
+      setQuincenaId(getInitialQuincenaId(q))
+    })
   }, [])
 
+  function selectQuincena(id: string) {
+    setQuincenaId(id)
+    setPage(1)
+    persistQuincenaId(id)
+  }
+
   const fetchTxs = useCallback(async () => {
+    if (!quincenaId) { setLoading(false); return }
     setLoading(true)
     const params = new URLSearchParams()
     if (quincenaId) params.set('quincenaId', quincenaId)
@@ -208,8 +222,7 @@ export default function TransaccionesPage() {
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <select value={quincenaId} onChange={e => { setQuincenaId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
-            <option value="">Todas las quincenas</option>
+          <select value={quincenaId} onChange={e => selectQuincena(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
           </select>
           <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">

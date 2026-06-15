@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { formatMXN } from '@/lib/utils'
 import { TrendingUp, TrendingDown, Wallet, PiggyBank, Clock, BarChart3, ArrowRight, Zap, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
+import { getInitialQuincenaId, persistQuincenaId } from '@/lib/quincena-selection'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -60,11 +61,14 @@ export default function DashboardPage() {
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
       setQuincenas(data)
-      const today = new Date().toISOString().split('T')[0]
-      const current = data.find(q => q.fechaInicio <= today && q.fechaFin >= today)
-      if (current) setQuincenaId(current.id.toString())
+      setQuincenaId(getInitialQuincenaId(data))
     })
   }, [])
+
+  function selectQuincena(id: string) {
+    setQuincenaId(id)
+    persistQuincenaId(id)
+  }
 
   const fetchData = useCallback(async () => {
     if (!quincenaId) { setLoading(false); return }
@@ -167,7 +171,7 @@ export default function DashboardPage() {
           </div>
           <select
             value={quincenaId}
-            onChange={e => setQuincenaId(e.target.value)}
+            onChange={e => selectQuincena(e.target.value)}
             className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm dark:shadow-none"
           >
             {quincenas.map(q => (
@@ -432,7 +436,7 @@ export default function DashboardPage() {
                 return (
                   <button
                     key={q.id}
-                    onClick={() => setQuincenaId(q.id.toString())}
+                    onClick={() => selectQuincena(q.id.toString())}
                     className={`rounded-xl p-3 text-center border transition-all cursor-pointer ${
                       isActual ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/50' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
                     }`}

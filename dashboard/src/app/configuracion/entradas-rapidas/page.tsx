@@ -5,9 +5,10 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
+import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 
 interface Categoria { id: number; nombre: string }
-interface Quincena { id: number; codigo: string }
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Entrada {
   id: number; fecha: string; descripcion: string; monto: number
   categoriaId: number | null; tipo: string | null; quincenaId: number | null
@@ -17,7 +18,7 @@ interface Entrada {
 }
 
 const EMPTY_FORM = {
-  fecha: new Date().toISOString().split('T')[0],
+  fecha: getMexicoDateString(),
   descripcion: '', monto: '', categoriaId: '', tipo: 'GASTO',
   quincenaId: '', notas: '',
 }
@@ -51,10 +52,20 @@ export default function EntradasRapidasPage() {
     Promise.all([
       fetch('/api/categorias').then(r => r.json()),
       fetch('/api/quincenas').then(r => r.json()),
-    ]).then(([cats, qs]) => { setCategorias(cats); setQuincenas(qs) })
+    ]).then(([cats, qs]) => {
+      setCategorias(cats)
+      setQuincenas(qs)
+      setQuincenaFilter(getInitialQuincenaId(qs))
+    })
   }, [])
 
+  function selectQuincena(id: string) {
+    setQuincenaFilter(id)
+    persistQuincenaId(id)
+  }
+
   const fetchData = useCallback(async () => {
+    if (!quincenaFilter) { setLoading(false); return }
     setLoading(true)
     try {
       const params = new URLSearchParams()
@@ -148,8 +159,7 @@ export default function EntradasRapidasPage() {
       </div>
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex gap-3 flex-wrap">
-        <select value={quincenaFilter} onChange={e => setQuincenaFilter(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-          <option value="">Todas las quincenas</option>
+        <select value={quincenaFilter} onChange={e => selectQuincena(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
           {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
         </select>
         <select value={procesadoFilter} onChange={e => setProcesadoFilter(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">

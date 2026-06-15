@@ -5,6 +5,7 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
+import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Snapshot {
@@ -27,7 +28,7 @@ interface Snapshot {
 
 const EMPTY_FORM = {
   quincenaId: '',
-  fechaCorte: new Date().toISOString().split('T')[0],
+  fechaCorte: getMexicoDateString(),
   bbva: '',
   banamex: '',
   uala: '',
@@ -72,10 +73,19 @@ export default function LiquidezConfigPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   useEffect(() => {
-    fetch('/api/quincenas').then(r => r.json()).then(setQuincenas)
+    fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
+      setQuincenas(data)
+      setQuincenaId(getInitialQuincenaId(data))
+    })
   }, [])
 
+  function selectQuincena(id: string) {
+    setQuincenaId(id)
+    persistQuincenaId(id)
+  }
+
   const fetchData = useCallback(async () => {
+    if (!quincenaId) { setLoading(false); return }
     setLoading(true)
     try {
       const params = new URLSearchParams()
@@ -195,10 +205,9 @@ export default function LiquidezConfigPage() {
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <select
           value={quincenaId}
-          onChange={e => setQuincenaId(e.target.value)}
+          onChange={e => selectQuincena(e.target.value)}
           className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300"
         >
-          <option value="">Todas las quincenas</option>
           {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
         </select>
       </div>

@@ -5,6 +5,7 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
+import { getInitialQuincenaId, getMexicoDateString } from '@/lib/quincena-selection'
 
 interface Deuda {
   id: number
@@ -34,7 +35,7 @@ const EMPTY_DEUDA = {
 
 const EMPTY_ABONO = {
   monto: '',
-  fecha: new Date().toISOString().split('T')[0],
+  fecha: getMexicoDateString(),
   descripcion: '',
   quincenaId: '',
   metodoPagoId: '',
@@ -99,9 +100,7 @@ export default function DeudasPage() {
       const cat = c.find((x: Categoria) => x.nombre === 'Deudas')
       if (cat) setCatDeudaId(cat.id.toString())
 
-      const today = new Date().toISOString().split('T')[0]
-      const current = q.find((x: Quincena) => x.fechaInicio <= today && x.fechaFin >= today)
-      if (current) setAbonoForm(f => ({ ...f, quincenaId: current.id.toString() }))
+      setAbonoForm(f => ({ ...f, quincenaId: getInitialQuincenaId(q) }))
     })
   }, [])
 
@@ -141,12 +140,11 @@ export default function DeudasPage() {
   function openAbono(d: Deuda) {
     setAbonoDeudaId(d.id)
     setAbonoAcreedor(d.acreedor)
-    const today = new Date().toISOString().split('T')[0]
-    const current = quincenas.find(q => q.fechaInicio <= today && q.fechaFin >= today)
+    const today = getMexicoDateString()
     setAbonoForm({
       ...EMPTY_ABONO,
       fecha: today,
-      quincenaId: current?.id.toString() ?? '',
+      quincenaId: getInitialQuincenaId(quincenas),
       descripcion: `Abono ${d.acreedor}`,
     })
     setAbonoErrors({})

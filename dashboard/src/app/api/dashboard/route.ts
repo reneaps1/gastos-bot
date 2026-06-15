@@ -1,12 +1,26 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
+function getMexicoDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Mexico_City',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+
+  const year = parts.find(p => p.type === 'year')?.value
+  const month = parts.find(p => p.type === 'month')?.value
+  const day = parts.find(p => p.type === 'day')?.value
+  return new Date(`${year}-${month}-${day}T00:00:00.000Z`)
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const quincenaId = searchParams.get('quincenaId')
 
-    const today = new Date()
+    const today = getMexicoDate()
 
     let quincenaActual
     if (quincenaId) {
@@ -17,9 +31,15 @@ export async function GET(request: Request) {
       quincenaActual = await prisma.quincena.findFirst({
         where: {
           fechaInicio: { lte: today },
-          fechaFin: { gte: today },
+          fechaFin: { gt: today },
         },
       })
+      if (!quincenaActual) {
+        quincenaActual = await prisma.quincena.findFirst({
+          where: { fechaFin: { gt: today } },
+          orderBy: { fechaInicio: 'asc' },
+        })
+      }
     }
 
     const [todasQuincenas, categorias, ultimasTransacciones, totalesPorCategoria] = await Promise.all([

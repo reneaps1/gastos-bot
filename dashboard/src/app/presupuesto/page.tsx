@@ -5,6 +5,7 @@ import { formatMXN } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
+import { getInitialQuincenaId, persistQuincenaId } from '@/lib/quincena-selection'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -73,11 +74,14 @@ export default function PresupuestoPage() {
     ]).then(([q, c]) => {
       setQuincenas(q)
       setCategorias(c)
-      const today = new Date().toISOString().split('T')[0]
-      const current = q.find((x: Quincena) => x.fechaInicio <= today && x.fechaFin >= today)
-      if (current) setQuincenaId(current.id.toString())
+      setQuincenaId(getInitialQuincenaId(q))
     })
   }, [])
+
+  function selectQuincena(id: string) {
+    setQuincenaId(id)
+    persistQuincenaId(id)
+  }
 
   const fetchPresupuestos = useCallback(async () => {
     if (!quincenaId) return
@@ -211,9 +215,8 @@ export default function PresupuestoPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <select value={quincenaId} onChange={e => setQuincenaId(e.target.value)}
+          <select value={quincenaId} onChange={e => selectQuincena(e.target.value)}
             className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer">
-            <option value="">Seleccionar quincena</option>
             {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
           </select>
           {presupuestos.length === 0 && !loading && (
