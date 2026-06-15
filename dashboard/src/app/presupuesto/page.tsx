@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown, CalendarClock } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -120,7 +120,8 @@ export default function PresupuestoPage() {
       tipo: p.tipo, montoPresupuestado: p.montoPresupuestado.toString(),
       clasificacion: p.clasificacion ?? '', notas: p.notas ?? '',
       recurrente: false, frecuencia: 'CADA_QUINCENA',
-      terminaCon: 'sin_fin', numOcurrencias: '6', diaCobro: '',
+      terminaCon: 'sin_fin', numOcurrencias: '6',
+      diaCobro: p.diaCobro?.toString() ?? '',
     })
     setFormErrors({})
     setModalOpen(true)
@@ -328,11 +329,17 @@ export default function PresupuestoPage() {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">
-                        {p.categoria.nombre}
-                        {p.clasificacion && ` · ${p.clasificacion}`}
-                        {!p.recurrente && p.diaCobro && ` · vence día ${p.diaCobro}`}
-                      </p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-xs text-slate-400 dark:text-slate-500">
+                          {p.categoria.nombre}{p.clasificacion && ` · ${p.clasificacion}`}
+                        </p>
+                        {p.diaCobro && (
+                          <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${p.diaCobro <= 15 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
+                            <CalendarClock size={10} />
+                            día {p.diaCobro}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -394,14 +401,33 @@ export default function PresupuestoPage() {
               {formErrors.montoPresupuestado && <p className="text-xs text-rose-500 mt-1">{formErrors.montoPresupuestado}</p>}
             </div>
             <div>
-              <Label htmlFor="p-diacobro">Vence el día</Label>
+              <label htmlFor="p-diacobro" className="flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                <CalendarClock size={11} />
+                Vence el día
+              </label>
               <div className="relative">
                 <input id="p-diacobro" type="number" min="1" max="31" placeholder="—"
                   value={form.diaCobro}
                   onChange={e => setForm(f => ({ ...f, diaCobro: e.target.value }))}
-                  className={`${fieldClass()} pr-8`} />
-                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 pointer-events-none">mes</span>
+                  className={`${fieldClass()} pr-7 text-center`} />
+                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 pointer-events-none">/{31}</span>
               </div>
+              {(() => {
+                const d = parseInt(form.diaCobro)
+                if (!form.diaCobro || isNaN(d)) return (
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Opcional — sin fecha específica</p>
+                )
+                if (d < 1 || d > 31) return (
+                  <p className="text-[11px] text-rose-500 mt-1">Debe ser entre 1 y 31</p>
+                )
+                const esQ1 = d <= 15
+                return (
+                  <p className={`text-[11px] mt-1 flex items-center gap-1 font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
+                    <CalendarClock size={10} />
+                    {esQ1 ? `Cae en 1ª quincena (días 1–15)` : `Cae en 2ª quincena (días 16–fin)`}
+                  </p>
+                )
+              })()}
             </div>
           </div>
           <div>
