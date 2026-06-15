@@ -5,7 +5,7 @@ import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
-import { getInitialQuincenaId, persistQuincenaId } from '@/lib/quincena-selection'
+import { getInitialQuincenaId, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -38,6 +38,7 @@ const EMPTY_FORM = {
   numOcurrencias: '6',
   diaCobro: '',
   fechaVencimiento: '',
+  targetQuincenaId: '',
 }
 
 function fieldClass(err?: string) {
@@ -150,6 +151,7 @@ export default function PresupuestoPage() {
       terminaCon: 'sin_fin', numOcurrencias: '6',
       diaCobro: p.diaCobro?.toString() ?? '',
       fechaVencimiento: p.fechaVencimiento ? p.fechaVencimiento.split('T')[0] : '',
+      targetQuincenaId: '',
     })
     setFormErrors({})
     setModalOpen(true)
@@ -176,7 +178,8 @@ export default function PresupuestoPage() {
     setSaving(true)
     try {
       const body = {
-        quincenaId, categoriaId: form.categoriaId, descripcion: form.descripcion.trim(),
+        quincenaId: form.targetQuincenaId || quincenaId,
+        categoriaId: form.categoriaId, descripcion: form.descripcion.trim(),
         tipo: form.tipo, montoPresupuestado: form.montoPresupuestado,
         clasificacion: form.clasificacion || null, notas: form.notas || null,
         recurrente: form.recurrente,
@@ -495,15 +498,54 @@ export default function PresupuestoPage() {
               </label>
               <input id="p-fechavenc" type="date"
                 value={form.fechaVencimiento}
-                onChange={e => setForm(f => ({ ...f, fechaVencimiento: e.target.value }))}
+                onChange={e => {
+                  const val = e.target.value
+                  const suggestedId = val ? getQuincenaIdForDate(quincenas, val) : ''
+                  const currentId = (editingP?.quincenaId?.toString() ?? quincenaId)
+                  const isDifferent = suggestedId && suggestedId !== currentId
+                  setForm(f => ({
+                    ...f,
+                    fechaVencimiento: val,
+                    targetQuincenaId: isDifferent ? suggestedId : '',
+                  }))
+                }}
                 className={fieldClass()} />
               {(() => {
                 if (!form.fechaVencimiento) return (
                   <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Opcional — sin fecha específica</p>
                 )
+                const suggestedId = getQuincenaIdForDate(quincenas, form.fechaVencimiento)
+                const suggestedQ = quincenas.find(q => q.id.toString() === suggestedId)
+                const currentId = (editingP?.quincenaId?.toString() ?? quincenaId)
+                const isDifferent = suggestedId && suggestedId !== currentId
+
+                if (isDifferent && suggestedQ) {
+                  const confirmed = form.targetQuincenaId === suggestedId
+                  return (
+                    <div className={`mt-1.5 rounded-lg px-2.5 py-2 border text-[11px] ${confirmed ? 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800/40' : 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/40'}`}>
+                      <p className={`font-medium mb-1.5 ${confirmed ? 'text-indigo-700 dark:text-indigo-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                        {confirmed ? `✓ Se moverá a ${suggestedQ.codigo}` : `Esta fecha corresponde a ${suggestedQ.codigo} · ${formatQuincenaRange(suggestedQ)}`}
+                      </p>
+                      {!confirmed && (
+                        <div className="flex gap-1.5">
+                          <button type="button"
+                            onClick={() => setForm(f => ({ ...f, targetQuincenaId: suggestedId }))}
+                            className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md cursor-pointer transition-colors">
+                            Mover a {suggestedQ.codigo}
+                          </button>
+                          <button type="button"
+                            onClick={() => setForm(f => ({ ...f, targetQuincenaId: 'keep' }))}
+                            className="px-2 py-0.5 border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md cursor-pointer transition-colors">
+                            Mantener Q actual
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+
                 const d = new Date(`${form.fechaVencimiento}T00:00:00`)
-                const dia = d.getDate()
-                const esQ1 = dia <= 15
+                const esQ1 = d.getDate() <= 15
                 return (
                   <p className={`text-[11px] mt-1 flex items-center gap-1 font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
                     <CalendarClock size={10} />
