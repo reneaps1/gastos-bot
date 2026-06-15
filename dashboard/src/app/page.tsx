@@ -35,11 +35,11 @@ const CAT_DOT: Record<string, string> = {
 }
 
 function getSemaforo(margen: number, ingresos: number) {
-  if (ingresos === 0) return { color: 'bg-slate-300', label: 'Sin datos', text: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-50' }
+  if (ingresos === 0) return { color: 'bg-slate-300 dark:bg-slate-500', label: 'Sin datos', text: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-50 dark:bg-slate-800/80 dark:border dark:border-slate-700' }
   const ratio = margen / ingresos
-  if (ratio >= 0.15) return { color: 'bg-emerald-500', label: 'Saludable', text: 'text-emerald-700', bg: 'bg-emerald-50' }
-  if (ratio >= 0) return { color: 'bg-amber-500', label: 'Ajustado', text: 'text-amber-700', bg: 'bg-amber-50' }
-  return { color: 'bg-rose-500', label: 'En rojo', text: 'text-rose-700', bg: 'bg-rose-50' }
+  if (ratio >= 0.15) return { color: 'bg-emerald-500', label: 'Saludable', text: 'text-emerald-700 dark:text-emerald-300', bg: 'bg-emerald-50 dark:bg-emerald-950/40 dark:border dark:border-emerald-800/60' }
+  if (ratio >= 0) return { color: 'bg-amber-500', label: 'Ajustado', text: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-950/40 dark:border dark:border-amber-800/60' }
+  return { color: 'bg-rose-500', label: 'En rojo', text: 'text-rose-700 dark:text-rose-300', bg: 'bg-rose-50 dark:bg-rose-950/40 dark:border dark:border-rose-800/60' }
 }
 
 export default function DashboardPage() {
@@ -149,7 +149,7 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
             {qActual ? qActual.codigo : 'Sin quincena activa'}
           </h1>
           {qActual && (
@@ -168,7 +168,7 @@ export default function DashboardPage() {
           <select
             value={quincenaId}
             onChange={e => setQuincenaId(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm dark:shadow-none"
           >
             {quincenas.map(q => (
               <option key={q.id} value={q.id}>{q.codigo}</option>
@@ -183,12 +183,12 @@ export default function DashboardPage() {
         <>
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600" />} color="text-emerald-600" bg="bg-emerald-50" />
-            <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} icon={<TrendingDown size={20} className="text-rose-600" />} color="text-rose-600" bg="bg-rose-50" />
-            <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600" />} color="text-blue-600" bg="bg-blue-50" />
-            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600" /> : <TrendingDown size={20} className="text-orange-600" />} color={metricas.margen >= 0 ? 'text-indigo-600' : 'text-orange-600'} bg={metricas.margen >= 0 ? 'bg-indigo-50' : 'bg-orange-50'} />
-            <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600" />} color="text-amber-600" bg="bg-amber-50" />
-            <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon={<BarChart3 size={20} className={metricas.pctPresup > 90 ? 'text-rose-600' : metricas.pctPresup > 70 ? 'text-amber-600' : 'text-emerald-600'} />} color={metricas.pctPresup > 90 ? 'text-rose-600' : metricas.pctPresup > 70 ? 'text-amber-600' : 'text-emerald-600'} bg={metricas.pctPresup > 90 ? 'bg-rose-50' : metricas.pctPresup > 70 ? 'bg-amber-50' : 'bg-emerald-50'} />
+            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
+            <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" />
+            <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
+            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-orange-600 dark:text-orange-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-orange-600 dark:text-orange-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-orange-50 dark:bg-orange-950/50 dark:ring-1 dark:ring-orange-800/50'} />
+            <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50" />
+            <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon={<BarChart3 size={20} className={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-300' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'} />} color={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'} bg={metricas.pctPresup > 90 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' : metricas.pctPresup > 70 ? 'bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'} />
           </div>
 
           {/* Presupuesto por categoría */}
@@ -262,8 +262,8 @@ export default function DashboardPage() {
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
-                    <Zap size={16} className="text-amber-600" />
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50 flex items-center justify-center">
+                    <Zap size={16} className="text-amber-600 dark:text-amber-300" />
                   </div>
                   <h3 className="font-semibold text-slate-700 dark:text-slate-200">Recurrentes</h3>
                 </div>
@@ -332,8 +332,8 @@ export default function DashboardPage() {
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
-                    <Clock size={16} className="text-amber-600" />
+                  <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50 flex items-center justify-center">
+                    <Clock size={16} className="text-amber-600 dark:text-amber-300" />
                   </div>
                   <h3 className="font-semibold text-slate-700 dark:text-slate-200">Gastos pendientes</h3>
                 </div>
@@ -414,7 +414,7 @@ export default function DashboardPage() {
                   { label: 'Ualá', value: snapshot.uala },
                   { label: 'Efectivo', value: snapshot.efectivo },
                 ].map(c => (
-                  <div key={c.label} className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 text-center">
+                  <div key={c.label} className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">
                     <p className="text-xs text-slate-500 dark:text-slate-400">{c.label}</p>
                     <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(c.value)}</p>
                   </div>
@@ -474,25 +474,25 @@ function DashboardSkeleton() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-slate-100" />
+            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700" />
             <div className="flex-1">
-              <div className="h-3 bg-slate-100 rounded w-16 mb-2" />
-              <div className="h-5 bg-slate-100 rounded w-20" />
+              <div className="h-3 bg-slate-100 dark:bg-slate-700 rounded w-16 mb-2" />
+              <div className="h-5 bg-slate-100 dark:bg-slate-700 rounded w-20" />
             </div>
           </div>
         ))}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 space-y-3">
-          <div className="h-5 bg-slate-100 rounded w-32" />
+          <div className="h-5 bg-slate-100 dark:bg-slate-700 rounded w-32" />
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="flex justify-between"><div className="h-4 bg-slate-100 rounded w-24" /><div className="h-4 bg-slate-100 rounded w-16" /></div>
+            <div key={i} className="flex justify-between"><div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-24" /><div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-16" /></div>
           ))}
         </div>
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 lg:col-span-2 space-y-3">
-          <div className="h-5 bg-slate-100 rounded w-40" />
+          <div className="h-5 bg-slate-100 dark:bg-slate-700 rounded w-40" />
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="space-y-1"><div className="flex justify-between"><div className="h-4 bg-slate-100 rounded w-28" /><div className="h-4 bg-slate-100 rounded w-16" /></div><div className="h-2 bg-slate-100 rounded-full" /></div>
+            <div key={i} className="space-y-1"><div className="flex justify-between"><div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-28" /><div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-16" /></div><div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full" /></div>
           ))}
         </div>
       </div>
