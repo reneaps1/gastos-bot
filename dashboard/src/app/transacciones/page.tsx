@@ -7,17 +7,17 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
-  Hogar: { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500' },
-  Salud: { bg: 'bg-rose-50', text: 'text-rose-700', dot: 'bg-rose-500' },
-  Familia: { bg: 'bg-pink-50', text: 'text-pink-700', dot: 'bg-pink-500' },
-  Transporte: { bg: 'bg-sky-50', text: 'text-sky-700', dot: 'bg-sky-500' },
-  Suscripciones: { bg: 'bg-violet-50', text: 'text-violet-700', dot: 'bg-violet-500' },
-  Deudas: { bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500' },
-  Personal: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-500' },
-  Ingresos: { bg: 'bg-emerald-50', text: 'text-emerald-700', dot: 'bg-emerald-500' },
-  Ahorro: { bg: 'bg-blue-50', text: 'text-blue-700', dot: 'bg-blue-500' },
+  Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
+  Salud: { bg: 'bg-rose-50 dark:bg-rose-950/30', text: 'text-rose-700 dark:text-rose-400', dot: 'bg-rose-500' },
+  Familia: { bg: 'bg-pink-50 dark:bg-pink-950/30', text: 'text-pink-700 dark:text-pink-400', dot: 'bg-pink-500' },
+  Transporte: { bg: 'bg-sky-50 dark:bg-sky-950/30', text: 'text-sky-700 dark:text-sky-400', dot: 'bg-sky-500' },
+  Suscripciones: { bg: 'bg-violet-50 dark:bg-violet-950/30', text: 'text-violet-700 dark:text-violet-400', dot: 'bg-violet-500' },
+  Deudas: { bg: 'bg-red-50 dark:bg-red-950/30', text: 'text-red-700 dark:text-red-400', dot: 'bg-red-500' },
+  Personal: { bg: 'bg-amber-50 dark:bg-amber-950/30', text: 'text-amber-700 dark:text-amber-400', dot: 'bg-amber-500' },
+  Ingresos: { bg: 'bg-emerald-50 dark:bg-emerald-950/30', text: 'text-emerald-700 dark:text-emerald-400', dot: 'bg-emerald-500' },
+  Ahorro: { bg: 'bg-blue-50 dark:bg-blue-950/30', text: 'text-blue-700 dark:text-blue-400', dot: 'bg-blue-500' },
 }
-const DEFAULT_CAT_COLOR = { bg: 'bg-slate-50', text: 'text-slate-700', dot: 'bg-slate-400' }
+const DEFAULT_CAT_COLOR = { bg: 'bg-slate-50', text: 'text-slate-700 dark:text-slate-300', dot: 'bg-slate-400' }
 
 interface Categoria { id: number; nombre: string; tipo: string }
 interface User { id: number; nombre: string }
@@ -39,11 +39,11 @@ const EMPTY_FORM = {
 const LIMIT = 25
 
 function fieldClass(error?: string) {
-  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${error ? 'border-rose-400' : 'border-slate-200'}`
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${error ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
 }
 
 function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
-  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 mb-1">{children}</label>
+  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
 export default function TransaccionesPage() {
@@ -200,63 +200,63 @@ export default function TransaccionesPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <h2 className="text-2xl font-bold text-slate-800">Transacciones</h2>
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Transacciones</h2>
         <button onClick={openCreate} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
           <Plus size={16} /> Nueva transacción
         </button>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          <select value={quincenaId} onChange={e => { setQuincenaId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+          <select value={quincenaId} onChange={e => { setQuincenaId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             <option value="">Todas las quincenas</option>
             {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
           </select>
-          <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1) }} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+          <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             <option value="">Todos los tipos</option>
             <option value="Gasto">Gasto</option>
             <option value="Ingreso">Ingreso</option>
             <option value="Ahorro">Ahorro</option>
           </select>
-          <select value={categoriaId} onChange={e => { setCategoriaId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+          <select value={categoriaId} onChange={e => { setCategoriaId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             <option value="">Todas las categorías</option>
             {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
-          <select value={userId} onChange={e => { setUserId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+          <select value={userId} onChange={e => { setUserId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             <option value="">Todos los usuarios</option>
             {users.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
           </select>
-          <select value={estatus} onChange={e => { setEstatus(e.target.value); setPage(1) }} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+          <select value={estatus} onChange={e => { setEstatus(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             <option value="">Todos los estatus</option>
             <option value="Pagado">Pagado</option>
             <option value="Pendiente">Pendiente</option>
           </select>
           <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
             <input type="text" placeholder="Buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
-              className="w-full text-sm border border-slate-200 rounded-lg pl-8 pr-3 py-2 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-3 py-2 bg-white text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
-          <p className="text-xs text-slate-500 mb-1">Registros</p>
-          <p className="text-2xl font-bold text-slate-800">{total}</p>
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-center">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Registros</p>
+          <p className="text-2xl font-bold text-slate-800 dark:text-slate-100">{total}</p>
         </div>
-        <div className="bg-emerald-50 rounded-xl border border-emerald-100 p-4 text-center">
-          <p className="text-xs text-emerald-600 mb-1">Ingresos</p>
-          <p className="text-2xl font-bold text-emerald-700">{formatMXN(totalIngresos)}</p>
+        <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4 text-center">
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-1">Ingresos</p>
+          <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{formatMXN(totalIngresos)}</p>
         </div>
-        <div className="bg-rose-50 rounded-xl border border-rose-100 p-4 text-center">
-          <p className="text-xs text-rose-600 mb-1">Gastos</p>
-          <p className="text-2xl font-bold text-rose-700">{formatMXN(totalGastos)}</p>
+        <div className="bg-rose-50 dark:bg-rose-900/20 rounded-xl border border-rose-100 dark:border-rose-900/30 p-4 text-center">
+          <p className="text-xs text-rose-600 dark:text-rose-400 mb-1">Gastos</p>
+          <p className="text-2xl font-bold text-rose-700 dark:text-rose-400">{formatMXN(totalGastos)}</p>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {loading ? (
-          <div className="py-20 flex justify-center items-center text-slate-400 text-sm gap-2">
+          <div className="py-20 flex justify-center items-center text-slate-400 dark:text-slate-500 text-sm gap-2">
             <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -264,11 +264,11 @@ export default function TransaccionesPage() {
             Cargando...
           </div>
         ) : txs.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
-              <Wallet size={28} className="text-slate-300" />
+          <div className="text-center py-20 text-slate-400 dark:text-slate-500">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+              <Wallet size={28} className="text-slate-300 dark:text-slate-500" />
             </div>
-            <p className="font-medium text-slate-600">Sin transacciones</p>
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin transacciones</p>
             <p className="text-sm mt-1">
               {quincenaId || tipo || categoriaId || userId || estatus || debouncedSearch
                 ? 'No hay resultados para los filtros seleccionados'
@@ -278,26 +278,26 @@ export default function TransaccionesPage() {
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
-                  <th className="text-left px-5 py-3 text-slate-500 font-medium">Descripción</th>
-                  <th className="text-left px-4 py-3 text-slate-500 font-medium">Categoría</th>
-                  <th className="text-left px-4 py-3 text-slate-500 font-medium hidden md:table-cell">Quincena</th>
-                  <th className="text-left px-4 py-3 text-slate-500 font-medium hidden lg:table-cell">Fecha</th>
-                  <th className="text-left px-4 py-3 text-slate-500 font-medium hidden lg:table-cell">Usuario</th>
-                  <th className="text-center px-4 py-3 text-slate-500 font-medium">Tipo</th>
-                  <th className="text-center px-4 py-3 text-slate-500 font-medium">Estatus</th>
-                  <th className="text-right px-4 py-3 text-slate-500 font-medium">Monto</th>
+                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Quincena</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Fecha</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>
+                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>
+                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estatus</th>
+                  <th className="text-right px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Monto</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
+              <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
                 {txs.map(tx => {
                   const catColor = CAT_COLORS[tx.categoria?.nombre] ?? DEFAULT_CAT_COLOR
                   return (
                     <tr key={tx.id} onClick={() => setDetailTx(tx)}
-                      className="hover:bg-indigo-50/40 cursor-pointer transition-colors group">
+                      className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 cursor-pointer transition-colors group">
                       <td className="px-5 py-3.5">
-                        <span className="font-medium text-slate-800 group-hover:text-indigo-700 transition-colors max-w-[200px] block truncate">{tx.descripcion}</span>
+                        <span className="font-medium text-slate-800 dark:text-slate-100 group-hover:text-indigo-700 transition-colors max-w-[200px] block truncate">{tx.descripcion}</span>
                       </td>
                       <td className="px-4 py-3.5">
                         <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
@@ -306,13 +306,13 @@ export default function TransaccionesPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3.5 hidden md:table-cell">
-                        <span className="bg-indigo-100 text-indigo-700 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
+                        <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-500 hidden lg:table-cell">{formatDate(tx.fecha)}</td>
-                      <td className="px-4 py-3.5 text-slate-500 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>
+                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{formatDate(tx.fecha)}</td>
+                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>
                       <td className="px-4 py-3.5 text-center">
                         <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                          tx.tipo === 'Ingreso' ? 'bg-emerald-100 text-emerald-700' : tx.tipo === 'Ahorro' ? 'bg-blue-100 text-blue-700' : 'bg-rose-100 text-rose-700'
+                          tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400'
                         }`}>
                           {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : tx.tipo === 'Ahorro' ? <Wallet size={11} /> : <ArrowDownRight size={11} />}
                           {tx.tipo}
@@ -321,13 +321,13 @@ export default function TransaccionesPage() {
                       <td className="px-4 py-3.5 text-center">
                         <button onClick={e => { e.stopPropagation(); toggleEstatus(tx) }} disabled={togglingId === tx.id}
                           className={`text-xs font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors ${
-                            tx.estatus === 'Pagado' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                            tx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
                           } disabled:opacity-50`}>
                           {togglingId === tx.id ? '...' : tx.estatus}
                         </button>
                       </td>
                       <td className={`px-4 py-3.5 text-right font-bold tabular-nums ${
-                        tx.tipo === 'Ingreso' ? 'text-emerald-600' : tx.tipo === 'Ahorro' ? 'text-blue-600' : 'text-rose-600'
+                        tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600 dark:text-rose-400'
                       }`}>
                         {tx.tipo === 'Ingreso' ? '+' : '-'}{formatMXN(Number(tx.monto))}
                       </td>
@@ -340,15 +340,15 @@ export default function TransaccionesPage() {
         )}
 
         {!loading && totalPages > 1 && (
-          <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 text-sm text-slate-500">
+          <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 text-sm text-slate-500 dark:text-slate-400">
             <span>{(page - 1) * LIMIT + 1}–{Math.min(page * LIMIT, total)} de {total}</span>
             <div className="flex gap-2">
               <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 cursor-pointer disabled:cursor-default">
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-default">
                 <ChevronLeft size={14} /> Anterior
               </button>
               <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 disabled:opacity-40 cursor-pointer disabled:cursor-default">
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-40 cursor-pointer disabled:cursor-default">
                 Siguiente <ChevronRight size={14} />
               </button>
             </div>
@@ -360,26 +360,26 @@ export default function TransaccionesPage() {
       {detailTx && (
         <>
           <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm transition-opacity" onClick={() => setDetailTx(null)} />
-          <div className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-md bg-white shadow-2xl flex flex-col animate-slide-in">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-              <h3 className="font-bold text-slate-800 text-lg">Detalle</h3>
-              <button onClick={() => setDetailTx(null)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors">
+          <div className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-md bg-white dark:bg-slate-800 shadow-2xl flex flex-col animate-slide-in">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700">
+              <h3 className="font-bold text-slate-800 dark:text-slate-100 text-lg">Detalle</h3>
+              <button onClick={() => setDetailTx(null)} className="p-2 text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg cursor-pointer transition-colors">
                 <X size={18} />
               </button>
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
-              <div className="text-center pb-4 border-b border-slate-100">
+              <div className="text-center pb-4 border-b border-slate-100 dark:border-slate-700">
                 <p className={`text-3xl font-bold tabular-nums ${detailTx.tipo === 'Ingreso' ? 'text-emerald-600' : detailTx.tipo === 'Ahorro' ? 'text-blue-600' : 'text-rose-600'}`}>
                   {detailTx.tipo === 'Ingreso' ? '+' : '-'}{formatMXN(Number(detailTx.monto))}
                 </p>
-                <p className="text-lg font-semibold text-slate-800 mt-2">{detailTx.descripcion}</p>
+                <p className="text-lg font-semibold text-slate-800 dark:text-slate-100 mt-2">{detailTx.descripcion}</p>
               </div>
 
               <div className="space-y-3">
                 <DetailRow icon={<Calendar size={16} />} label="Fecha" value={formatDate(detailTx.fecha)} />
                 <DetailRow icon={<CreditCard size={16} />} label="Quincena" value={
-                  <span className="bg-indigo-100 text-indigo-700 text-xs font-semibold px-2 py-0.5 rounded-full">{detailTx.quincena.codigo}</span>
+                  <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{detailTx.quincena.codigo}</span>
                 } />
                 <DetailRow icon={<div className={`w-2 h-2 rounded-full ${(CAT_COLORS[detailTx.categoria?.nombre] ?? DEFAULT_CAT_COLOR).dot}`} />} label="Categoría" value={detailTx.categoria?.nombre} />
                 <DetailRow icon={<User size={16} />} label="Usuario" value={detailTx.user?.nombre ?? 'Sin asignar'} />
@@ -388,33 +388,33 @@ export default function TransaccionesPage() {
                 )}
                 <DetailRow icon={<Wallet size={16} />} label="Tipo" value={
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
-                    detailTx.tipo === 'Ingreso' ? 'bg-emerald-100 text-emerald-700' : detailTx.tipo === 'Ahorro' ? 'bg-blue-100 text-blue-700' : 'bg-rose-100 text-rose-700'
+                    detailTx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : detailTx.tipo === 'Ahorro' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400'
                   }`}>{detailTx.tipo}</span>
                 } />
                 <div className="flex items-center justify-between py-2">
-                  <span className="text-sm text-slate-500 flex items-center gap-2">
+                  <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-2">
                     <StickyNote size={16} /> Estatus
                   </span>
                   <button onClick={() => toggleEstatus(detailTx)} disabled={togglingId === detailTx.id}
                     className={`text-xs font-semibold px-3 py-1 rounded-full cursor-pointer transition-colors ${
-                      detailTx.estatus === 'Pagado' ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'
+                      detailTx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
                     } disabled:opacity-50`}>
                     {togglingId === detailTx.id ? '...' : detailTx.estatus}
                   </button>
                 </div>
                 {detailTx.notas && (
-                  <DetailRow icon={<StickyNote size={16} />} label="Notas" value={<span className="text-slate-600">{detailTx.notas}</span>} />
+                  <DetailRow icon={<StickyNote size={16} />} label="Notas" value={<span className="text-slate-600 dark:text-slate-400">{detailTx.notas}</span>} />
                 )}
               </div>
             </div>
 
-            <div className="px-6 py-4 border-t border-slate-200 flex gap-3">
+            <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-700 flex gap-3">
               <button onClick={() => openEdit(detailTx)}
                 className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
                 <Pencil size={14} /> Editar
               </button>
               <button onClick={() => { setConfirmId(detailTx.id) }}
-                className="flex items-center justify-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 cursor-pointer transition-colors">
+                className="flex items-center justify-center gap-2 text-sm font-medium px-4 py-2.5 rounded-lg border border-rose-200 dark:border-rose-900/30 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/20 cursor-pointer transition-colors">
                 <Trash2 size={14} /> Eliminar
               </button>
             </div>
@@ -502,7 +502,7 @@ export default function TransaccionesPage() {
             <textarea id="tx-notas" rows={2} placeholder="Notas adicionales (opcional)" value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} className={`${fieldClass()} resize-none`} />
           </div>
           <div className="flex gap-3 justify-end pt-2">
-            <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+            <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
               Cancelar
             </button>
             <button type="button" onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]">
@@ -522,8 +522,8 @@ export default function TransaccionesPage() {
 function DetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between py-2">
-      <span className="text-sm text-slate-500 flex items-center gap-2">{icon} {label}</span>
-      <span className="text-sm font-medium text-slate-800">{value}</span>
+      <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-2">{icon} {label}</span>
+      <span className="text-sm font-medium text-slate-800 dark:text-slate-100">{value}</span>
     </div>
   )
 }

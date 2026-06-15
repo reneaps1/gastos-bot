@@ -23,11 +23,11 @@ const EMPTY_FORM = {
 }
 
 function fieldClass(err?: string) {
-  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200'}`
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
 }
 
 function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
-  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 mb-1">{children}</label>
+  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
 export default function EntradasRapidasPage() {
@@ -139,29 +139,29 @@ export default function EntradasRapidasPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Conceptos Recurrentes</h2>
-          <p className="text-sm text-slate-500 mt-1">Gastos e ingresos frecuentes que se repiten cada quincena</p>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Conceptos Recurrentes</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Gastos e ingresos frecuentes que se repiten cada quincena</p>
         </div>
         <button onClick={openCreate} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
           <Plus size={16} /> Nueva entrada
         </button>
       </div>
 
-      <div className="bg-white rounded-xl border border-slate-200 p-4 flex gap-3 flex-wrap">
-        <select value={quincenaFilter} onChange={e => setQuincenaFilter(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex gap-3 flex-wrap">
+        <select value={quincenaFilter} onChange={e => setQuincenaFilter(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
           <option value="">Todas las quincenas</option>
           {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
         </select>
-        <select value={procesadoFilter} onChange={e => setProcesadoFilter(e.target.value)} className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700">
+        <select value={procesadoFilter} onChange={e => setProcesadoFilter(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
           <option value="">Todos</option>
           <option value="false">Sin procesar</option>
           <option value="true">Procesados</option>
         </select>
       </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {loading ? (
-          <div className="py-16 flex justify-center text-slate-400 text-sm gap-2">
+          <div className="py-16 flex justify-center text-slate-400 dark:text-slate-500 text-sm gap-2">
             <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -169,49 +169,49 @@ export default function EntradasRapidasPage() {
             Cargando...
           </div>
         ) : entradas.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-amber-100 flex items-center justify-center">
+          <div className="text-center py-20 text-slate-400 dark:text-slate-500">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
               <Zap size={28} className="text-amber-400" />
             </div>
-            <p className="font-medium text-slate-600">Sin conceptos recurrentes</p>
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin conceptos recurrentes</p>
             <p className="text-sm mt-1">Crea entradas rápidas para gastos o ingresos que se repiten</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
-                  <th className="text-left px-4 py-3 text-slate-500 font-medium">Fecha</th>
-                  <th className="text-left px-3 py-3 text-slate-500 font-medium">Descripción</th>
-                  <th className="text-left px-3 py-3 text-slate-500 font-medium hidden md:table-cell">Categoría</th>
-                  <th className="text-right px-3 py-3 text-slate-500 font-medium">Monto</th>
-                  <th className="text-center px-3 py-3 text-slate-500 font-medium">Estado</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>
+                  <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
+                  <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Categoría</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Monto</th>
+                  <th className="text-center px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Estado</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                 {entradas.map(e => (
-                  <tr key={e.id} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3.5 text-slate-600 whitespace-nowrap">{formatDate(e.fecha)}</td>
-                    <td className="px-3 py-3.5 text-slate-800 font-medium">{e.descripcion}</td>
+                  <tr key={e.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                    <td className="px-4 py-3.5 text-slate-600 dark:text-slate-400 whitespace-nowrap">{formatDate(e.fecha)}</td>
+                    <td className="px-3 py-3.5 text-slate-800 dark:text-slate-100 font-medium">{e.descripcion}</td>
                     <td className="px-3 py-3.5 hidden md:table-cell">
                       {e.categoria && (
-                        <span className="bg-slate-100 text-slate-600 text-xs font-medium px-2 py-0.5 rounded-full">{e.categoria.nombre}</span>
+                        <span className="bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-400 text-xs font-medium px-2 py-0.5 rounded-full">{e.categoria.nombre}</span>
                       )}
                     </td>
-                    <td className="px-3 py-3.5 text-right font-semibold text-slate-800">{formatMXN(e.monto)}</td>
+                    <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">{formatMXN(e.monto)}</td>
                     <td className="px-3 py-3.5 text-center">
                       {e.procesado
-                        ? <span className="bg-emerald-100 text-emerald-700 text-xs font-semibold px-2 py-0.5 rounded-full">Procesado</span>
-                        : <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded-full">Pendiente</span>
+                        ? <span className="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 text-xs font-semibold px-2 py-0.5 rounded-full">Procesado</span>
+                        : <span className="bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 text-xs font-semibold px-2 py-0.5 rounded-full">Pendiente</span>
                       }
                     </td>
                     <td className="px-4 py-3.5">
                       <div className="flex items-center gap-1 justify-end">
-                        <button onClick={() => openEdit(e)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                        <button onClick={() => openEdit(e)} className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                           <Pencil size={14} />
                         </button>
-                        <button onClick={() => setConfirmId(e.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                        <button onClick={() => setConfirmId(e.id)} className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
                           <Trash2 size={14} />
                         </button>
                       </div>
@@ -271,7 +271,7 @@ export default function EntradasRapidasPage() {
             <textarea id="er-notas" rows={2} placeholder="Notas adicionales (opcional)" value={form.notas} onChange={e => set('notas', e.target.value)} className={`${fieldClass()} resize-none`} />
           </div>
           <div className="flex gap-3 justify-end pt-2">
-            <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+            <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
               Cancelar
             </button>
             <button type="button" onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]">

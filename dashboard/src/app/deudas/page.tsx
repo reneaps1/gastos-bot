@@ -41,13 +41,13 @@ const EMPTY_ABONO = {
 }
 
 function fieldClass(err?: string) {
-  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
-    err ? 'border-rose-400' : 'border-slate-200'
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${
+    err ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'
   }`
 }
 
 function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
-  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 mb-1">{children}</label>
+  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
 function pctColor(pct: number) {
@@ -258,12 +258,12 @@ export default function DeudasPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
-        <h2 className="text-2xl font-bold text-slate-800">Deudas</h2>
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Deudas</h2>
         <div className="flex items-center gap-3">
           {inactivas.length > 0 && (
             <button
               onClick={() => setMostrarInactivas(v => !v)}
-              className="text-sm text-slate-500 hover:text-slate-700 underline cursor-pointer"
+              className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:text-slate-300 underline cursor-pointer"
             >
               {mostrarInactivas ? 'Ocultar archivadas' : `Ver archivadas (${inactivas.length})`}
             </button>
@@ -280,23 +280,23 @@ export default function DeudasPage() {
 
       {/* Summary */}
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white rounded-xl border border-slate-200 p-4 text-center">
-          <p className="text-xs text-slate-500 mb-1">Deuda original total</p>
-          <p className="text-xl font-bold text-slate-800">{formatMXN(totalDeuda)}</p>
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-center">
+          <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Deuda original total</p>
+          <p className="text-xl font-bold text-slate-800 dark:text-slate-100">{formatMXN(totalDeuda)}</p>
         </div>
-        <div className="bg-emerald-50 rounded-xl border border-emerald-100 p-4 text-center">
-          <p className="text-xs text-emerald-600 mb-1">Total abonado</p>
-          <p className="text-xl font-bold text-emerald-700">{formatMXN(totalAbonado)}</p>
+        <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4 text-center">
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-1">Total abonado</p>
+          <p className="text-xl font-bold text-emerald-700 dark:text-emerald-400">{formatMXN(totalAbonado)}</p>
         </div>
-        <div className="bg-rose-50 rounded-xl border border-rose-100 p-4 text-center">
-          <p className="text-xs text-rose-600 mb-1">Saldo pendiente</p>
-          <p className="text-xl font-bold text-rose-700">{formatMXN(totalSaldo)}</p>
+        <div className="bg-rose-50 dark:bg-rose-900/20 rounded-xl border border-rose-100 dark:border-rose-900/30 p-4 text-center">
+          <p className="text-xs text-rose-600 dark:text-rose-400 mb-1">Saldo pendiente</p>
+          <p className="text-xl font-bold text-rose-700 dark:text-rose-400">{formatMXN(totalSaldo)}</p>
         </div>
       </div>
 
       {/* List */}
       {loading ? (
-        <div className="py-16 flex justify-center text-slate-400 text-sm gap-2">
+        <div className="py-16 flex justify-center text-slate-400 dark:text-slate-500 text-sm gap-2">
           <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -304,11 +304,11 @@ export default function DeudasPage() {
           Cargando...
         </div>
       ) : visible.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-emerald-100 flex items-center justify-center">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
               <HandCoins size={28} className="text-emerald-400" />
             </div>
-            <p className="font-medium text-slate-600">Sin deudas registradas</p>
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin deudas registradas</p>
           <p className="text-sm mt-1">Crea una deuda para llevar el seguimiento</p>
         </div>
       ) : (
@@ -316,41 +316,41 @@ export default function DeudasPage() {
           {visible.map(d => (
             <div
               key={d.id}
-              className={`bg-white rounded-2xl border p-5 ${
-                d.activo ? 'border-slate-200' : 'border-slate-100 opacity-70'
+              className={`bg-white dark:bg-slate-800 rounded-2xl border p-5 ${
+                d.activo ? 'border-slate-200 dark:border-slate-700' : 'border-slate-100 dark:border-slate-700 opacity-70'
               }`}
             >
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-bold text-slate-800 text-lg">{d.acreedor}</h3>
+                    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-lg">{d.acreedor}</h3>
                     {!d.activo && (
-                      <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">Archivada</span>
+                      <span className="text-xs bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 px-2 py-0.5 rounded-full">Archivada</span>
                     )}
                   </div>
-                  <div className="flex flex-wrap gap-3 mt-1 text-sm text-slate-500">
+                  <div className="flex flex-wrap gap-3 mt-1 text-sm text-slate-500 dark:text-slate-400">
                     {d.fechaInicio && <span>Desde {formatDate(d.fechaInicio)}</span>}
                     {d.abonoMensual != null && d.abonoMensual > 0 && (
                       <span>· Abono: {formatMXN(Number(d.abonoMensual))}/mes</span>
                     )}
                     {d.mesesRestantes != null && <span>· ~{d.mesesRestantes} meses restantes</span>}
                   </div>
-                  {d.notas && <p className="text-xs text-slate-400 mt-1">{d.notas}</p>}
+                  {d.notas && <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{d.notas}</p>}
                 </div>
                 <div className="flex items-start gap-2 ml-4">
                   <div className="text-right">
-                    <p className="text-2xl font-bold text-rose-600">{formatMXN(d.saldo)}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">de {formatMXN(Number(d.deudaOriginal))}</p>
+                    <p className="text-2xl font-bold text-rose-600 dark:text-rose-400">{formatMXN(d.saldo)}</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">de {formatMXN(Number(d.deudaOriginal))}</p>
                   </div>
                 </div>
               </div>
 
               <div className="space-y-1 mb-3">
-                <div className="flex justify-between text-xs text-slate-500">
+                <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
                   <span>Abonado: {formatMXN(d.totalAbonado)}</span>
                   <span className={`font-semibold ${pctText(d.pct)}`}>{d.pct.toFixed(1)}% pagado</span>
                 </div>
-                <div className="w-full bg-slate-100 rounded-full h-3">
+                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-3">
                   <div
                     className={`h-3 rounded-full transition-all ${pctColor(d.pct)}`}
                     style={{ width: `${Math.min(d.pct, 100)}%` }}
@@ -362,21 +362,21 @@ export default function DeudasPage() {
                 <div className="flex gap-2 justify-end pt-1">
                   <button
                     onClick={() => openAbono(d)}
-                    className="flex items-center gap-1.5 text-xs text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-3 py-1.5 rounded-lg cursor-pointer font-medium"
+                    className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/30 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 px-3 py-1.5 rounded-lg cursor-pointer font-medium"
                   >
                     <HandCoins size={13} />
                     Registrar abono
                   </button>
                   <button
                     onClick={() => openEdit(d)}
-                    className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer"
+                    className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 px-3 py-1.5 rounded-lg cursor-pointer"
                   >
                     <Pencil size={13} />
                     Editar
                   </button>
                   <button
                     onClick={() => setDesactivarId(d.id)}
-                    className="flex items-center gap-1.5 text-xs text-slate-500 bg-slate-50 hover:bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer"
+                    className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-700 hover:bg-slate-100 dark:hover:bg-slate-600 px-3 py-1.5 rounded-lg cursor-pointer"
                   >
                     <Archive size={13} />
                     Archivar
@@ -466,7 +466,7 @@ export default function DeudasPage() {
               type="button"
               onClick={() => setModalOpen(false)}
               disabled={saving}
-              className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
+              className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer"
             >
               Cancelar
             </button>
@@ -555,7 +555,7 @@ export default function DeudasPage() {
             </select>
           </div>
 
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-400 dark:text-slate-500">
             El abono se registrará como una transacción en la categoría Deudas.
           </p>
 
@@ -564,7 +564,7 @@ export default function DeudasPage() {
               type="button"
               onClick={() => setAbonoDeudaId(null)}
               disabled={savingAbono}
-              className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer"
+              className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer"
             >
               Cancelar
             </button>

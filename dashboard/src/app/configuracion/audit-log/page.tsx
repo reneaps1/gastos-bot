@@ -22,7 +22,7 @@ const OPERACIONES = ['INSERT', 'UPDATE', 'DELETE']
 
 const tablaColors: Record<string, string> = {
   transaccion: 'bg-blue-100 text-blue-700',
-  presupuesto: 'bg-indigo-100 text-indigo-700',
+  presupuesto: 'bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300',
   deuda: 'bg-rose-100 text-rose-700',
   entrada_rapida: 'bg-amber-100 text-amber-700',
   liquidez_snapshot: 'bg-cyan-100 text-cyan-700',

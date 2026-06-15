@@ -47,8 +47,8 @@ export default function ConfiguracionPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-slate-800">Configuración</h2>
-        <p className="text-sm text-slate-500 mt-1">Administra los catálogos y datos del sistema</p>
+        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Configuración</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Administra los catálogos y datos del sistema</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -56,13 +56,13 @@ export default function ConfiguracionPage() {
           <a
             key={s.href}
             href={s.href}
-            className="bg-white rounded-2xl border border-slate-200 p-6 hover:border-indigo-300 hover:shadow-md transition-all group"
+            className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 hover:border-indigo-300 hover:shadow-md transition-all group"
           >
             <div className={`w-12 h-12 rounded-xl ${s.bg} flex items-center justify-center mb-4 group-hover:scale-105 transition-transform`}>
               <s.icon size={22} className={s.color} />
             </div>
-            <h3 className="font-semibold text-slate-800 text-lg mb-1">{s.title}</h3>
-            <p className="text-sm text-slate-500">{s.description}</p>
+            <h3 className="font-semibold text-slate-800 dark:text-slate-100 text-lg mb-1">{s.title}</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400">{s.description}</p>
           </a>
         ))}
       </div>

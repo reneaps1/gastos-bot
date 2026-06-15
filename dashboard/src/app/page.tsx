@@ -28,7 +28,7 @@ const CAT_DOT: Record<string, string> = {
 }
 
 function getSemaforo(margen: number, ingresos: number) {
-  if (ingresos === 0) return { color: 'bg-slate-300', label: 'Sin datos', text: 'text-slate-600', bg: 'bg-slate-50' }
+  if (ingresos === 0) return { color: 'bg-slate-300', label: 'Sin datos', text: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-50' }
   const ratio = margen / ingresos
   if (ratio >= 0.15) return { color: 'bg-emerald-500', label: 'Saludable', text: 'text-emerald-700', bg: 'bg-emerald-50' }
   if (ratio >= 0) return { color: 'bg-amber-500', label: 'Ajustado', text: 'text-amber-700', bg: 'bg-amber-50' }
@@ -121,7 +121,7 @@ export default function DashboardPage() {
             {qActual ? qActual.codigo : 'Sin quincena activa'}
           </h1>
           {qActual && (
-            <p className="text-sm text-slate-500 mt-0.5">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
               {new Date(qActual.fechaInicio).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
               {' — '}
               {new Date(qActual.fechaFin).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
@@ -136,7 +136,7 @@ export default function DashboardPage() {
           <select
             value={quincenaId}
             onChange={e => setQuincenaId(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
           >
             {quincenas.map(q => (
               <option key={q.id} value={q.id}>{q.codigo}</option>
@@ -162,20 +162,20 @@ export default function DashboardPage() {
           {/* Recurrence + Gastos por categoría */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Conceptos recurrentes pendientes */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
                     <Zap size={16} className="text-amber-600" />
                   </div>
-                  <h3 className="font-semibold text-slate-700">Recurrentes</h3>
+                  <h3 className="font-semibold text-slate-700 dark:text-slate-200">Recurrentes</h3>
                 </div>
-                <Link href="/configuracion/entradas-rapidas" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-0.5">
+                <Link href="/configuracion/entradas-rapidas" className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
                   Ver todas <ChevronRight size={12} />
                 </Link>
               </div>
               {entradasPendientes.length === 0 ? (
-                <div className="text-center py-6 text-slate-400">
+                <div className="text-center py-6 text-slate-400 dark:text-slate-500">
                   <p className="text-sm">Sin pendientes</p>
                 </div>
               ) : (
@@ -184,7 +184,7 @@ export default function DashboardPage() {
                     <div key={e.id} className="flex items-center justify-between py-1.5">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${CAT_DOT[e.categoria?.nombre ?? ''] ?? 'bg-slate-400'}`} />
-                        <span className="text-sm text-slate-700 truncate">{e.descripcion}</span>
+                        <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{e.descripcion}</span>
                       </div>
                       <span className={`text-sm font-semibold tabular-nums ml-2 ${e.tipo === 'INGRESO' ? 'text-emerald-600' : 'text-rose-600'}`}>
                         {e.tipo === 'INGRESO' ? '+' : '-'}{formatMXN(Number(e.monto))}
@@ -192,17 +192,17 @@ export default function DashboardPage() {
                     </div>
                   ))}
                   {entradasPendientes.length > 5 && (
-                    <p className="text-xs text-slate-400 text-center pt-1">+{entradasPendientes.length - 5} más</p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 text-center pt-1">+{entradasPendientes.length - 5} más</p>
                   )}
                 </div>
               )}
             </div>
 
             {/* Gastos por categoría */}
-            <div className="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2">
-              <h3 className="font-semibold text-slate-700 mb-4">Gastos por categoría</h3>
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 lg:col-span-2">
+              <h3 className="font-semibold text-slate-700 dark:text-slate-200 mb-4">Gastos por categoría</h3>
               {gastosPorCategoria.length === 0 ? (
-                <div className="text-center py-8 text-slate-400">
+                <div className="text-center py-8 text-slate-400 dark:text-slate-500">
                   <p className="text-sm">Sin gastos en esta quincena</p>
                 </div>
               ) : (
@@ -210,19 +210,19 @@ export default function DashboardPage() {
                   {gastosPorCategoria.map(cat => (
                     <div key={cat.nombre}>
                       <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm text-slate-700 flex items-center gap-1.5">
+                        <span className="text-sm text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
                           <span className={`w-2 h-2 rounded-full ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`} />
                           {cat.nombre}
                         </span>
-                        <span className="text-sm font-semibold text-slate-800 tabular-nums">{formatMXN(cat.monto)}</span>
+                        <span className="text-sm font-semibold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(cat.monto)}</span>
                       </div>
-                      <div className="w-full bg-slate-100 rounded-full h-2">
+                      <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
                         <div
                           className={`h-2 rounded-full ${cat.pct > 50 ? 'bg-rose-500' : cat.pct > 25 ? 'bg-amber-500' : 'bg-indigo-500'}`}
                           style={{ width: `${cat.pct}%` }}
                         />
                       </div>
-                      <p className="text-xs text-slate-400 mt-0.5">{cat.pct.toFixed(1)}% del total</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{cat.pct.toFixed(1)}% del total</p>
                     </div>
                   ))}
                 </div>
@@ -232,20 +232,20 @@ export default function DashboardPage() {
 
           {/* Gastos pendientes + Últimos movimientos */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center">
                     <Clock size={16} className="text-amber-600" />
                   </div>
-                  <h3 className="font-semibold text-slate-700">Gastos pendientes</h3>
+                  <h3 className="font-semibold text-slate-700 dark:text-slate-200">Gastos pendientes</h3>
                 </div>
                 {metricas.totalGastosPendientes > 0 && (
                   <span className="text-sm font-bold text-amber-600 tabular-nums">{formatMXN(metricas.totalGastosPendientes)}</span>
                 )}
               </div>
               {gastosPendientes.length === 0 ? (
-                <div className="text-center py-8 text-slate-400">
+                <div className="text-center py-8 text-slate-400 dark:text-slate-500">
                   <p className="text-sm">Todo pagado en esta quincena</p>
                 </div>
               ) : (
@@ -255,8 +255,8 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2 min-w-0">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-700 truncate">{tx.descripcion}</p>
-                          <p className="text-xs text-slate-400">{tx.categoria.nombre} · {tx.user?.nombre ?? '—'}</p>
+                          <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {tx.user?.nombre ?? '—'}</p>
                         </div>
                       </div>
                       <span className="text-sm font-semibold text-rose-600 tabular-nums ml-2">-{formatMXN(Number(tx.monto))}</span>
@@ -265,32 +265,32 @@ export default function DashboardPage() {
                 </div>
               )}
               {gastosPendientes.length > 0 && (
-                <Link href="/transacciones?estatus=Pendiente&tipo=Gasto" className="flex items-center justify-center gap-1 mt-3 text-xs text-indigo-600 hover:text-indigo-700 font-medium">
+                <Link href="/transacciones?estatus=Pendiente&tipo=Gasto" className="flex items-center justify-center gap-1 mt-3 text-xs text-indigo-600 dark:text-indigo-400 font-medium">
                   Ver todos <ArrowRight size={12} />
                 </Link>
               )}
             </div>
 
-            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-700">Últimos movimientos</h3>
-                <Link href="/transacciones" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium flex items-center gap-0.5">
+                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Últimos movimientos</h3>
+                <Link href="/transacciones" className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
                   Ver todos <ChevronRight size={12} />
                 </Link>
               </div>
               {transacciones.length === 0 ? (
-                <div className="text-center py-10 text-slate-400">
+                <div className="text-center py-10 text-slate-400 dark:text-slate-500">
                   <p className="text-sm">Sin transacciones en esta quincena</p>
                 </div>
               ) : (
                 <div className="space-y-1">
                   {transacciones.map(tx => (
-                    <div key={tx.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-slate-50 transition-colors">
+                    <div key={tx.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
                         <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-700 truncate">{tx.descripcion}</p>
-                          <p className="text-xs text-slate-400">{tx.categoria.nombre}</p>
+                          <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre}</p>
                         </div>
                       </div>
                       <span className={`text-sm font-semibold tabular-nums ml-2 ${tx.tipo === 'Ingreso' ? 'text-emerald-600' : tx.tipo === 'Ahorro' ? 'text-blue-600' : 'text-rose-600'}`}>
@@ -305,10 +305,10 @@ export default function DashboardPage() {
 
           {/* Liquidez */}
           {snapshot && (
-            <div className="bg-white rounded-2xl border border-slate-200 p-5">
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-700">Liquidez</h3>
-                <span className="text-lg font-bold text-slate-800 tabular-nums">{formatMXN(totalLiquidez)}</span>
+                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Liquidez</h3>
+                <span className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
@@ -317,9 +317,9 @@ export default function DashboardPage() {
                   { label: 'Ualá', value: snapshot.uala },
                   { label: 'Efectivo', value: snapshot.efectivo },
                 ].map(c => (
-                  <div key={c.label} className="bg-slate-50 rounded-xl p-3 text-center">
-                    <p className="text-xs text-slate-500">{c.label}</p>
-                    <p className="text-sm font-bold text-slate-800 tabular-nums">{formatMXN(c.value)}</p>
+                  <div key={c.label} className="bg-slate-50 dark:bg-slate-800/50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{c.label}</p>
+                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(c.value)}</p>
                   </div>
                 ))}
               </div>
@@ -327,8 +327,8 @@ export default function DashboardPage() {
           )}
 
           {/* Quincenas */}
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <h3 className="font-semibold text-slate-700 mb-4">Quincenas</h3>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <h3 className="font-semibold text-slate-700 dark:text-slate-200 mb-4">Quincenas</h3>
             <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2">
               {quincenas.slice(0, 14).map(q => {
                 const isActual = quincenaId === q.id.toString()
@@ -337,11 +337,11 @@ export default function DashboardPage() {
                     key={q.id}
                     onClick={() => setQuincenaId(q.id.toString())}
                     className={`rounded-xl p-3 text-center border transition-all cursor-pointer ${
-                      isActual ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-200' : 'bg-slate-50 border-slate-200 text-slate-700 hover:border-indigo-300 hover:bg-indigo-50'
+                      isActual ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/50' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
                     }`}
                   >
-                    <p className={`font-bold text-sm ${isActual ? 'text-white' : 'text-slate-800'}`}>{q.codigo}</p>
-                    <p className={`text-xs mt-1 ${isActual ? 'text-indigo-200' : 'text-slate-400'}`}>
+                    <p className={`font-bold text-sm ${isActual ? 'text-white' : 'text-slate-800 dark:text-slate-100'}`}>{q.codigo}</p>
+                    <p className={`text-xs mt-1 ${isActual ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
                       {new Date(q.fechaInicio).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
                     </p>
                   </button>
@@ -359,12 +359,12 @@ function KpiCard({ label, value, icon, color, bg }: {
   label: string; value: string; icon: React.ReactNode; color: string; bg: string
 }) {
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3 hover:border-indigo-200 hover:shadow-sm transition-all">
+    <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3 hover:border-indigo-200 hover:shadow-sm transition-all">
       <div className={`w-10 h-10 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
         {icon}
       </div>
       <div className="min-w-0">
-        <p className="text-xs text-slate-500 truncate">{label}</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{label}</p>
         <p className={`text-lg font-bold ${color} truncate tabular-nums`}>{value}</p>
       </div>
     </div>
@@ -376,7 +376,7 @@ function DashboardSkeleton() {
     <div className="space-y-6 animate-pulse">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">
+          <div key={i} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-slate-100" />
             <div className="flex-1">
               <div className="h-3 bg-slate-100 rounded w-16 mb-2" />
@@ -386,13 +386,13 @@ function DashboardSkeleton() {
         ))}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 space-y-3">
           <div className="h-5 bg-slate-100 rounded w-32" />
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="flex justify-between"><div className="h-4 bg-slate-100 rounded w-24" /><div className="h-4 bg-slate-100 rounded w-16" /></div>
           ))}
         </div>
-        <div className="bg-white rounded-2xl border border-slate-200 p-5 lg:col-span-2 space-y-3">
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 lg:col-span-2 space-y-3">
           <div className="h-5 bg-slate-100 rounded w-40" />
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="space-y-1"><div className="flex justify-between"><div className="h-4 bg-slate-100 rounded w-28" /><div className="h-4 bg-slate-100 rounded w-16" /></div><div className="h-2 bg-slate-100 rounded-full" /></div>

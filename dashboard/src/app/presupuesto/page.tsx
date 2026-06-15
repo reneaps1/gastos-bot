@@ -30,18 +30,18 @@ const EMPTY_FORM = {
 }
 
 function fieldClass(err?: string) {
-  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200'}`
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
 }
 
 function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
-  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 mb-1">{children}</label>
+  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
 function pctColor(pct: number) {
   return pct > 90 ? 'bg-rose-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
 }
 function pctTextColor(pct: number) {
-  return pct > 90 ? 'text-rose-600' : pct > 70 ? 'text-amber-600' : 'text-emerald-600'
+  return pct > 90 ? 'text-rose-600 dark:text-rose-400' : pct > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
 }
 
 export default function PresupuestoPage() {
@@ -201,9 +201,9 @@ export default function PresupuestoPage() {
     <div className="space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Presupuesto</h2>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Presupuesto</h2>
           {qInfo && (
-            <p className="text-sm text-slate-500 mt-1">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
               {qInfo.codigo} · {new Date(qInfo.fechaInicio).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
               {' — '}
               {new Date(qInfo.fechaFin).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
@@ -212,13 +212,13 @@ export default function PresupuestoPage() {
         </div>
         <div className="flex items-center gap-3">
           <select value={quincenaId} onChange={e => setQuincenaId(e.target.value)}
-            className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700 cursor-pointer">
+            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer">
             <option value="">Seleccionar quincena</option>
             {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
           </select>
           {presupuestos.length === 0 && !loading && (
             <button onClick={handleCopiar} disabled={copying}
-              className="flex items-center gap-2 text-sm text-slate-600 border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
+              className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
               <Copy size={14} />
               {copying ? 'Copiando...' : 'Copiar anterior'}
             </button>
@@ -233,37 +233,37 @@ export default function PresupuestoPage() {
       {/* Summary cards */}
       {presupuestos.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <p className="text-sm text-slate-500 mb-1">Progreso global</p>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Progreso global</p>
             <div className="flex justify-between items-end mb-2">
-              <p className="text-2xl font-bold text-slate-800 tabular-nums">
+              <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">
                 {formatMXN(totalGastado)}
-                <span className="text-slate-400 font-normal text-base"> / {formatMXN(totalPresupuestado)}</span>
+                <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(totalPresupuestado)}</span>
               </p>
               <span className={`text-lg font-bold ${pctTextColor(pctGlobal)}`}>{pctGlobal.toFixed(0)}%</span>
             </div>
-            <div className="w-full bg-slate-100 rounded-full h-3">
+            <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-3">
               <div className={`h-3 rounded-full transition-all ${pctColor(pctGlobal)}`} style={{ width: `${Math.min(pctGlobal, 100)}%` }} />
             </div>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center">
-                <Repeat size={14} className="text-amber-600" />
+              <div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                <Repeat size={14} className="text-amber-600 dark:text-amber-400" />
               </div>
-              <p className="text-sm text-slate-500">Recurrentes</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Recurrentes</p>
             </div>
-            <p className="text-2xl font-bold text-slate-800 tabular-nums">{formatMXN(totalRecurrente)}</p>
-            <p className="text-xs text-slate-400 mt-1">{entradasRapidas.length} conceptos configurados</p>
+            <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalRecurrente)}</p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{entradasRapidas.length} conceptos configurados</p>
           </div>
 
-          <div className="bg-white rounded-2xl border border-slate-200 p-5">
-            <p className="text-sm text-slate-500 mb-1">Restante</p>
-            <p className={`text-2xl font-bold tabular-nums ${totalPresupuestado - totalGastado >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Restante</p>
+            <p className={`text-2xl font-bold tabular-nums ${totalPresupuestado - totalGastado >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
               {formatMXN(totalPresupuestado - totalGastado)}
             </p>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
               {pctGlobal > 90 ? 'Cuidado: casi agotado' : pctGlobal > 70 ? 'Va bien, pero vigilante' : 'Suficiente para la quincena'}
             </p>
           </div>
@@ -274,11 +274,11 @@ export default function PresupuestoPage() {
       {loading ? (
         <PresupuestoSkeleton />
       ) : presupuestos.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center text-slate-400">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
-            <Copy size={28} className="text-slate-300" />
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+            <Copy size={28} className="text-slate-300 dark:text-slate-600" />
           </div>
-          <p className="font-medium text-slate-600">Sin presupuesto configurado</p>
+          <p className="font-medium text-slate-600 dark:text-slate-400">Sin presupuesto configurado</p>
           <p className="text-sm mt-1">Crea un presupuesto o copia el de la quincena anterior</p>
         </div>
       ) : (
@@ -286,20 +286,20 @@ export default function PresupuestoPage() {
           {presupuestos.map(p => {
             const recurrence = entradasPorCategoria[p.categoriaId]
             return (
-              <div key={p.id} className="bg-white rounded-xl border border-slate-200 p-4 hover:border-indigo-200 hover:shadow-sm transition-all">
+              <div key={p.id} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 hover:border-indigo-200 dark:hover:border-indigo-700 hover:shadow-sm transition-all">
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <p className="font-semibold text-slate-800 truncate">{p.descripcion}</p>
+                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
                         {recurrence && (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded-full shrink-0">
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 rounded-full shrink-0">
                             <Zap size={10} /> recurrente
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-slate-400">
+                      <p className="text-xs text-slate-400 dark:text-slate-500">
                         {p.categoria.nombre}
                         {p.clasificacion && ` · ${p.clasificacion}`}
                       </p>
@@ -307,21 +307,21 @@ export default function PresupuestoPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="text-right">
-                      <p className="font-bold text-slate-800 tabular-nums">{formatMXN(p.real)}</p>
-                      <p className="text-xs text-slate-400">de {formatMXN(Number(p.montoPresupuestado))}</p>
+                      <p className="font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500">de {formatMXN(Number(p.montoPresupuestado))}</p>
                     </div>
                     <button onClick={() => openEdit(p)}
-                      className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                      className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                       <Pencil size={14} />
                     </button>
                     <button onClick={() => setConfirmId(p.id)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                      className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
                       <Trash2 size={14} />
                     </button>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <div className="flex-1 bg-slate-100 rounded-full h-2">
+                  <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-2">
                     <div className={`h-2 rounded-full transition-all ${pctColor(p.pct)}`} style={{ width: `${Math.min(p.pct, 100)}%` }} />
                   </div>
                   <span className={`text-xs font-semibold w-10 text-right tabular-nums ${pctTextColor(p.pct)}`}>
@@ -329,7 +329,7 @@ export default function PresupuestoPage() {
                   </span>
                 </div>
                 {recurrence && (
-                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                     <Repeat size={11} className="text-amber-500" />
                     {recurrence.count} {recurrence.count === 1 ? 'concepto' : 'conceptos'} recurrente{recurrence.count > 1 ? 's' : ''} · {formatMXN(recurrence.total)}
                   </div>
@@ -379,7 +379,7 @@ export default function PresupuestoPage() {
           </div>
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
-              className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer transition-colors">
+              className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer transition-colors">
               Cancelar
             </button>
             <button type="button" onClick={handleSave} disabled={saving}
@@ -401,12 +401,12 @@ function PresupuestoSkeleton() {
   return (
     <div className="space-y-3 animate-pulse">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="bg-white rounded-xl border border-slate-200 p-4">
+        <div key={i} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex justify-between mb-2">
-            <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-slate-100" /><div className="h-4 bg-slate-100 rounded w-32" /></div>
-            <div className="h-4 bg-slate-100 rounded w-20" />
+            <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-slate-100 dark:bg-slate-700" /><div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-32" /></div>
+            <div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-20" />
           </div>
-          <div className="h-2 bg-slate-100 rounded-full" />
+          <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full" />
         </div>
       ))}
     </div>

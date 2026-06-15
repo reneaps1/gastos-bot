@@ -41,11 +41,11 @@ const EMPTY_FORM = {
 }
 
 function fieldClass(err?: string) {
-  return `w-full border rounded-lg px-3 py-2 text-sm bg-white text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200'}`
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
 }
 
 function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
-  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 mb-1">{children}</label>
+  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
 function calcTeorico(f: typeof EMPTY_FORM) {
@@ -179,8 +179,8 @@ export default function LiquidezConfigPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Liquidez</h2>
-          <p className="text-sm text-slate-500 mt-1">Snapshots de caja por quincena</p>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Liquidez</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Snapshots de caja por quincena</p>
         </div>
         <button
           onClick={openCreate}
@@ -192,11 +192,11 @@ export default function LiquidezConfigPage() {
       </div>
 
       {/* Filter */}
-      <div className="bg-white rounded-xl border border-slate-200 p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <select
           value={quincenaId}
           onChange={e => setQuincenaId(e.target.value)}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white text-slate-700"
+          className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300"
         >
           <option value="">Todas las quincenas</option>
           {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
@@ -204,9 +204,9 @@ export default function LiquidezConfigPage() {
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {loading ? (
-          <div className="py-16 flex justify-center text-slate-400 text-sm gap-2">
+          <div className="py-16 flex justify-center text-slate-400 dark:text-slate-500 text-sm gap-2">
             <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
@@ -214,56 +214,56 @@ export default function LiquidezConfigPage() {
             Cargando...
           </div>
         ) : snapshots.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-blue-100 flex items-center justify-center">
+          <div className="text-center py-20 text-slate-400 dark:text-slate-500">
+            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
               <Droplets size={28} className="text-blue-400" />
             </div>
-            <p className="font-medium text-slate-600">Sin snapshots de liquidez</p>
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin snapshots de liquidez</p>
             <p className="text-sm mt-1">Crea un snapshot para registrar el estado de tus cuentas</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-200">
+              <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
-                  <th className="text-left px-4 py-3 text-slate-500 font-medium">Quincena</th>
-                  <th className="text-right px-3 py-3 text-slate-500 font-medium">BBVA</th>
-                  <th className="text-right px-3 py-3 text-slate-500 font-medium hidden md:table-cell">Banamex</th>
-                  <th className="text-right px-3 py-3 text-slate-500 font-medium hidden lg:table-cell">Ualá</th>
-                  <th className="text-right px-3 py-3 text-slate-500 font-medium">Efectivo</th>
-                  <th className="text-right px-3 py-3 text-slate-500 font-medium">Teórico</th>
-                  <th className="text-center px-3 py-3 text-slate-500 font-medium">Validado</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">BBVA</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Banamex</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Ualá</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Efectivo</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Teórico</th>
+                  <th className="text-center px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Validado</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-50">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                 {snapshots.map(s => {
                   const total = s.bbva + s.banamex + s.uala + s.ualaInversion + s.efectivo + s.valesDespensa + s.valesGasolina
                   const teorico = s.teorico ?? (total - s.faltaPagar)
                   return (
-                    <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                    <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <td className="px-4 py-3.5">
-                        <span className="bg-indigo-100 text-indigo-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                        <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">
                           {s.quincena.codigo}
                         </span>
                       </td>
-                      <td className="px-3 py-3.5 text-right text-slate-700">{formatMXN(s.bbva)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700 hidden md:table-cell">{formatMXN(s.banamex)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700 hidden lg:table-cell">{formatMXN(s.uala)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700">{formatMXN(s.efectivo)}</td>
-                      <td className="px-3 py-3.5 text-right font-semibold text-slate-800">{formatMXN(teorico)}</td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.bbva)}</td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden md:table-cell">{formatMXN(s.banamex)}</td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">{formatMXN(s.uala)}</td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.efectivo)}</td>
+                      <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">{formatMXN(teorico)}</td>
                       <td className="px-3 py-3.5 text-center">
                         {s.validado
-                          ? <span className="text-emerald-600 text-xs font-semibold">✓</span>
+                          ? <span className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">✓</span>
                           : <span className="text-slate-300 text-xs">—</span>
                         }
                       </td>
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-1 justify-end">
-                          <button onClick={() => openEdit(s)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                          <button onClick={() => openEdit(s)} className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                             <Pencil size={14} />
                           </button>
-                          <button onClick={() => setConfirmId(s.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                          <button onClick={() => setConfirmId(s.id)} className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
                             <Trash2 size={14} />
                           </button>
                         </div>
@@ -296,7 +296,7 @@ export default function LiquidezConfigPage() {
             </div>
           </div>
 
-          <p className="text-xs font-medium text-slate-500 uppercase tracking-wide">Cuentas</p>
+          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Cuentas</p>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="lq-bbva">BBVA</Label>
@@ -333,9 +333,9 @@ export default function LiquidezConfigPage() {
           </div>
 
           {/* Teórico calculado */}
-          <div className="bg-slate-50 rounded-lg p-3 flex items-center justify-between">
-            <span className="text-sm text-slate-600 font-medium">Teórico calculado</span>
-            <span className="text-lg font-bold text-slate-800">{formatMXN(calcTeorico(form))}</span>
+          <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3 flex items-center justify-between">
+            <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Teórico calculado</span>
+            <span className="text-lg font-bold text-slate-800 dark:text-slate-100">{formatMXN(calcTeorico(form))}</span>
           </div>
 
           <div className="flex items-center gap-2">
@@ -344,7 +344,7 @@ export default function LiquidezConfigPage() {
               type="checkbox"
               checked={form.validado}
               onChange={e => set('validado', e.target.checked)}
-              className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+              className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400"
             />
             <Label htmlFor="lq-validado">Validado</Label>
           </div>
@@ -355,7 +355,7 @@ export default function LiquidezConfigPage() {
           </div>
 
           <div className="flex gap-3 justify-end pt-2">
-            <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 cursor-pointer">
+            <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
               Cancelar
             </button>
             <button type="button" onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]">
