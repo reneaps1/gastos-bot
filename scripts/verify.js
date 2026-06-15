@@ -9,21 +9,22 @@ const prisma = new PrismaClient({ adapter })
 
 const EXPECTED_TABLES = [
   'users', 'categorias', 'metodos_pago', 'quincenas', 'cuentas',
-  'transacciones', 'entrada_rapida', 'presupuesto', 'deudas',
+  'transacciones', 'entrada_rapida', 'presupuesto', 'deudas', 'creditos', 'credito_pagos',
   'whatsapp_messages', 'import_batches', 'audit_log', 'liquidez_snapshots',
 ]
 
 const EXPECTED_VIEWS = [
   'v_resumen_quincenal', 'v_estado_deudas',
   'v_ejecucion_presupuesto', 'v_corte_liquidez', 'v_liquidez',
+  'v_consumo_quincenal', 'v_credito_pagos_quincena',
 ]
 
-const EXPECTED_ENUMS = ['TipoMovimiento', 'ClasificacionGasto', 'EstatusPago']
+const EXPECTED_ENUMS = ['TipoMovimiento', 'ClasificacionGasto', 'EstatusPago', 'TipoCredito', 'EstatusCreditoPago']
 
 const SEED_EXPECTED = [
   { table: 'users',       expected: 2,  label: 'usuarios' },
   { table: 'categorias',  expected: 9,  label: 'categorias' },
-  { table: 'metodos_pago', expected: 4, label: 'métodos de pago' },
+  { table: 'metodos_pago', expected: 5, label: 'métodos de pago' },
   { table: 'cuentas',     expected: 7,  label: 'cuentas' },
   { table: 'quincenas',   expected: 20, label: 'quincenas' },
 ]

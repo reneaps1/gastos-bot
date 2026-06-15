@@ -61,6 +61,47 @@ LEFT JOIN transacciones t
       AND t.categoria_id = p.categoria_id
 GROUP BY q.codigo, p.descripcion, c.nombre, p.monto_presupuestado;
 
+CREATE OR REPLACE VIEW v_consumo_quincenal AS
+SELECT
+    q.codigo                                                        AS quincena,
+    q.fecha_inicio,
+    q.fecha_fin,
+    SUM(t.monto) FILTER (WHERE t.tipo = 'Ingreso')                  AS ingresos,
+    SUM(t.monto) FILTER (WHERE t.tipo = 'Gasto')                    AS gastos,
+    SUM(t.monto) FILTER (WHERE t.tipo = 'Ahorro')                   AS ahorros,
+    COALESCE(SUM(t.monto) FILTER (WHERE t.tipo = 'Ingreso'), 0)
+      - COALESCE(SUM(t.monto) FILTER (WHERE t.tipo = 'Gasto'), 0)
+      - COALESCE(SUM(t.monto) FILTER (WHERE t.tipo = 'Ahorro'), 0)  AS balance_consumo
+FROM transacciones t
+JOIN quincenas q ON q.id = COALESCE(t.quincena_consumo_id, t.quincena_id)
+GROUP BY q.id, q.codigo, q.fecha_inicio, q.fecha_fin
+ORDER BY q.fecha_inicio;
+
+CREATE OR REPLACE VIEW v_credito_pagos_quincena AS
+SELECT
+    cp.id,
+    cr.nombre                                                       AS credito,
+    cr.tipo_credito,
+    q.codigo                                                        AS quincena,
+    q.fecha_inicio,
+    q.fecha_fin,
+    c.nombre                                                        AS categoria,
+    cp.fecha_pago_programada,
+    cp.fecha_pago_real,
+    cp.monto_capital,
+    cp.monto_interes,
+    cp.monto_total,
+    cp.estatus,
+    cp.numero_pago,
+    cp.total_pagos,
+    cp.transaccion_id,
+    cp.presupuesto_id
+FROM credito_pagos cp
+JOIN creditos cr ON cr.id = cp.credito_id
+JOIN quincenas q ON q.id = cp.quincena_id
+JOIN categorias c ON c.id = cp.categoria_id
+ORDER BY cp.fecha_pago_programada, cr.nombre;
+
 CREATE OR REPLACE VIEW v_corte_liquidez AS
 SELECT
     q.codigo                                                            AS quincena,

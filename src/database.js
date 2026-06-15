@@ -53,11 +53,12 @@ async function saveMessage({ waMessageId, fromNumber, fromName, userId, body, ti
   })
 }
 
-async function saveTransaccion({ fecha, quincenaId, userId, descripcion, categoriaId, clasificacion, tipo, monto, metodoPagoId, estatus, notas, source }) {
+async function saveTransaccion({ fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, clasificacion, tipo, monto, metodoPagoId, creditoId, fechaPagoProgramada, estatus, notas, source }) {
   return prisma.transaccion.create({
     data: {
       fecha,
       quincenaId,
+      quincenaConsumoId: quincenaConsumoId || quincenaId,
       userId,
       descripcion,
       categoriaId,
@@ -65,6 +66,8 @@ async function saveTransaccion({ fecha, quincenaId, userId, descripcion, categor
       tipo,
       monto,
       metodoPagoId,
+      creditoId,
+      fechaPagoProgramada,
       estatus: estatus || 'Pagado',
       notas,
       source: source || 'whatsapp',

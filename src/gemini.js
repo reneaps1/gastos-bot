@@ -13,7 +13,7 @@ function getModel() {
 }
 
 const CATEGORIAS = ['Hogar', 'Salud', 'Familia', 'Transporte', 'Suscripciones', 'Deudas', 'Personal', 'Ingresos', 'Ahorro']
-const FORMAS_PAGO = ['Efectivo', 'Debito', 'Spei', 'Vales']
+const FORMAS_PAGO = ['Efectivo', 'Debito', 'Credito', 'Spei', 'Vales']
 
 // Clasifica el mensaje en tres tipos:
 // - expense: registro de gasto/ingreso/ahorro (incluye datos extraídos)

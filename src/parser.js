@@ -14,6 +14,7 @@ const CATEGORIAS = {
 
 const FORMAS_PAGO = {
   efectivo: ['efectivo', 'efec', 'ef', 'cash', 'dinero'],
+  credito: ['credito', 'crédito', 'tdc', 'tarjeta credito', 'tarjeta crédito'],
   debito: ['tarjeta', 'tar', 'visa', 'mastercard', 'amex', 'debito', 'débito', 'nómina', 'nomina'],
   spei: ['transferencia', 'trans', 'transfer', 'spei', 'clabe', 'banco'],
   vales: ['vales', 'vale', 'vales despensa', 'vales gasolina'],

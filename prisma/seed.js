@@ -39,6 +39,7 @@ async function main() {
       { nombre: 'Efectivo' },
       { nombre: 'Debito' },
       { nombre: 'Vales' },
+      { nombre: 'Credito' },
     ],
     skipDuplicates: true,
   })

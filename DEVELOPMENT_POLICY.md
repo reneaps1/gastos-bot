@@ -549,6 +549,31 @@ Entregables:
 - Resúmenes inteligentes.
 - Bot más útil.
 
+### Créditos Y Deudas (Fase 8 - Decisión)
+
+El módulo actual de Deudas evoluciona a **Créditos y Deudas**. Una deuda, tarjeta, préstamo, crédito de tienda, MSI o línea informal se modela como una obligación financiera futura.
+
+Reglas:
+- No todo gasto con crédito debe clasificarse como `Deudas`. La categoría debe conservar el origen real del consumo: `Familia`, `Transporte`, `Salud`, etc.
+- `Deudas` queda para préstamos o deudas puras cuyo origen no se categoriza como consumo operativo.
+- Un gasto con crédito separa dos fechas: fecha de consumo y fecha de impacto financiero.
+- `transacciones.fecha` representa la fecha real de consumo.
+- `transacciones.quincena_consumo_id` representa la quincena donde ocurrió el consumo.
+- `transacciones.quincena_id` sigue representando la quincena de impacto para reportes actuales.
+- Los pagos futuros de créditos se registran en `credito_pagos`, ligados a `quincenas`, `categorias` y opcionalmente `presupuesto`.
+- El pago de un crédito no debe duplicar el gasto. Debe marcar pagos programados como pagados y, si se requiere, afectar liquidez sin crear otro gasto presupuestal.
+- La ejecución de presupuesto debe sumar gastos directos sin crédito más pagos de crédito programados para la quincena.
+- El consumo de una quincena debe poder verse por separado usando `quincena_consumo_id`.
+
+Tipos iniciales de crédito:
+- `Tarjeta`
+- `CreditoTienda`
+- `Prestamo`
+- `MSI`
+- `LineaCredito`
+- `Informal`
+- `Otro`
+
 ## Orden Oficial De Ejecución
 
 El orden recomendado es:

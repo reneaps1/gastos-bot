@@ -54,6 +54,8 @@ Dashboard (visualización)
 CREATE TYPE tipo_movimiento    AS ENUM ('Gasto', 'Ingreso', 'Ahorro');
 CREATE TYPE clasificacion_gasto AS ENUM ('Fijo', 'Variable');
 CREATE TYPE estatus_pago        AS ENUM ('Pagado', 'Pendiente');
+CREATE TYPE tipo_credito        AS ENUM ('Tarjeta', 'CreditoTienda', 'Prestamo', 'MSI', 'LineaCredito', 'Informal', 'Otro');
+CREATE TYPE estatus_credito_pago AS ENUM ('Pendiente', 'Pagado', 'Vencido', 'Cancelado');
 ```
 
 ### Usuarios
@@ -113,6 +115,7 @@ CREATE TABLE transacciones (
     id              SERIAL PRIMARY KEY,
     fecha           DATE                NOT NULL,
     quincena_id     INT                 NOT NULL REFERENCES quincenas(id),
+    quincena_consumo_id INT             REFERENCES quincenas(id),
     user_id         INT                 REFERENCES users(id),
     descripcion     VARCHAR(200)        NOT NULL,
     categoria_id    INT                 NOT NULL REFERENCES categorias(id),
@@ -120,6 +123,8 @@ CREATE TABLE transacciones (
     tipo            tipo_movimiento     NOT NULL,
     monto           NUMERIC(12,2)       NOT NULL CHECK (monto > 0),
     metodo_pago_id  INT                 REFERENCES metodos_pago(id),
+    credito_id      INT,                -- FK agregada después de crear creditos
+    fecha_pago_programada DATE,
     estatus         estatus_pago        NOT NULL DEFAULT 'Pendiente',
     notas           TEXT,
     source          VARCHAR(20)         DEFAULT 'whatsapp', -- 'whatsapp', 'web', 'import', 'sheets'
@@ -127,9 +132,11 @@ CREATE TABLE transacciones (
 );
 
 CREATE INDEX idx_tx_quincena  ON transacciones(quincena_id);
+CREATE INDEX idx_tx_quincena_consumo ON transacciones(quincena_consumo_id);
 CREATE INDEX idx_tx_categoria ON transacciones(categoria_id);
 CREATE INDEX idx_tx_fecha     ON transacciones(fecha);
 CREATE INDEX idx_tx_tipo      ON transacciones(tipo);
+CREATE INDEX idx_tx_credito   ON transacciones(credito_id);
 ```
 
 ### Staging: Entrada rápida
@@ -185,6 +192,72 @@ CREATE TABLE deudas (
     -- los abonos se registran como transacciones con categoria = 'Deudas'
 );
 ```
+
+### Créditos y pagos programados
+
+El módulo de `deudas` evoluciona a Créditos y Deudas. La tabla `creditos` representa la obligación financiera; `credito_pagos` representa cada impacto futuro en quincena, categoría y presupuesto.
+
+```sql
+CREATE TABLE creditos (
+    id                SERIAL PRIMARY KEY,
+    nombre            VARCHAR(100)       NOT NULL UNIQUE,
+    tipo_credito      tipo_credito       NOT NULL DEFAULT 'Otro',
+    acreedor          VARCHAR(100)       NOT NULL,
+    user_id           INT                REFERENCES users(id),
+    monto_original    NUMERIC(12,2),
+    saldo_inicial     NUMERIC(12,2),
+    limite_credito    NUMERIC(12,2),
+    dia_corte         INT                CHECK (dia_corte BETWEEN 1 AND 31),
+    dia_pago          INT                CHECK (dia_pago BETWEEN 1 AND 31),
+    frecuencia_pago   VARCHAR(20),       -- quincenal, mensual, semanal, manual
+    monto_pago_fijo   NUMERIC(12,2),
+    plazo_meses       INT,
+    tasa_interes      NUMERIC(7,4),
+    cuenta_pago_id    INT                REFERENCES cuentas(id),
+    activo            BOOLEAN            DEFAULT TRUE,
+    notas             TEXT,
+    fecha_inicio      DATE,
+    fecha_registro    TIMESTAMPTZ        DEFAULT NOW()
+);
+
+ALTER TABLE transacciones
+  ADD CONSTRAINT transacciones_credito_id_fkey
+  FOREIGN KEY (credito_id) REFERENCES creditos(id) ON DELETE SET NULL;
+
+CREATE TABLE credito_pagos (
+    id                    SERIAL PRIMARY KEY,
+    credito_id             INT                 NOT NULL REFERENCES creditos(id),
+    transaccion_id         INT                 REFERENCES transacciones(id) ON DELETE SET NULL,
+    quincena_id            INT                 NOT NULL REFERENCES quincenas(id),
+    categoria_id           INT                 NOT NULL REFERENCES categorias(id),
+    presupuesto_id         INT                 REFERENCES presupuesto(id) ON DELETE SET NULL,
+    numero_pago            INT,
+    total_pagos            INT,
+    fecha_pago_programada  DATE                NOT NULL,
+    fecha_pago_real        DATE,
+    monto_capital          NUMERIC(12,2)       NOT NULL DEFAULT 0,
+    monto_interes          NUMERIC(12,2)       NOT NULL DEFAULT 0,
+    monto_total            NUMERIC(12,2)       NOT NULL CHECK (monto_total > 0),
+    estatus                estatus_credito_pago NOT NULL DEFAULT 'Pendiente',
+    notas                  TEXT,
+    fecha_registro         TIMESTAMPTZ         DEFAULT NOW()
+);
+
+CREATE INDEX idx_creditos_tipo ON creditos(tipo_credito);
+CREATE INDEX idx_creditos_user ON creditos(user_id);
+CREATE INDEX idx_credito_pagos_credito ON credito_pagos(credito_id);
+CREATE INDEX idx_credito_pagos_quincena ON credito_pagos(quincena_id);
+CREATE INDEX idx_credito_pagos_categoria ON credito_pagos(categoria_id);
+CREATE INDEX idx_credito_pagos_estatus ON credito_pagos(estatus);
+CREATE INDEX idx_credito_pagos_fecha ON credito_pagos(fecha_pago_programada);
+```
+
+Reglas:
+- Para efectivo, débito, SPEI y vales, `quincena_consumo_id` y `quincena_id` son la misma quincena.
+- Para crédito, `quincena_consumo_id` es la quincena de compra y `credito_pagos.quincena_id` es la quincena donde se paga.
+- `credito_pagos.categoria_id` conserva la categoría real del consumo para presupuesto.
+- `credito_pagos.presupuesto_id` es opcional; si no existe se calcula por `quincena_id + categoria_id`.
+- El pago de crédito liquida `credito_pagos`; no crea un segundo gasto presupuestal.
 
 ### Mensajes WhatsApp (audit trail del bot)
 
@@ -356,6 +429,59 @@ LEFT JOIN transacciones t
 GROUP BY q.codigo, p.descripcion, c.nombre, p.monto_presupuestado;
 ```
 
+### v_consumo_quincenal
+
+Mide lo consumido en una quincena, aunque el impacto financiero ocurra después por crédito.
+
+```sql
+CREATE VIEW v_consumo_quincenal AS
+SELECT
+    q.codigo                                                        AS quincena,
+    q.fecha_inicio,
+    q.fecha_fin,
+    SUM(t.monto) FILTER (WHERE t.tipo = 'Ingreso')                  AS ingresos,
+    SUM(t.monto) FILTER (WHERE t.tipo = 'Gasto')                    AS gastos,
+    SUM(t.monto) FILTER (WHERE t.tipo = 'Ahorro')                   AS ahorros,
+    COALESCE(SUM(t.monto) FILTER (WHERE t.tipo = 'Ingreso'), 0)
+      - COALESCE(SUM(t.monto) FILTER (WHERE t.tipo = 'Gasto'), 0)
+      - COALESCE(SUM(t.monto) FILTER (WHERE t.tipo = 'Ahorro'), 0)  AS balance_consumo
+FROM transacciones t
+JOIN quincenas q ON q.id = COALESCE(t.quincena_consumo_id, t.quincena_id)
+GROUP BY q.id, q.codigo, q.fecha_inicio, q.fecha_fin
+ORDER BY q.fecha_inicio;
+```
+
+### v_credito_pagos_quincena
+
+Lista pagos programados por crédito, quincena, categoría y presupuesto opcional.
+
+```sql
+CREATE VIEW v_credito_pagos_quincena AS
+SELECT
+    cp.id,
+    cr.nombre                                                       AS credito,
+    cr.tipo_credito,
+    q.codigo                                                        AS quincena,
+    q.fecha_inicio,
+    q.fecha_fin,
+    c.nombre                                                        AS categoria,
+    cp.fecha_pago_programada,
+    cp.fecha_pago_real,
+    cp.monto_capital,
+    cp.monto_interes,
+    cp.monto_total,
+    cp.estatus,
+    cp.numero_pago,
+    cp.total_pagos,
+    cp.transaccion_id,
+    cp.presupuesto_id
+FROM credito_pagos cp
+JOIN creditos cr ON cr.id = cp.credito_id
+JOIN quincenas q ON q.id = cp.quincena_id
+JOIN categorias c ON c.id = cp.categoria_id
+ORDER BY cp.fecha_pago_programada, cr.nombre;
+```
+
 ### v_corte_liquidez (reporte de caja por quincena)
 
 ```sql
@@ -429,7 +555,7 @@ INSERT INTO categorias (nombre, tipo, clasificacion, ejemplos) VALUES
 
 -- Métodos de pago
 INSERT INTO metodos_pago (nombre) VALUES
-  ('SPEI'), ('Efectivo'), ('Debito'), ('Vales');
+  ('SPEI'), ('Efectivo'), ('Debito'), ('Vales'), ('Credito');
 
 -- Cuentas
 INSERT INTO cuentas (nombre, tipo) VALUES
