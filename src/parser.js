@@ -128,10 +128,14 @@ function parseMessage(text, senderName, senderPhone, messageId, geminiData = nul
   const formaPago = geminiData?.formaPago || detectPaymentMethod(text)
   const clasificacion = getClasificacion(categoria, tipo)
   const quincena = getCurrentQuincena()
+  const now = new Date()
+  // Use local time methods (respect TZ=America/Mexico_City) so fecha matches the
+  // user's calendar day in Mexico, not the UTC date (which shifts after 7pm Mexico)
+  const fechaMexico = new Date(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T00:00:00.000Z`)
 
   return {
-    timestamp: new Date(),
-    fecha: new Date(),
+    timestamp: now,
+    fecha: fechaMexico,
     usuario: senderName || 'Rene',
     phone: senderPhone || null,
     monto: monto || 0,

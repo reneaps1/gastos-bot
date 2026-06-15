@@ -14,7 +14,7 @@ export function formatDate(date: Date | string | null | undefined): string {
   if (!date) return '—'
   const d = new Date(date)
   if (isNaN(d.getTime())) return '—'
-  return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }).format(d)
+  return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(d)
 }
 
 export function formatDateStr(
