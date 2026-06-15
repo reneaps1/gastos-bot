@@ -62,7 +62,8 @@ export function getQuincenaIdForDate(quincenas: SelectableQuincena[], dateString
 export function formatQuincenaRange(quincena: SelectableQuincena) {
   const format = (value: string) => {
     if (!value) return '—'
-    const d = new Date(`${value}T00:00:00.000Z`)
+    const dateOnly = value.split('T')[0]
+    const d = new Date(`${dateOnly}T00:00:00.000Z`)
     if (isNaN(d.getTime())) return '—'
     return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(d)
   }

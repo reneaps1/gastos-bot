@@ -258,7 +258,7 @@ export default function TransaccionesPage() {
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           <select value={quincenaId} onChange={e => selectQuincena(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
-            {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
+            {quincenas.map(q => <option key={q.id} value={q.id}>{formatQuincenaOption(q)}</option>)}
           </select>
           <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             <option value="">Todos los tipos</option>
