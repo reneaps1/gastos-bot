@@ -155,6 +155,7 @@ export default function DashboardPage() {
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
   const sinAsignar = metricas.ingresos - metricas.presupTotal
   const pctPresupAsignado = metricas.ingresos > 0 ? (metricas.presupTotal / metricas.ingresos) * 100 : 0
+  const pctSinPresupuesto = metricas.ingresos > 0 ? (metricas.gastosNoCubiertos / metricas.ingresos) * 100 : 0
 
   return (
     <div className="space-y-6">
@@ -226,18 +227,38 @@ export default function DashboardPage() {
                   <p className={`text-base font-bold tabular-nums ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
                 </div>
               </div>
-              <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
+              {/* Stacked bar: presupuestado + sin presupuesto */}
+              <div className="h-2.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden flex">
                 <div
-                  className={`h-full rounded-full transition-all ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                  className={`h-full transition-all ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`}
                   style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}
                 />
+                {metricas.gastosNoCubiertos > 0 && (
+                  <div
+                    className="h-full bg-orange-400 dark:bg-orange-400 transition-all"
+                    style={{ width: `${Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))}%` }}
+                  />
+                )}
               </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">{pctPresupAsignado.toFixed(0)}% del ingreso asignado al presupuesto</p>
+              {/* Legend */}
+              <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  {pctPresupAsignado.toFixed(0)}% presupuestado
+                </span>
+                {metricas.gastosNoCubiertos > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-orange-600 dark:text-orange-400">
+                    <span className="w-2 h-2 rounded-full shrink-0 bg-orange-400" />
+                    {pctSinPresupuesto.toFixed(1)}% sin presupuesto
+                  </span>
+                )}
+              </div>
+              {/* Alert strip */}
               {metricas.gastosNoCubiertos > 0 && (
                 <div className="mt-2.5 flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
                   <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-                    <AlertTriangle size={12} className="shrink-0" />
-                    {formatMXN(metricas.gastosNoCubiertos)} en gastos sin presupuesto
+                    <span className="w-2.5 h-2.5 rounded-full bg-orange-400 shrink-0" />
+                    <span><span className="font-semibold tabular-nums">{formatMXN(metricas.gastosNoCubiertos)}</span> sin presupuesto · {pctSinPresupuesto.toFixed(1)}% del ingreso</span>
                   </span>
                   <Link href="/presupuesto" className="text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline flex items-center gap-0.5 shrink-0">
                     Agregar <ChevronRight size={11} />
