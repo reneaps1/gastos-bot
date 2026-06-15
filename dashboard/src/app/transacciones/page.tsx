@@ -78,6 +78,7 @@ export default function TransaccionesPage() {
   const [editingTx, setEditingTx] = useState<Transaccion | null>(null)
   const [confirmId, setConfirmId] = useState<number | null>(null)
   const [detailTx, setDetailTx] = useState<Transaccion | null>(null)
+  const [pendingDateChange, setPendingDateChange] = useState<{ fecha: string; suggestedQuincenaId: string } | null>(null)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -142,7 +143,12 @@ export default function TransaccionesPage() {
 
   function setFormDate(fecha: string) {
     const dateQuincenaId = getQuincenaIdForDate(quincenas, fecha)
-    setForm(f => ({ ...f, fecha, quincenaId: dateQuincenaId || f.quincenaId }))
+    if (editingTx && dateQuincenaId && dateQuincenaId !== form.quincenaId) {
+      setForm(f => ({ ...f, fecha }))
+      setPendingDateChange({ fecha, suggestedQuincenaId: dateQuincenaId })
+    } else {
+      setForm(f => ({ ...f, fecha, quincenaId: dateQuincenaId || f.quincenaId }))
+    }
   }
 
   function setMetodoPago(metodoPagoId: string) {
@@ -330,7 +336,7 @@ export default function TransaccionesPage() {
                 <tr>
                   <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Quincena</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Fecha</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>
                   <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>
@@ -353,7 +359,7 @@ export default function TransaccionesPage() {
                           {tx.categoria?.nombre}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 hidden md:table-cell">
+                      <td className="px-4 py-3.5">
                         <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
                       </td>
                       <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{formatDate(tx.fecha)}</td>
@@ -616,6 +622,41 @@ export default function TransaccionesPage() {
           </div>
         </div>
       </FormModal>
+
+      {pendingDateChange && (() => {
+        const suggestedQ = quincenas.find(q => q.id.toString() === pendingDateChange.suggestedQuincenaId)
+        const currentQ = quincenas.find(q => q.id.toString() === form.quincenaId)
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl p-6 w-full max-w-sm space-y-4">
+              <h3 className="font-semibold text-slate-800 dark:text-slate-100">¿Mover a otra quincena?</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-400">
+                La fecha seleccionada pertenece a{' '}
+                <span className="font-semibold text-indigo-600 dark:text-indigo-400">{suggestedQ?.codigo}</span>
+                , diferente a la quincena actual{' '}
+                <span className="font-semibold text-slate-700 dark:text-slate-300">{currentQ?.codigo}</span>.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setForm(f => ({ ...f, quincenaId: pendingDateChange.suggestedQuincenaId }))
+                    setPendingDateChange(null)
+                  }}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors"
+                >
+                  Mover a {suggestedQ?.codigo}
+                </button>
+                <button
+                  onClick={() => setPendingDateChange(null)}
+                  className="flex-1 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 px-4 py-2 rounded-lg text-sm cursor-pointer transition-colors"
+                >
+                  Mantener {currentQ?.codigo}
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       <ConfirmDialog open={confirmId != null} onOpenChange={open => !open && setConfirmId(null)}
         title="Eliminar transacción" description="Esta acción no se puede deshacer. La transacción se eliminará permanentemente."

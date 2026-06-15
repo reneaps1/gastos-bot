@@ -23,6 +23,7 @@ interface EntradaRapida {
 }
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; tipo: string
+  diaCobro?: number | null
   categoria: Categoria; real: number; pct: number
 }
 interface PresupuestoCategoria {
@@ -229,18 +230,44 @@ export default function DashboardPage() {
                   <p className={`text-base font-bold tabular-nums ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
                 </div>
               </div>
-              {/* Stacked bar: presupuestado + sin presupuesto */}
-              <div className="h-2.5 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden flex">
-                <div
-                  className={`h-full transition-all ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`}
-                  style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}
-                />
-                {metricas.gastosNoCubiertos > 0 && (
+              {/* Stacked bar con tooltips */}
+              <div className="relative mt-1">
+                {/* Barra visual (overflow-hidden para pill shape) */}
+                <div className="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden flex">
                   <div
-                    className="h-full bg-orange-400 dark:bg-orange-400 transition-all"
-                    style={{ width: `${Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))}%` }}
+                    className={`h-full transition-all ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                    style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}
                   />
-                )}
+                  {metricas.gastosNoCubiertos > 0 && (
+                    <div
+                      className="h-full bg-rose-500 transition-all"
+                      style={{ width: `${Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))}%` }}
+                    />
+                  )}
+                </div>
+                {/* Overlay invisible para tooltips (no afecta overflow-hidden de la barra) */}
+                <div className="absolute inset-0 flex">
+                  <div
+                    className="relative group/budget h-full cursor-default"
+                    style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}
+                  >
+                    <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/budget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                      <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${pctPresupAsignado > 85 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                      Presupuestado: <span className="font-semibold">{formatMXN(metricas.presupTotal)}</span> · {pctPresupAsignado.toFixed(0)}%
+                    </div>
+                  </div>
+                  {metricas.gastosNoCubiertos > 0 && (
+                    <div
+                      className="relative group/unbudget h-full cursor-default"
+                      style={{ width: `${Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))}%` }}
+                    >
+                      <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/unbudget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                        <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-400" />
+                        Sin presupuesto: <span className="font-semibold">{formatMXN(metricas.gastosNoCubiertos)}</span> · {pctSinPresupuesto.toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
               {/* Legend */}
               <div className="flex items-center gap-3 mt-1.5 flex-wrap">
@@ -249,20 +276,20 @@ export default function DashboardPage() {
                   {pctPresupAsignado.toFixed(0)}% presupuestado
                 </span>
                 {metricas.gastosNoCubiertos > 0 && (
-                  <span className="flex items-center gap-1 text-xs text-orange-600 dark:text-orange-400">
-                    <span className="w-2 h-2 rounded-full shrink-0 bg-orange-400" />
+                  <span className="flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
+                    <span className="w-2 h-2 rounded-full shrink-0 bg-rose-500" />
                     {pctSinPresupuesto.toFixed(1)}% sin presupuesto
                   </span>
                 )}
               </div>
               {/* Alert strip */}
               {metricas.gastosNoCubiertos > 0 && (
-                <div className="mt-2.5 flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
-                  <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-                    <span className="w-2.5 h-2.5 rounded-full bg-orange-400 shrink-0" />
+                <div className="mt-2.5 flex items-center justify-between gap-2 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/40 rounded-lg px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-rose-700 dark:text-rose-400">
+                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
                     <span><span className="font-semibold tabular-nums">{formatMXN(metricas.gastosNoCubiertos)}</span> sin presupuesto · {pctSinPresupuesto.toFixed(1)}% del ingreso</span>
                   </span>
-                  <Link href="/presupuesto" className="text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline flex items-center gap-0.5 shrink-0">
+                  <Link href="/presupuesto" className="text-xs font-medium text-rose-700 dark:text-rose-400 hover:underline flex items-center gap-0.5 shrink-0">
                     Agregar <ChevronRight size={11} />
                   </Link>
                 </div>
@@ -312,7 +339,14 @@ export default function DashboardPage() {
                         </div>
                         <span className={`text-xs font-semibold shrink-0 ${statusColor}`}>{status}</span>
                       </div>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 ml-4.5 mb-2">{p.categoria.nombre}</p>
+                      <div className="flex items-center gap-2 ml-4.5 mb-2">
+                        <p className="text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
+                        {p.diaCobro && (
+                          <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${p.diaCobro <= 15 ? 'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'}`}>
+                            vence día {p.diaCobro}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-end justify-between gap-3 mb-2">
                         <div>
                           <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>

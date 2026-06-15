@@ -182,7 +182,7 @@ export default function PresupuestoPage() {
         numOcurrencias: form.recurrente && form.terminaCon === 'n_ocurrencias'
           ? parseInt(form.numOcurrencias) || null
           : null,
-        diaCobro: form.recurrente && form.diaCobro ? parseInt(form.diaCobro) : null,
+        diaCobro: form.diaCobro ? parseInt(form.diaCobro) : null,
       }
       const res = editingP
         ? await fetch(`/api/presupuestos/${editingP.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
