@@ -31,7 +31,7 @@ export async function GET(request: Request) {
       quincenaActual = await prisma.quincena.findFirst({
         where: {
           fechaInicio: { lte: today },
-          fechaFin: { gt: today },
+          fechaFin: { gte: today },
         },
       })
       if (!quincenaActual) {
