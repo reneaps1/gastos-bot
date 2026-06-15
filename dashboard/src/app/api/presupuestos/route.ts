@@ -81,26 +81,45 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Quincena not found' }, { status: 404 })
     }
 
-    const todasQuincenas = await prisma.quincena.findMany({
-      where: { fechaInicio: { gte: quincenaInicio.fechaInicio } },
-      orderBy: { fechaInicio: 'asc' },
-    })
+    const allQuincenas = await prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
 
-    // Determine which half of the month the charge falls in
-    // Day 1-15 → primera quincena (starts on 1st), Day 16-31 → segunda quincena (starts on 16th)
-    const esPrimeraQuincena = diaCobro_ ? diaCobro_ <= 15 : true
+    let quincenesTarget: typeof allQuincenas
 
-    let quincenesTarget = todasQuincenas.filter(q => {
-      if (frecuencia === 'MENSUAL') {
-        const startDay = new Date(q.fechaInicio.toISOString().split('T')[0] + 'T00:00:00Z').getUTCDate()
-        return esPrimeraQuincena ? startDay === 1 : startDay > 1
+    if (frecuencia === 'MENSUAL') {
+      // Target-date lookup: for each calendar month find the quincena that covers diaCobro
+      const targetDay = diaCobro_ ?? 1
+      const startDate = quincenaInicio.fechaInicio
+      const startYear = startDate.getUTCFullYear()
+      const startMonth = startDate.getUTCMonth()
+
+      const lastQuincena = allQuincenas.at(-1)
+      const lastDate = lastQuincena?.fechaFin ?? startDate
+      const lastYear = lastDate.getUTCFullYear()
+      const lastMonth = lastDate.getUTCMonth()
+      const maxMonths = (lastYear - startYear) * 12 + (lastMonth - startMonth) + 1
+      const monthCount = numOcurrencias ? Math.min(numOcurrencias, maxMonths) : maxMonths
+
+      const selectedIds = new Set<number>()
+      for (let i = 0; i < monthCount; i++) {
+        const y = startYear + Math.floor((startMonth + i) / 12)
+        const mo = (startMonth + i) % 12
+        const daysInMonth = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate()
+        const d = Math.min(targetDay, daysInMonth)
+        const target = `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+        const q = allQuincenas.find(q => {
+          const ini = q.fechaInicio.toISOString().split('T')[0]
+          const fin = q.fechaFin.toISOString().split('T')[0]
+          return ini <= target && target <= fin
+        })
+        if (q && q.fechaInicio >= quincenaInicio.fechaInicio) selectedIds.add(q.id)
       }
-      return true // CADA_QUINCENA: all
-    })
-
-    // Limit by number of occurrences
-    if (numOcurrencias && numOcurrencias > 0) {
-      quincenesTarget = quincenesTarget.slice(0, numOcurrencias)
+      quincenesTarget = allQuincenas.filter(q => selectedIds.has(q.id))
+    } else {
+      // CADA_QUINCENA: all quincenas from start, optionally limited
+      quincenesTarget = allQuincenas.filter(q => q.fechaInicio >= quincenaInicio.fechaInicio)
+      if (numOcurrencias && numOcurrencias > 0) {
+        quincenesTarget = quincenesTarget.slice(0, numOcurrencias)
+      }
     }
 
     if (quincenesTarget.length === 0) {

@@ -34,10 +34,10 @@ export function persistQuincenaId(quincenaId: string) {
 
 export function getDefaultQuincenaId(quincenas: SelectableQuincena[], dateString = getMexicoDateString()) {
   const sorted = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
-  const active = sorted.find(q => q.fechaInicio <= dateString && dateString < q.fechaFin)
+  const active = sorted.find(q => q.fechaInicio <= dateString && dateString <= q.fechaFin)
   if (active) return active.id.toString()
 
-  const next = sorted.find(q => dateString < q.fechaFin)
+  const next = sorted.find(q => dateString <= q.fechaFin)
   if (next) return next.id.toString()
 
   return sorted.at(-1)?.id.toString() ?? ''
@@ -52,10 +52,10 @@ export function getQuincenaIdForDate(quincenas: SelectableQuincena[], dateString
   const first = sorted[0]
   if (!first || dateString < first.fechaInicio) return ''
 
-  const active = sorted.find(q => q.fechaInicio <= dateString && dateString < q.fechaFin)
+  const active = sorted.find(q => q.fechaInicio <= dateString && dateString <= q.fechaFin)
   if (active) return active.id.toString()
 
-  const next = sorted.find(q => dateString < q.fechaFin)
+  const next = sorted.find(q => dateString <= q.fechaFin)
   return next?.id.toString() ?? ''
 }
 
