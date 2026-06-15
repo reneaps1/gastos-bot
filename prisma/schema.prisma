@@ -178,6 +178,7 @@ model Presupuesto {
   frecuencia         String?             @db.VarChar(20)
   recurrenciaGrupoId String?             @map("recurrencia_grupo_id") @db.VarChar(36)
   numOcurrencias     Int?                @map("num_ocurrencias")
+  diaCobro           Int?                @map("dia_cobro")
   fechaRegistro      DateTime            @default(now()) @map("fecha_registro") @db.Timestamptz()
 
   quincena     Quincena      @relation(fields: [quincenaId], references: [id])

@@ -18,7 +18,7 @@ interface Categoria { id: number; nombre: string; tipo: string }
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
-  recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
+  recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null; diaCobro: number | null
   categoria: Categoria; quincena: Quincena; real: number; pct: number
 }
 interface EntradaRapida {
@@ -32,6 +32,7 @@ const EMPTY_FORM = {
   recurrente: false, frecuencia: 'CADA_QUINCENA',
   terminaCon: 'sin_fin' as 'sin_fin' | 'n_ocurrencias',
   numOcurrencias: '6',
+  diaCobro: '',
 }
 
 function fieldClass(err?: string) {
@@ -119,7 +120,7 @@ export default function PresupuestoPage() {
       tipo: p.tipo, montoPresupuestado: p.montoPresupuestado.toString(),
       clasificacion: p.clasificacion ?? '', notas: p.notas ?? '',
       recurrente: false, frecuencia: 'CADA_QUINCENA',
-      terminaCon: 'sin_fin', numOcurrencias: '6',
+      terminaCon: 'sin_fin', numOcurrencias: '6', diaCobro: '',
     })
     setFormErrors({})
     setModalOpen(true)
@@ -147,6 +148,7 @@ export default function PresupuestoPage() {
         numOcurrencias: form.recurrente && form.terminaCon === 'n_ocurrencias'
           ? parseInt(form.numOcurrencias) || null
           : null,
+        diaCobro: form.recurrente && form.diaCobro ? parseInt(form.diaCobro) : null,
       }
       const res = editingP
         ? await fetch(`/api/presupuestos/${editingP.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -315,7 +317,9 @@ export default function PresupuestoPage() {
                         {p.recurrente && (
                           <span className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full shrink-0">
                             <Repeat size={9} />
-                            {p.frecuencia === 'MENSUAL' ? 'mensual' : 'quincenal'}
+                            {p.frecuencia === 'MENSUAL'
+                              ? p.diaCobro ? `mensual · día ${p.diaCobro}` : 'mensual'
+                              : 'quincenal'}
                           </span>
                         )}
                         {recurrence && (
@@ -452,6 +456,32 @@ export default function PresupuestoPage() {
                       ))}
                     </div>
                   </div>
+
+                  {/* Day of charge — only for monthly */}
+                  {form.frecuencia === 'MENSUAL' && (
+                    <div>
+                      <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
+                        Día de cobro <span className="font-normal text-slate-400">(opcional)</span>
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number" min="1" max="31" placeholder="—"
+                          value={form.diaCobro}
+                          onChange={e => setForm(f => ({ ...f, diaCobro: e.target.value }))}
+                          className="w-16 text-center border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                        <span className="text-sm text-slate-500 dark:text-slate-400">del mes</span>
+                        {form.diaCobro && parseInt(form.diaCobro) >= 1 && parseInt(form.diaCobro) <= 31 && (
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${parseInt(form.diaCobro) <= 15 ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'}`}>
+                            {parseInt(form.diaCobro) <= 15 ? '→ 1ª quincena' : '→ 2ª quincena'}
+                          </span>
+                        )}
+                      </div>
+                      {!form.diaCobro && (
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Sin día especificado → se asigna a la 1ª quincena del mes</p>
+                      )}
+                    </div>
+                  )}
 
                   {/* End condition */}
                   <div>

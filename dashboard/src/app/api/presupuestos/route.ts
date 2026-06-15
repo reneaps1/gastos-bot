@@ -44,12 +44,14 @@ export async function POST(request: Request) {
     const {
       quincenaId, descripcion, categoriaId, montoPresupuestado,
       clasificacion, tipo, notas,
-      recurrente, frecuencia, numOcurrencias,
+      recurrente, frecuencia, numOcurrencias, diaCobro,
     } = body
 
     if (!quincenaId || !descripcion || !categoriaId || !montoPresupuestado) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
+
+    const diaCobro_ = diaCobro ? parseInt(diaCobro) : null
 
     const baseData = {
       descripcion,
@@ -60,6 +62,7 @@ export async function POST(request: Request) {
       notas: notas ?? null,
       recurrente: recurrente ?? false,
       frecuencia: recurrente ? (frecuencia ?? 'CADA_QUINCENA') : null,
+      diaCobro: diaCobro_ ?? null,
     }
 
     if (!recurrente) {
@@ -83,12 +86,14 @@ export async function POST(request: Request) {
       orderBy: { fechaInicio: 'asc' },
     })
 
-    // Filter by frequency
-    let quincenesTarget = todasQuincenas.filter((q, idx) => {
+    // Determine which half of the month the charge falls in
+    // Day 1-15 → primera quincena (starts on 1st), Day 16-31 → segunda quincena (starts on 16th)
+    const esPrimeraQuincena = diaCobro_ ? diaCobro_ <= 15 : true
+
+    let quincenesTarget = todasQuincenas.filter(q => {
       if (frecuencia === 'MENSUAL') {
-        // Only quincenas starting on day 1 of the month (first half)
-        const d = new Date(q.fechaInicio.toISOString().split('T')[0] + 'T00:00:00Z')
-        return d.getUTCDate() === 1
+        const startDay = new Date(q.fechaInicio.toISOString().split('T')[0] + 'T00:00:00Z').getUTCDate()
+        return esPrimeraQuincena ? startDay === 1 : startDay > 1
       }
       return true // CADA_QUINCENA: all
     })
