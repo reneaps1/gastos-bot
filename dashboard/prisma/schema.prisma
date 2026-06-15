@@ -22,32 +22,51 @@ enum EstatusPago {
   Pendiente
 }
 
-model User {
-  id              Int               @id @default(autoincrement())
-  nombre          String            @unique @db.VarChar(50)
-  phoneWhatsapp   String?           @unique @db.VarChar(20) @map("phone_whatsapp")
-  activo          Boolean           @default(true)
-  fechaRegistro   DateTime          @default(now()) @map("fecha_registro") @db.Timestamptz()
+enum TipoCredito {
+  Tarjeta
+  CreditoTienda
+  Prestamo
+  MSI
+  LineaCredito
+  Informal
+  Otro
+}
 
-  transacciones   Transaccion[]
-  whatsappMsgs    WhatsappMessage[]
-  importBatches   ImportBatch[]
-  auditLogs       AuditLog[]
+enum EstatusCreditoPago {
+  Pendiente
+  Pagado
+  Vencido
+  Cancelado
+}
+
+model User {
+  id            Int      @id @default(autoincrement())
+  nombre        String   @unique @db.VarChar(50)
+  phoneWhatsapp String?  @unique @map("phone_whatsapp") @db.VarChar(20)
+  activo        Boolean  @default(true)
+  fechaRegistro DateTime @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  transacciones Transaccion[]
+  whatsappMsgs  WhatsappMessage[]
+  importBatches ImportBatch[]
+  auditLogs     AuditLog[]
+  creditos      Credito[]
 
   @@map("users")
 }
 
 model Categoria {
-  id            Int                  @id @default(autoincrement())
-  nombre        String               @unique @db.VarChar(50)
+  id            Int                 @id @default(autoincrement())
+  nombre        String              @unique @db.VarChar(50)
   tipo          TipoMovimiento
   clasificacion ClasificacionGasto?
   ejemplos      String?
-  activo        Boolean              @default(true)
+  activo        Boolean             @default(true)
 
-  transacciones   Transaccion[]
-  entradas        EntradaRapida[]
-  presupuestos    Presupuesto[]
+  transacciones Transaccion[]
+  entradas      EntradaRapida[]
+  presupuestos  Presupuesto[]
+  creditoPagos  CreditoPago[]
 
   @@map("categorias")
 }
@@ -67,10 +86,12 @@ model Quincena {
   fechaInicio DateTime @map("fecha_inicio") @db.Date
   fechaFin    DateTime @map("fecha_fin") @db.Date
 
-  transacciones      Transaccion[]
-  entradas           EntradaRapida[]
-  presupuestos       Presupuesto[]
-  liquidezSnapshots  LiquidezSnapshot[]
+  transacciones        Transaccion[]      @relation("TransaccionImpacto")
+  transaccionesConsumo Transaccion[]      @relation("TransaccionConsumo")
+  entradas             EntradaRapida[]
+  presupuestos         Presupuesto[]
+  liquidezSnapshots    LiquidezSnapshot[]
+  creditoPagos         CreditoPago[]
 
   @@map("quincenas")
 }
@@ -80,76 +101,150 @@ model Cuenta {
   nombre String  @unique @db.VarChar(50)
   tipo   String? @db.VarChar(30)
 
+  creditos Credito[]
+
   @@map("cuentas")
 }
 
 model Transaccion {
-  id            Int                  @id @default(autoincrement())
-  fecha         DateTime             @db.Date
-  quincenaId    Int                  @map("quincena_id")
-  userId        Int?                 @map("user_id")
-  descripcion   String               @db.VarChar(200)
-  categoriaId   Int                  @map("categoria_id")
-  clasificacion ClasificacionGasto?
-  tipo          TipoMovimiento
-  monto         Decimal              @db.Decimal(12, 2)
-  metodoPagoId  Int?                 @map("metodo_pago_id")
-  estatus       EstatusPago          @default(Pendiente)
-  notas         String?
-  source        String?              @default("whatsapp") @db.VarChar(20)
-  fechaRegistro DateTime             @default(now()) @map("fecha_registro") @db.Timestamptz()
+  id                  Int                 @id @default(autoincrement())
+  fecha               DateTime            @db.Date
+  quincenaId          Int                 @map("quincena_id")
+  quincenaConsumoId   Int?                @map("quincena_consumo_id")
+  userId              Int?                @map("user_id")
+  descripcion         String              @db.VarChar(200)
+  categoriaId         Int                 @map("categoria_id")
+  clasificacion       ClasificacionGasto?
+  tipo                TipoMovimiento
+  monto               Decimal             @db.Decimal(12, 2)
+  metodoPagoId        Int?                @map("metodo_pago_id")
+  creditoId           Int?                @map("credito_id")
+  fechaPagoProgramada DateTime?           @map("fecha_pago_programada") @db.Date
+  estatus             EstatusPago         @default(Pendiente)
+  notas               String?
+  source              String?             @default("whatsapp") @db.VarChar(20)
+  fechaRegistro       DateTime            @default(now()) @map("fecha_registro") @db.Timestamptz()
 
-  quincena     Quincena    @relation(fields: [quincenaId], references: [id])
-  user         User?       @relation(fields: [userId], references: [id])
-  categoria    Categoria   @relation(fields: [categoriaId], references: [id])
-  metodoPago   MetodoPago? @relation(fields: [metodoPagoId], references: [id])
+  quincena        Quincena    @relation("TransaccionImpacto", fields: [quincenaId], references: [id])
+  quincenaConsumo Quincena?   @relation("TransaccionConsumo", fields: [quincenaConsumoId], references: [id])
+  user            User?       @relation(fields: [userId], references: [id])
+  categoria       Categoria   @relation(fields: [categoriaId], references: [id])
+  metodoPago      MetodoPago? @relation(fields: [metodoPagoId], references: [id])
+  credito         Credito?    @relation(fields: [creditoId], references: [id])
 
-  entradas      EntradaRapida[]
-  whatsappMsgs  WhatsappMessage[]
+  entradas     EntradaRapida[]
+  whatsappMsgs WhatsappMessage[]
+  creditoPagos CreditoPago[]
 
   @@index([quincenaId], name: "idx_tx_quincena")
+  @@index([quincenaConsumoId], name: "idx_tx_quincena_consumo")
   @@index([categoriaId], name: "idx_tx_categoria")
   @@index([fecha], name: "idx_tx_fecha")
   @@index([tipo], name: "idx_tx_tipo")
+  @@index([creditoId], name: "idx_tx_credito")
   @@map("transacciones")
 }
 
 model EntradaRapida {
-  id            Int                  @id @default(autoincrement())
-  fecha         DateTime             @db.Date
-  descripcion   String               @db.VarChar(200)
-  monto         Decimal              @db.Decimal(12, 2)
-  categoriaId   Int?                 @map("categoria_id")
+  id            Int             @id @default(autoincrement())
+  fecha         DateTime        @db.Date
+  descripcion   String          @db.VarChar(200)
+  monto         Decimal         @db.Decimal(12, 2)
+  categoriaId   Int?            @map("categoria_id")
   tipo          TipoMovimiento?
-  quincenaId    Int?                 @map("quincena_id")
+  quincenaId    Int?            @map("quincena_id")
   notas         String?
-  procesado     Boolean              @default(false)
-  transaccionId Int?                 @map("transaccion_id")
-  fechaRegistro DateTime             @default(now()) @map("fecha_registro") @db.Timestamptz()
+  procesado     Boolean         @default(false)
+  transaccionId Int?            @map("transaccion_id")
+  fechaRegistro DateTime        @default(now()) @map("fecha_registro") @db.Timestamptz()
 
-  categoria   Categoria?  @relation(fields: [categoriaId], references: [id])
-  quincena    Quincena?   @relation(fields: [quincenaId], references: [id])
+  categoria   Categoria?   @relation(fields: [categoriaId], references: [id])
+  quincena    Quincena?    @relation(fields: [quincenaId], references: [id])
   transaccion Transaccion? @relation(fields: [transaccionId], references: [id])
 
   @@map("entrada_rapida")
 }
 
 model Presupuesto {
-  id                  Int                  @id @default(autoincrement())
-  quincenaId          Int                  @map("quincena_id")
-  descripcion         String               @db.VarChar(200)
-  categoriaId         Int                  @map("categoria_id")
-  clasificacion       ClasificacionGasto?
-  tipo                TipoMovimiento
-  montoPresupuestado  Decimal              @map("monto_presupuestado") @db.Decimal(12, 2)
-  notas               String?
-  fechaRegistro       DateTime             @default(now()) @map("fecha_registro") @db.Timestamptz()
+  id                 Int                 @id @default(autoincrement())
+  quincenaId         Int                 @map("quincena_id")
+  descripcion        String              @db.VarChar(200)
+  categoriaId        Int                 @map("categoria_id")
+  clasificacion      ClasificacionGasto?
+  tipo               TipoMovimiento
+  montoPresupuestado Decimal             @map("monto_presupuestado") @db.Decimal(12, 2)
+  notas              String?
+  fechaRegistro      DateTime            @default(now()) @map("fecha_registro") @db.Timestamptz()
 
-  quincena  Quincena  @relation(fields: [quincenaId], references: [id])
-  categoria Categoria @relation(fields: [categoriaId], references: [id])
+  quincena     Quincena      @relation(fields: [quincenaId], references: [id])
+  categoria    Categoria     @relation(fields: [categoriaId], references: [id])
+  creditoPagos CreditoPago[]
 
   @@index([quincenaId], name: "idx_presupuesto_quincena")
   @@map("presupuesto")
+}
+
+model Credito {
+  id             Int         @id @default(autoincrement())
+  nombre         String      @unique @db.VarChar(100)
+  tipoCredito    TipoCredito @default(Otro) @map("tipo_credito")
+  acreedor       String      @db.VarChar(100)
+  userId         Int?        @map("user_id")
+  montoOriginal  Decimal?    @map("monto_original") @db.Decimal(12, 2)
+  saldoInicial   Decimal?    @map("saldo_inicial") @db.Decimal(12, 2)
+  limiteCredito  Decimal?    @map("limite_credito") @db.Decimal(12, 2)
+  diaCorte       Int?        @map("dia_corte")
+  diaPago        Int?        @map("dia_pago")
+  frecuenciaPago String?     @map("frecuencia_pago") @db.VarChar(20)
+  montoPagoFijo  Decimal?    @map("monto_pago_fijo") @db.Decimal(12, 2)
+  plazoMeses     Int?        @map("plazo_meses")
+  tasaInteres    Decimal?    @map("tasa_interes") @db.Decimal(7, 4)
+  cuentaPagoId   Int?        @map("cuenta_pago_id")
+  activo         Boolean     @default(true)
+  notas          String?
+  fechaInicio    DateTime?   @map("fecha_inicio") @db.Date
+  fechaRegistro  DateTime    @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  user          User?         @relation(fields: [userId], references: [id])
+  cuentaPago    Cuenta?       @relation(fields: [cuentaPagoId], references: [id])
+  transacciones Transaccion[]
+  pagos         CreditoPago[]
+
+  @@index([tipoCredito], name: "idx_creditos_tipo")
+  @@index([userId], name: "idx_creditos_user")
+  @@map("creditos")
+}
+
+model CreditoPago {
+  id                  Int                @id @default(autoincrement())
+  creditoId           Int                @map("credito_id")
+  transaccionId       Int?               @map("transaccion_id")
+  quincenaId          Int                @map("quincena_id")
+  categoriaId         Int                @map("categoria_id")
+  presupuestoId       Int?               @map("presupuesto_id")
+  numeroPago          Int?               @map("numero_pago")
+  totalPagos          Int?               @map("total_pagos")
+  fechaPagoProgramada DateTime           @map("fecha_pago_programada") @db.Date
+  fechaPagoReal       DateTime?          @map("fecha_pago_real") @db.Date
+  montoCapital        Decimal            @default(0) @map("monto_capital") @db.Decimal(12, 2)
+  montoInteres        Decimal            @default(0) @map("monto_interes") @db.Decimal(12, 2)
+  montoTotal          Decimal            @map("monto_total") @db.Decimal(12, 2)
+  estatus             EstatusCreditoPago @default(Pendiente)
+  notas               String?
+  fechaRegistro       DateTime           @default(now()) @map("fecha_registro") @db.Timestamptz()
+
+  credito     Credito      @relation(fields: [creditoId], references: [id])
+  transaccion Transaccion? @relation(fields: [transaccionId], references: [id], onDelete: SetNull)
+  quincena    Quincena     @relation(fields: [quincenaId], references: [id])
+  categoria   Categoria    @relation(fields: [categoriaId], references: [id])
+  presupuesto Presupuesto? @relation(fields: [presupuestoId], references: [id], onDelete: SetNull)
+
+  @@index([creditoId], name: "idx_credito_pagos_credito")
+  @@index([quincenaId], name: "idx_credito_pagos_quincena")
+  @@index([categoriaId], name: "idx_credito_pagos_categoria")
+  @@index([estatus], name: "idx_credito_pagos_estatus")
+  @@index([fechaPagoProgramada], name: "idx_credito_pagos_fecha")
+  @@map("credito_pagos")
 }
 
 model Deuda {
@@ -166,18 +261,18 @@ model Deuda {
 }
 
 model WhatsappMessage {
-  id            Int       @id @default(autoincrement())
-  waMessageId   String?   @unique @map("wa_message_id") @db.VarChar(100)
-  fromNumber    String    @map("from_number") @db.VarChar(20)
-  fromName      String?   @map("from_name") @db.VarChar(100)
-  userId        Int?      @map("user_id")
+  id            Int      @id @default(autoincrement())
+  waMessageId   String?  @unique @map("wa_message_id") @db.VarChar(100)
+  fromNumber    String   @map("from_number") @db.VarChar(20)
+  fromName      String?  @map("from_name") @db.VarChar(100)
+  userId        Int?     @map("user_id")
   body          String
-  tipo          String?   @db.VarChar(20)
-  procesado     Boolean   @default(false)
-  transaccionId Int?      @map("transaccion_id")
+  tipo          String?  @db.VarChar(20)
+  procesado     Boolean  @default(false)
+  transaccionId Int?     @map("transaccion_id")
   error         String?
-  fechaMensaje  DateTime  @map("fecha_mensaje") @db.Timestamptz()
-  fechaRegistro DateTime  @default(now()) @map("fecha_registro") @db.Timestamptz()
+  fechaMensaje  DateTime @map("fecha_mensaje") @db.Timestamptz()
+  fechaRegistro DateTime @default(now()) @map("fecha_registro") @db.Timestamptz()
 
   user        User?        @relation(fields: [userId], references: [id])
   transaccion Transaccion? @relation(fields: [transaccionId], references: [id])
@@ -226,21 +321,21 @@ model AuditLog {
 }
 
 model LiquidezSnapshot {
-  id            Int       @id @default(autoincrement())
-  fechaCorte    DateTime  @map("fecha_corte") @db.Timestamptz()
-  quincenaId    Int       @map("quincena_id")
-  bbva          Decimal   @default(0) @db.Decimal(12, 2)
-  banamex       Decimal   @default(0) @db.Decimal(12, 2)
-  uala          Decimal   @default(0) @db.Decimal(12, 2)
-  ualaInversion Decimal   @default(0) @map("uala_inversion") @db.Decimal(12, 2)
-  efectivo      Decimal   @default(0) @db.Decimal(12, 2)
-  valesDespensa Decimal   @default(0) @map("vales_despensa") @db.Decimal(12, 2)
-  valesGasolina Decimal   @default(0) @map("vales_gasolina") @db.Decimal(12, 2)
-  faltaPagar    Decimal   @default(0) @map("falta_pagar") @db.Decimal(12, 2)
-  teorico       Decimal?  @db.Decimal(12, 2)
+  id            Int      @id @default(autoincrement())
+  fechaCorte    DateTime @map("fecha_corte") @db.Timestamptz()
+  quincenaId    Int      @map("quincena_id")
+  bbva          Decimal  @default(0) @db.Decimal(12, 2)
+  banamex       Decimal  @default(0) @db.Decimal(12, 2)
+  uala          Decimal  @default(0) @db.Decimal(12, 2)
+  ualaInversion Decimal  @default(0) @map("uala_inversion") @db.Decimal(12, 2)
+  efectivo      Decimal  @default(0) @db.Decimal(12, 2)
+  valesDespensa Decimal  @default(0) @map("vales_despensa") @db.Decimal(12, 2)
+  valesGasolina Decimal  @default(0) @map("vales_gasolina") @db.Decimal(12, 2)
+  faltaPagar    Decimal  @default(0) @map("falta_pagar") @db.Decimal(12, 2)
+  teorico       Decimal? @db.Decimal(12, 2)
   notas         String?
-  validado      Boolean   @default(false)
-  fechaRegistro DateTime  @default(now()) @map("fecha_registro") @db.Timestamptz()
+  validado      Boolean  @default(false)
+  fechaRegistro DateTime @default(now()) @map("fecha_registro") @db.Timestamptz()
 
   quincena Quincena @relation(fields: [quincenaId], references: [id])
 
