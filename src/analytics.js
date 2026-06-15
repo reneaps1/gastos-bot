@@ -33,14 +33,14 @@ function formatMoney(n) {
 function detectIntent(text) {
   const lower = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
 
-  if (/cuanto.*(gaste|gasto|gastado).*hoy|gaste.*hoy|hoy.*cuanto|gasto de hoy|cuanto llevo hoy/.test(lower)) return 'gasto_hoy'
-  if (/cuanto.*(gaste|gasto|gastado).*ayer|ayer.*cuanto|gasto de ayer/.test(lower)) return 'gasto_ayer'
+  if (/cuanto.*(gaste|gasto|gastado).*hoy|gaste.*hoy|hoy.*cuanto|gasto(s)? de hoy|cuanto llevo hoy|que.*(gasto|gastos|gaste|gastado).*(hoy|registrado hoy|registrados hoy)|ver gasto(s)? de hoy|gasto(s)? (de |del )?hoy/.test(lower)) return 'gasto_hoy'
+  if (/cuanto.*(gaste|gasto|gastado).*ayer|ayer.*cuanto|gasto(s)? de ayer|que.*(gasto|gastos|gaste|gastado).*ayer/.test(lower)) return 'gasto_ayer'
   if (/cuanto.*(gaste|gasto|gastado).*(semana|esta semana|la semana)|esta semana|semana/.test(lower)) return 'gasto_semana'
   if (/cuanto.*(gaste|gasto|gastado).*(mes|este mes|el mes)|este mes|mes actual/.test(lower)) return 'gasto_mes'
   if (/cuanto.*(gaste|gasto|gastado|gasté).*(en|por|de|categoría|categoria|comida|transporte|entretenimiento|salud|hogar|ropa|educación|educacion|ahorro|otros)/.test(lower)) return 'gasto_categoria'
   if (/cuanto.*(gaste|gasto|gastado|gasté).*(en|de|por)\s+\w+|cuanto.*llevo.*en/.test(lower)) return 'gasto_especifico'
   if (/cuanto.*(queda|quedo|me queda|saldo|balance|disponible|tengo|dispongo)/.test(lower)) return 'balance'
-  if (/ultimos|últimos|recientes|que (gaste|gasté|gasto|compré|compre)|cuando|ver gastos|ver movimientos/.test(lower)) return 'ultimos'
+  if (/ultimos|últimos|recientes|cuando|ver gastos|ver movimientos|que (gaste|gasté|compré|compre)/.test(lower)) return 'ultimos'
   if (/mayores|top|mas gastado|más gastado|grandes|mayor|ranking|principales/.test(lower)) return 'top'
   if (/resumen|quincena|quincenal|como voy|cómo voy/.test(lower)) return 'resumen'
   if (/cuanto.*(gaste|gasto|gastado).*(tarjeta|efectivo|transferencia|mercadopago|credito|debito)/.test(lower)) return 'gasto_pago'
@@ -100,9 +100,9 @@ function gastoHoy(data, name) {
   const todayStr = today()
   const gastos = data.filter(d => d.fechaFormat === todayStr && d.tipo === 'Gasto')
   const total = gastos.reduce((s, d) => s + d.monto, 0)
-  if (gastos.length === 0) return `Hoy no has registrado gastos todavía.`
-  let msg = `📅 *Gastos de hoy*\n\n💰 Total: *$${formatMoney(total)}*\n📝 ${gastos.length} movimiento(s)\n\n`
-  gastos.forEach(g => { msg += `• $${formatMoney(g.monto)} - ${g.descripcion} (${g.categoria})\n` })
+  if (gastos.length === 0) return `Hoy no se han registrado gastos todavía. 🫙`
+  let msg = `📅 *Gastos de hoy (${todayStr})*\n\n💰 Total: *$${formatMoney(total)}*\n📝 ${gastos.length} movimiento(s)\n\n`
+  gastos.forEach(g => { msg += `• $${formatMoney(g.monto)} - ${g.descripcion} (${g.categoria}) — ${g.usuario}\n` })
   return msg
 }
 
