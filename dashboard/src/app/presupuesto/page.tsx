@@ -18,7 +18,8 @@ interface Categoria { id: number; nombre: string; tipo: string }
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
-  recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null; diaCobro: number | null
+  recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
+  numOcurrencias: number | null; diaCobro: number | null
   categoria: Categoria; quincena: Quincena; real: number; pct: number
 }
 interface EntradaRapida {
