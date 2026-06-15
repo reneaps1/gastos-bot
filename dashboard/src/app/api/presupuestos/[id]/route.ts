@@ -74,10 +74,17 @@ export async function DELETE(
       return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
     }
 
-    await prisma.presupuesto.delete({
-      where: { id },
-    })
+    const { searchParams } = new URL(request.url)
+    const grupoId = searchParams.get('grupoId')
 
+    if (grupoId) {
+      const { count } = await prisma.presupuesto.deleteMany({
+        where: { recurrenciaGrupoId: grupoId },
+      })
+      return NextResponse.json({ message: 'Grupo eliminado', count })
+    }
+
+    await prisma.presupuesto.delete({ where: { id } })
     return NextResponse.json({ message: 'Presupuesto deleted' })
   } catch (error) {
     console.error('Error deleting presupuesto:', error)

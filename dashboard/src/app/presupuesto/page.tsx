@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown, CalendarClock } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown, CalendarClock, AlertTriangle } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -67,7 +67,7 @@ export default function PresupuestoPage() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingP, setEditingP] = useState<Presupuesto | null>(null)
-  const [confirmId, setConfirmId] = useState<number | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; p: Presupuesto } | null>(null)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -166,14 +166,21 @@ export default function PresupuestoPage() {
     } catch { toast('Error al guardar', 'error') } finally { setSaving(false) }
   }
 
-  async function handleDelete() {
-    if (confirmId == null) return
+  async function handleDelete(mode: 'single' | 'all') {
+    if (!deleteTarget) return
     setDeleting(true)
     try {
-      const res = await fetch(`/api/presupuestos/${confirmId}`, { method: 'DELETE' })
+      const { id, p } = deleteTarget
+      const url = mode === 'all' && p.recurrenciaGrupoId
+        ? `/api/presupuestos/${id}?grupoId=${p.recurrenciaGrupoId}`
+        : `/api/presupuestos/${id}`
+      const res = await fetch(url, { method: 'DELETE' })
       if (!res.ok) throw new Error()
-      toast('Presupuesto eliminado')
-      setConfirmId(null)
+      const data = await res.json()
+      toast(mode === 'all' && p.recurrenciaGrupoId
+        ? `${data.count} partidas eliminadas`
+        : 'Presupuesto eliminado')
+      setDeleteTarget(null)
       fetchPresupuestos()
     } catch { toast('Error al eliminar', 'error') } finally { setDeleting(false) }
   }
@@ -351,7 +358,7 @@ export default function PresupuestoPage() {
                       className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                       <Pencil size={14} />
                     </button>
-                    <button onClick={() => setConfirmId(p.id)}
+                    <button onClick={() => setDeleteTarget({ id: p.id, p })}
                       className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
                       <Trash2 size={14} />
                     </button>
@@ -584,9 +591,70 @@ export default function PresupuestoPage() {
         </div>
       </FormModal>
 
-      <ConfirmDialog open={confirmId != null} onOpenChange={open => !open && setConfirmId(null)}
-        title="Eliminar presupuesto" description="Se eliminará este presupuesto. El historial de transacciones no se verá afectado."
-        onConfirm={handleDelete} loading={deleting} />
+      {/* Non-recurring delete — simple confirm */}
+      <ConfirmDialog
+        open={deleteTarget != null && !deleteTarget.p.recurrenciaGrupoId}
+        onOpenChange={open => !open && setDeleteTarget(null)}
+        title="Eliminar presupuesto"
+        description="Se eliminará este presupuesto. El historial de transacciones no se verá afectado."
+        onConfirm={() => handleDelete('single')}
+        loading={deleting}
+      />
+
+      {/* Recurring delete — smart dialog */}
+      {deleteTarget?.p.recurrenciaGrupoId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl p-6 w-full max-w-sm space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/30 flex items-center justify-center shrink-0">
+                <Repeat size={16} className="text-rose-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-800 dark:text-slate-100">Eliminar partida recurrente</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5 truncate">{deleteTarget.p.descripcion}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Esta partida forma parte de una serie recurrente. ¿Qué deseas eliminar?
+            </p>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => handleDelete('single')}
+                disabled={deleting}
+                className="w-full text-left px-4 py-3 rounded-xl border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Solo esta quincena</p>
+                <p className="text-xs text-rose-400 dark:text-rose-500 mt-0.5">Elimina únicamente este registro</p>
+              </button>
+
+              <button
+                onClick={() => handleDelete('all')}
+                disabled={deleting}
+                className="w-full text-left px-4 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={14} />
+                  <p className="text-sm font-medium">
+                    Eliminar todas las repeticiones
+                    {deleteTarget.p.numOcurrencias ? ` · ${deleteTarget.p.numOcurrencias} elementos` : ''}
+                  </p>
+                </div>
+                <p className="text-xs text-rose-200 mt-0.5 ml-5">Borra todas las quincenas del grupo</p>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+              className="w-full py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-50 cursor-pointer transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
