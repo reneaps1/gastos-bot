@@ -24,16 +24,18 @@ interface Categoria { id: number; nombre: string; tipo: string }
 interface User { id: number; nombre: string }
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface MetodoPago { id: number; nombre: string }
+interface Credito { id: number; nombre: string; tipoCredito: string; acreedor: string; activo: boolean; diaPago: number | null }
 interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: 'Gasto' | 'Ingreso' | 'Ahorro'
   monto: number; estatus: 'Pagado' | 'Pendiente'; notas: string | null
   categoria: Categoria; user: User | null; quincena: Quincena; metodoPago: MetodoPago | null
-  quincenaId: number; categoriaId: number; userId: number | null; metodoPagoId: number | null
+  quincenaId: number; categoriaId: number; userId: number | null; metodoPagoId: number | null; creditoId: number | null
 }
 
 const EMPTY_FORM = {
   fecha: getMexicoDateString(), descripcion: '', categoriaId: '',
   tipo: 'Gasto', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
+  creditoId: '', totalPagos: '', fechaPagoProgramada: '',
   estatus: 'Pendiente', notas: '',
 }
 
@@ -70,6 +72,7 @@ export default function TransaccionesPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [users, setUsers] = useState<User[]>([])
   const [metodosPago, setMetodosPago] = useState<MetodoPago[]>([])
+  const [creditos, setCreditos] = useState<Credito[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingTx, setEditingTx] = useState<Transaccion | null>(null)
@@ -90,11 +93,13 @@ export default function TransaccionesPage() {
       fetch('/api/categorias').then(r => r.json()),
       fetch('/api/users').then(r => r.json()),
       fetch('/api/metodos-pago').then(r => r.json()),
-    ]).then(([q, c, u, m]) => {
+      fetch('/api/creditos').then(r => r.json()),
+    ]).then(([q, c, u, m, cr]) => {
       setQuincenas(q)
       setCategorias(c)
       setUsers(u)
       setMetodosPago(m)
+      setCreditos(cr.filter((credito: Credito) => credito.activo))
       setQuincenaId(getInitialQuincenaId(q))
     })
   }, [])
@@ -140,6 +145,18 @@ export default function TransaccionesPage() {
     setForm(f => ({ ...f, fecha, quincenaId: dateQuincenaId || f.quincenaId }))
   }
 
+  function setMetodoPago(metodoPagoId: string) {
+    const metodo = metodosPago.find(m => m.id.toString() === metodoPagoId)
+    setForm(f => ({
+      ...f,
+      metodoPagoId,
+      estatus: metodo?.nombre === 'Credito' ? 'Pendiente' : f.estatus,
+      creditoId: metodo?.nombre === 'Credito' ? f.creditoId : '',
+      totalPagos: metodo?.nombre === 'Credito' ? f.totalPagos : '',
+      fechaPagoProgramada: metodo?.nombre === 'Credito' ? f.fechaPagoProgramada : '',
+    }))
+  }
+
   function openEdit(tx: Transaccion) {
     setEditingTx(tx)
     setDetailTx(null)
@@ -148,6 +165,7 @@ export default function TransaccionesPage() {
       categoriaId: tx.categoriaId.toString(), tipo: tx.tipo,
       monto: tx.monto.toString(), quincenaId: tx.quincenaId.toString(),
       userId: tx.userId?.toString() ?? '', metodoPagoId: tx.metodoPagoId?.toString() ?? '',
+      creditoId: tx.creditoId?.toString() ?? '', totalPagos: '', fechaPagoProgramada: '',
       estatus: tx.estatus, notas: tx.notas ?? '',
     })
     setFormErrors({})
@@ -162,6 +180,11 @@ export default function TransaccionesPage() {
     if (!form.tipo) errors.tipo = 'Requerido'
     if (!form.monto || isNaN(Number(form.monto)) || Number(form.monto) <= 0) errors.monto = 'Monto válido requerido'
     if (!form.quincenaId) errors.quincenaId = 'Requerido'
+    if (isCredito) {
+      if (!form.creditoId) errors.creditoId = 'Selecciona tarjeta/crédito'
+      if (form.totalPagos && Number(form.totalPagos) > 1 && !form.fechaPagoProgramada) errors.fechaPagoProgramada = 'Requerido para MSI'
+      if (form.totalPagos && Number(form.totalPagos) < 1) errors.totalPagos = 'Debe ser 1 o más'
+    }
     return errors
   }
 
@@ -172,8 +195,9 @@ export default function TransaccionesPage() {
     try {
       const body = {
         fecha: form.fecha, descripcion: form.descripcion.trim(), categoriaId: form.categoriaId,
-        tipo: form.tipo, monto: form.monto, quincenaId: form.quincenaId,
-        userId: form.userId || null, metodoPagoId: form.metodoPagoId || null,
+        tipo: form.tipo, monto: form.monto, quincenaId: form.quincenaId, quincenaConsumoId: form.quincenaId,
+        userId: form.userId || null, metodoPagoId: form.metodoPagoId || null, creditoId: form.creditoId || null,
+        totalPagos: form.totalPagos || null, fechaPagoProgramada: form.fechaPagoProgramada || null,
         estatus: form.estatus, notas: form.notas || null, source: 'dashboard',
       }
       const res = editingTx
@@ -219,6 +243,8 @@ export default function TransaccionesPage() {
   const formQuincena = quincenas.find(q => q.id.toString() === form.quincenaId)
   const suggestedQuincenaId = form.fecha ? getQuincenaIdForDate(quincenas, form.fecha) : ''
   const suggestedQuincena = quincenas.find(q => q.id.toString() === suggestedQuincenaId)
+  const selectedMetodo = metodosPago.find(m => m.id.toString() === form.metodoPagoId)
+  const isCredito = selectedMetodo?.nombre === 'Credito'
 
   return (
     <div className="space-y-6">
@@ -532,12 +558,50 @@ export default function TransaccionesPage() {
             </div>
             <div>
               <Label htmlFor="tx-metodo">Método de pago</Label>
-              <select id="tx-metodo" value={form.metodoPagoId} onChange={e => setForm(f => ({ ...f, metodoPagoId: e.target.value }))} className={fieldClass()}>
+              <select id="tx-metodo" value={form.metodoPagoId} onChange={e => setMetodoPago(e.target.value)} className={fieldClass()}>
                 <option value="">Sin especificar</option>
                 {metodosPago.map(m => <option key={m.id} value={m.id}>{m.nombre}</option>)}
               </select>
             </div>
           </div>
+
+          {isCredito && (
+            <div className="rounded-xl border border-indigo-200 dark:border-indigo-900/50 bg-indigo-50 dark:bg-indigo-950/20 p-4 space-y-4">
+              <div>
+                <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-300">Compra con crédito / MSI</p>
+                <p className="text-xs text-indigo-600/80 dark:text-indigo-300/70 mt-1">
+                  Selecciona con qué tarjeta o crédito se pagará. Si es MSI, el sistema generará pagos programados por quincena.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="tx-credito">Tarjeta o crédito *</Label>
+                  <select id="tx-credito" value={form.creditoId} onChange={e => setForm(f => ({ ...f, creditoId: e.target.value }))} className={fieldClass(formErrors.creditoId)}>
+                    <option value="">Seleccionar...</option>
+                    {creditos.map(c => <option key={c.id} value={c.id}>{c.nombre} · {c.tipoCredito}</option>)}
+                  </select>
+                  {formErrors.creditoId && <p className="text-xs text-rose-500 mt-1">{formErrors.creditoId}</p>}
+                </div>
+                <div>
+                  <Label htmlFor="tx-total-pagos">Pagos / MSI</Label>
+                  <input id="tx-total-pagos" type="number" min="1" step="1" placeholder="Ej: 1, 3, 6, 12" value={form.totalPagos} onChange={e => setForm(f => ({ ...f, totalPagos: e.target.value }))} className={fieldClass(formErrors.totalPagos)} />
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">Usa 1 para crédito normal o 3/6/12 para MSI.</p>
+                  {formErrors.totalPagos && <p className="text-xs text-rose-500 mt-1">{formErrors.totalPagos}</p>}
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="tx-fecha-pago">Fecha del primer pago</Label>
+                <input id="tx-fecha-pago" type="date" value={form.fechaPagoProgramada} onChange={e => setForm(f => ({ ...f, fechaPagoProgramada: e.target.value }))} className={fieldClass(formErrors.fechaPagoProgramada)} />
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  A partir de esta fecha se crean los pagos mensuales. Cada pago cae en la Q correspondiente a su fecha.
+                </p>
+                {formErrors.fechaPagoProgramada && <p className="text-xs text-rose-500 mt-1">{formErrors.fechaPagoProgramada}</p>}
+              </div>
+            </div>
+          )}
+
           <div>
             <Label htmlFor="tx-notas">Notas</Label>
             <textarea id="tx-notas" rows={2} placeholder="Notas adicionales (opcional)" value={form.notas} onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} className={`${fieldClass()} resize-none`} />
