@@ -1,4 +1,4 @@
-ALTER TABLE "presupuestos"
+ALTER TABLE "presupuesto"
   ADD COLUMN "recurrente"           BOOLEAN      NOT NULL DEFAULT false,
   ADD COLUMN "frecuencia"           VARCHAR(20),
   ADD COLUMN "recurrencia_grupo_id" VARCHAR(36),
