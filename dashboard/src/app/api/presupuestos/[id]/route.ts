@@ -40,7 +40,7 @@ export async function PUT(
     }
 
     const body = await request.json()
-    const { quincenaId, descripcion, categoriaId, montoPresupuestado, clasificacion, tipo, notas, diaCobro } = body
+    const { quincenaId, descripcion, categoriaId, montoPresupuestado, clasificacion, tipo, notas, diaCobro, fechaVencimiento } = body
 
     const presupuesto = await prisma.presupuesto.update({
       where: { id },
@@ -53,6 +53,7 @@ export async function PUT(
         ...(tipo && { tipo }),
         ...(notas !== undefined && { notas }),
         ...(diaCobro !== undefined && { diaCobro: diaCobro !== null && diaCobro !== '' ? parseInt(diaCobro) : null }),
+        ...(fechaVencimiento !== undefined && { fechaVencimiento: fechaVencimiento ? new Date(fechaVencimiento) : null }),
       },
       include: { categoria: true, quincena: true },
     })

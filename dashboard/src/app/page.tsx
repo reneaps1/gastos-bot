@@ -23,7 +23,7 @@ interface EntradaRapida {
 }
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; tipo: string
-  diaCobro?: number | null
+  diaCobro?: number | null; fechaVencimiento?: string | null
   categoria: Categoria; real: number; pct: number
 }
 interface PresupuestoCategoria {
@@ -341,11 +341,16 @@ export default function DashboardPage() {
                       </div>
                       <div className="flex items-center gap-2 ml-4.5 mb-2">
                         <p className="text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
-                        {p.diaCobro && (
-                          <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${p.diaCobro <= 15 ? 'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'}`}>
-                            vence día {p.diaCobro}
-                          </span>
-                        )}
+                        {p.fechaVencimiento && (() => {
+                          const d = new Date(`${p.fechaVencimiento.split('T')[0]}T00:00:00`)
+                          const dia = d.getDate()
+                          const esQ1 = dia <= 15
+                          return (
+                            <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${esQ1 ? 'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'}`}>
+                              vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}
+                            </span>
+                          )
+                        })()}
                       </div>
                       <div className="flex items-end justify-between gap-3 mb-2">
                         <div>
