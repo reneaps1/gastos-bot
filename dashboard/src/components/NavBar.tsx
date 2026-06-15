@@ -17,6 +17,7 @@ const configLinks = [
   { href: '/configuracion/categorias', label: 'Categorías' },
   { href: '/configuracion/usuarios', label: 'Usuarios' },
   { href: '/configuracion/audit-log', label: 'Audit Log' },
+  { href: '/admin/categorias', label: 'Admin Categorías' },
 ]
 
 export function NavBar() {

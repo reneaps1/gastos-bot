@@ -49,3 +49,25 @@ export async function PUT(
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: idStr } = await params
+    const id = parseInt(idStr)
+    if (isNaN(id)) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
+
+    const txCount = await prisma.transaccion.count({ where: { categoriaId: id } })
+    if (txCount > 0) {
+      return NextResponse.json({ error: `No se puede eliminar: tiene ${txCount} transacciones asociadas` }, { status: 409 })
+    }
+
+    await prisma.categoria.delete({ where: { id } })
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error('Error deleting categoria:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}

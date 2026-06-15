@@ -5,9 +5,24 @@ export async function GET() {
   try {
     const categorias = await prisma.categoria.findMany({
       orderBy: { nombre: 'asc' },
+      include: {
+        _count: {
+          select: { transacciones: true }
+        }
+      }
     })
 
-    return NextResponse.json(categorias)
+    const result = categorias.map(c => ({
+      id: c.id,
+      nombre: c.nombre,
+      tipo: c.tipo,
+      clasificacion: c.clasificacion,
+      ejemplos: c.ejemplos,
+      activo: c.activo,
+      transaccionesCount: c._count.transacciones,
+    }))
+
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Error fetching categorias:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

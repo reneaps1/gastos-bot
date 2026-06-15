@@ -8,7 +8,7 @@ interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: 
 interface Categoria { id: number; nombre: string; tipo: string }
 interface User { id: number; nombre: string }
 interface Transaccion {
-  id: number; descripcion: string; tipo: string; monto: number; estatus: string
+  id: number; fecha: string; descripcion: string; tipo: string; monto: number; estatus: string
   categoria: Categoria; user: User | null
 }
 interface Snapshot {
@@ -290,7 +290,7 @@ export default function DashboardPage() {
                         <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {new Date(tx.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}</p>
                         </div>
                       </div>
                       <span className={`text-sm font-semibold tabular-nums ml-2 ${tx.tipo === 'Ingreso' ? 'text-emerald-600' : tx.tipo === 'Ahorro' ? 'text-blue-600' : 'text-rose-600'}`}>
