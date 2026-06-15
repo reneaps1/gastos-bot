@@ -22,8 +22,8 @@ interface EntradaRapida {
   categoria: { nombre: string } | null; procesado: boolean
 }
 interface Presupuesto {
-  id: number; montoPresupuestado: number; tipo: string
-  categoria: Categoria
+  id: number; descripcion: string; montoPresupuestado: number; tipo: string
+  categoria: Categoria; real: number; pct: number
 }
 interface PresupuestoCategoria {
   nombre: string; presupuestado: number; gastado: number; restante: number; pct: number
@@ -51,6 +51,7 @@ export default function DashboardPage() {
   const [gastosPendientes, setGastosPendientes] = useState<Transaccion[]>([])
   const [gastosPorCategoria, setGastosPorCategoria] = useState<{ nombre: string; monto: number; pct: number }[]>([])
   const [presupuestoPorCategoria, setPresupuestoPorCategoria] = useState<PresupuestoCategoria[]>([])
+  const [presupuestosDisplay, setPresupuestosDisplay] = useState<Presupuesto[]>([])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [entradasPendientes, setEntradasPendientes] = useState<EntradaRapida[]>([])
   const [metricas, setMetricas] = useState({
@@ -133,6 +134,7 @@ export default function DashboardPage() {
       setGastosPendientes(pends)
       setGastosPorCategoria(gastosCatArr)
       setPresupuestoPorCategoria(presupuestoCatArr)
+      setPresupuestosDisplay([...presupData].filter(p => p.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
       setSnapshot(liqData.length > 0 ? liqData[0] : null)
       setEntradasPendientes(entradasData)
       setMetricas({
@@ -268,13 +270,13 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Presupuesto por categoría */}
+          {/* Presupuesto por partida */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
               <div>
-                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Gastos vs presupuesto por categoría</h3>
+                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Gastos vs presupuesto</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Presupuesto de gasto agrupado por categoría en esta quincena
+                  Partidas de presupuesto de esta quincena
                 </p>
               </div>
               <div className="text-right">
@@ -287,7 +289,7 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {presupuestoPorCategoria.length === 0 ? (
+            {presupuestosDisplay.length === 0 ? (
               <div className="text-center py-8 text-slate-400 dark:text-slate-500">
                 <p className="text-sm">Sin presupuesto de gasto para esta quincena</p>
                 <Link href="/presupuesto" className="inline-flex items-center gap-1 mt-2 text-xs text-indigo-600 dark:text-indigo-400 font-medium">
@@ -295,37 +297,38 @@ export default function DashboardPage() {
                 </Link>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                {presupuestoPorCategoria.map(cat => {
-                  const status = cat.pct > 100 ? 'Excedido' : cat.pct > 80 ? 'Vigilando' : 'En rango'
-                  const barColor = cat.pct > 100 ? 'bg-rose-500' : cat.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {presupuestosDisplay.map(p => {
+                  const restante = Number(p.montoPresupuestado) - p.real
+                  const status = p.pct > 100 ? 'Excedido' : p.pct > 80 ? 'Vigilando' : 'En rango'
+                  const barColor = p.pct > 100 ? 'bg-rose-500' : p.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
+                  const statusColor = p.pct > 100 ? 'text-rose-600 dark:text-rose-400' : p.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
                   return (
-                    <div key={cat.nombre} className="rounded-xl border border-slate-100 dark:border-slate-700/60 p-3 bg-slate-50/60 dark:bg-slate-900/30">
-                      <div className="flex items-center justify-between gap-3 mb-2">
+                    <div key={p.id} className="rounded-xl border border-slate-100 dark:border-slate-700/60 p-3 bg-slate-50/60 dark:bg-slate-900/30">
+                      <div className="flex items-start justify-between gap-3 mb-0.5">
                         <div className="flex items-center gap-2 min-w-0">
-                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`} />
-                          <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{cat.nombre}</span>
+                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</span>
                         </div>
-                        <span className={`text-xs font-semibold shrink-0 ${cat.pct > 100 ? 'text-rose-600 dark:text-rose-400' : cat.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                          {status}
-                        </span>
+                        <span className={`text-xs font-semibold shrink-0 ${statusColor}`}>{status}</span>
                       </div>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 ml-4.5 mb-2">{p.categoria.nombre}</p>
                       <div className="flex items-end justify-between gap-3 mb-2">
                         <div>
-                          <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(cat.gastado)}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">presupuesto {formatMXN(cat.presupuestado)}</p>
+                          <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">presupuesto {formatMXN(Number(p.montoPresupuestado))}</p>
                         </div>
                         <div className="text-right">
-                          <p className={`text-sm font-semibold tabular-nums ${cat.restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                            {cat.restante < 0 ? '+' : ''}{formatMXN(Math.abs(cat.restante))}
+                          <p className={`text-sm font-semibold tabular-nums ${restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>
+                            {restante < 0 ? '+' : ''}{formatMXN(Math.abs(restante))}
                           </p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{cat.restante < 0 ? 'excedido' : 'restante'}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{restante < 0 ? 'excedido' : 'restante'}</p>
                         </div>
                       </div>
                       <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
-                        <div className={`h-2.5 rounded-full ${barColor}`} style={{ width: `${Math.min(cat.pct, 100)}%` }} />
+                        <div className={`h-2.5 rounded-full ${barColor}`} style={{ width: `${Math.min(p.pct, 100)}%` }} />
                       </div>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{cat.pct.toFixed(1)}% usado</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{p.pct.toFixed(1)}% usado</p>
                     </div>
                   )
                 })}
