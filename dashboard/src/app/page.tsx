@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, Clock, BarChart3, ArrowRight, Zap, ChevronRight } from 'lucide-react'
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, Clock, BarChart3, ArrowRight, Zap, ChevronRight, AlertTriangle } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, persistQuincenaId } from '@/lib/quincena-selection'
 
@@ -56,6 +56,7 @@ export default function DashboardPage() {
   const [metricas, setMetricas] = useState({
     ingresos: 0, gastos: 0, ahorros: 0, margen: 0,
     presupTotal: 0, pendientePorPagar: 0, totalGastosPendientes: 0, pctPresup: 0,
+    gastosNoCubiertos: 0,
   })
 
   useEffect(() => {
@@ -124,6 +125,10 @@ export default function DashboardPage() {
         })
         .sort((a, b) => b.pct - a.pct)
 
+      const gastosNoCubiertos = Object.entries(gastosCat)
+        .filter(([nombre]) => !presupCat[nombre])
+        .reduce((s, [, monto]) => s + monto, 0)
+
       setTransacciones(txs.slice(0, 8))
       setGastosPendientes(pends)
       setGastosPorCategoria(gastosCatArr)
@@ -135,6 +140,7 @@ export default function DashboardPage() {
         presupTotal, pendientePorPagar: gastos - gastosPagados,
         totalGastosPendientes: pends.reduce((s, t) => s + Number(t.monto), 0),
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
+        gastosNoCubiertos,
       })
     } finally { setLoading(false) }
   }, [quincenaId])
@@ -227,6 +233,17 @@ export default function DashboardPage() {
                 />
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1.5">{pctPresupAsignado.toFixed(0)}% del ingreso asignado al presupuesto</p>
+              {metricas.gastosNoCubiertos > 0 && (
+                <div className="mt-2.5 flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/25 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                    <AlertTriangle size={12} className="shrink-0" />
+                    {formatMXN(metricas.gastosNoCubiertos)} en gastos sin presupuesto
+                  </span>
+                  <Link href="/presupuesto" className="text-xs font-medium text-amber-700 dark:text-amber-300 hover:underline flex items-center gap-0.5 shrink-0">
+                    Agregar <ChevronRight size={11} />
+                  </Link>
+                </div>
+              )}
             </div>
           )}
 
