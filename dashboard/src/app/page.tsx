@@ -20,6 +20,13 @@ interface EntradaRapida {
   id: number; descripcion: string; monto: number; tipo: string | null
   categoria: { nombre: string } | null; procesado: boolean
 }
+interface Presupuesto {
+  id: number; montoPresupuestado: number; tipo: string
+  categoria: Categoria
+}
+interface PresupuestoCategoria {
+  nombre: string; presupuestado: number; gastado: number; restante: number; pct: number
+}
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -42,6 +49,7 @@ export default function DashboardPage() {
   const [transacciones, setTransacciones] = useState<Transaccion[]>([])
   const [gastosPendientes, setGastosPendientes] = useState<Transaccion[]>([])
   const [gastosPorCategoria, setGastosPorCategoria] = useState<{ nombre: string; monto: number; pct: number }[]>([])
+  const [presupuestoPorCategoria, setPresupuestoPorCategoria] = useState<PresupuestoCategoria[]>([])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [entradasPendientes, setEntradasPendientes] = useState<EntradaRapida[]>([])
   const [metricas, setMetricas] = useState({
@@ -71,7 +79,7 @@ export default function DashboardPage() {
       ])
       const txJson = await txRes.json()
       const pendJson = await pendRes.json()
-      const presupData = await presupRes.json()
+      const presupData: Presupuesto[] = await presupRes.json()
       const liqData: Snapshot[] = await liqRes.json()
       const entradasData: EntradaRapida[] = await entradasRes.json()
 
@@ -92,9 +100,30 @@ export default function DashboardPage() {
         .map(([nombre, monto]) => ({ nombre, monto, pct: gastos > 0 ? (monto / gastos) * 100 : 0 }))
         .sort((a, b) => b.monto - a.monto)
 
+      const presupCat = presupData
+        .filter(p => p.tipo === 'Gasto' || p.categoria.tipo === 'Gasto')
+        .reduce((acc, p) => {
+          const nombre = p.categoria.nombre
+          acc[nombre] = (acc[nombre] ?? 0) + Number(p.montoPresupuestado)
+          return acc
+        }, {} as Record<string, number>)
+      const presupuestoCatArr = Object.entries(presupCat)
+        .map(([nombre, presupuestado]) => {
+          const gastado = gastosCat[nombre] ?? 0
+          return {
+            nombre,
+            presupuestado,
+            gastado,
+            restante: presupuestado - gastado,
+            pct: presupuestado > 0 ? (gastado / presupuestado) * 100 : 0,
+          }
+        })
+        .sort((a, b) => b.pct - a.pct)
+
       setTransacciones(txs.slice(0, 8))
       setGastosPendientes(pends)
       setGastosPorCategoria(gastosCatArr)
+      setPresupuestoPorCategoria(presupuestoCatArr)
       setSnapshot(liqData.length > 0 ? liqData[0] : null)
       setEntradasPendientes(entradasData)
       setMetricas({
@@ -111,6 +140,9 @@ export default function DashboardPage() {
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
   const totalLiquidez = snapshot ? snapshot.bbva + snapshot.banamex + snapshot.uala + snapshot.ualaInversion + snapshot.efectivo : 0
+  const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
+  const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
+  const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
 
   return (
     <div className="space-y-6">
@@ -157,6 +189,71 @@ export default function DashboardPage() {
             <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600" /> : <TrendingDown size={20} className="text-orange-600" />} color={metricas.margen >= 0 ? 'text-indigo-600' : 'text-orange-600'} bg={metricas.margen >= 0 ? 'bg-indigo-50' : 'bg-orange-50'} />
             <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600" />} color="text-amber-600" bg="bg-amber-50" />
             <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon={<BarChart3 size={20} className={metricas.pctPresup > 90 ? 'text-rose-600' : metricas.pctPresup > 70 ? 'text-amber-600' : 'text-emerald-600'} />} color={metricas.pctPresup > 90 ? 'text-rose-600' : metricas.pctPresup > 70 ? 'text-amber-600' : 'text-emerald-600'} bg={metricas.pctPresup > 90 ? 'bg-rose-50' : metricas.pctPresup > 70 ? 'bg-amber-50' : 'bg-emerald-50'} />
+          </div>
+
+          {/* Presupuesto por categoría */}
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+              <div>
+                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Gastos vs presupuesto por categoría</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Presupuesto de gasto agrupado por categoría en esta quincena
+                </p>
+              </div>
+              <div className="text-right">
+                <p className={`text-xl font-bold tabular-nums ${pctPresupuestoCategorias > 100 ? 'text-rose-600 dark:text-rose-400' : pctPresupuestoCategorias > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                  {pctPresupuestoCategorias.toFixed(0)}%
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {formatMXN(totalGastadoPresupuesto)} de {formatMXN(totalPresupuestoCategorias)}
+                </p>
+              </div>
+            </div>
+
+            {presupuestoPorCategoria.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 dark:text-slate-500">
+                <p className="text-sm">Sin presupuesto de gasto para esta quincena</p>
+                <Link href="/presupuesto" className="inline-flex items-center gap-1 mt-2 text-xs text-indigo-600 dark:text-indigo-400 font-medium">
+                  Configurar presupuesto <ChevronRight size={12} />
+                </Link>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {presupuestoPorCategoria.map(cat => {
+                  const status = cat.pct > 100 ? 'Excedido' : cat.pct > 80 ? 'Vigilando' : 'En rango'
+                  const barColor = cat.pct > 100 ? 'bg-rose-500' : cat.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
+                  return (
+                    <div key={cat.nombre} className="rounded-xl border border-slate-100 dark:border-slate-700/60 p-3 bg-slate-50/60 dark:bg-slate-900/30">
+                      <div className="flex items-center justify-between gap-3 mb-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`} />
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{cat.nombre}</span>
+                        </div>
+                        <span className={`text-xs font-semibold shrink-0 ${cat.pct > 100 ? 'text-rose-600 dark:text-rose-400' : cat.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                          {status}
+                        </span>
+                      </div>
+                      <div className="flex items-end justify-between gap-3 mb-2">
+                        <div>
+                          <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(cat.gastado)}</p>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">presupuesto {formatMXN(cat.presupuestado)}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className={`text-sm font-semibold tabular-nums ${cat.restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>
+                            {cat.restante < 0 ? '+' : ''}{formatMXN(Math.abs(cat.restante))}
+                          </p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{cat.restante < 0 ? 'excedido' : 'restante'}</p>
+                        </div>
+                      </div>
+                      <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+                        <div className={`h-2.5 rounded-full ${barColor}`} style={{ width: `${Math.min(cat.pct, 100)}%` }} />
+                      </div>
+                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{cat.pct.toFixed(1)}% usado</p>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           {/* Recurrence + Gastos por categoría */}
