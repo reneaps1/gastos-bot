@@ -208,9 +208,9 @@ export default function PresupuestoPage() {
           <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Presupuesto</h2>
           {qInfo && (
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              {qInfo.codigo} · {new Date(qInfo.fechaInicio).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
+              {qInfo.codigo} · {new Date(qInfo.fechaInicio + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
               {' — '}
-              {new Date(qInfo.fechaFin).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
+              {new Date(qInfo.fechaFin + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
             </p>
           )}
         </div>

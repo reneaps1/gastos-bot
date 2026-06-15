@@ -10,6 +10,9 @@ export function formatMXN(amount: number | string | null | undefined): string {
   return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(num)
 }
 
-export function formatDate(date: Date | string): string {
-  return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(date))
+export function formatDate(date: Date | string | null | undefined): string {
+  if (!date) return '—'
+  const d = new Date(date)
+  if (isNaN(d.getTime())) return '—'
+  return new Intl.DateTimeFormat('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }).format(d)
 }

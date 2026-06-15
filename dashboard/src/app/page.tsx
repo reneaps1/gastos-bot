@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { formatMXN } from '@/lib/utils'
+import { formatMXN, formatDate } from '@/lib/utils'
 import { TrendingUp, TrendingDown, Wallet, PiggyBank, Clock, BarChart3, ArrowRight, Zap, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, persistQuincenaId } from '@/lib/quincena-selection'
@@ -158,9 +158,9 @@ export default function DashboardPage() {
           </h1>
           {qActual && (
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-              {new Date(qActual.fechaInicio).toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
+              {new Date(qActual.fechaInicio + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long' })}
               {' — '}
-              {new Date(qActual.fechaFin).toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
+              {new Date(qActual.fechaFin + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'long', year: 'numeric' })}
             </p>
           )}
         </div>
@@ -391,7 +391,7 @@ export default function DashboardPage() {
                         <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {new Date(tx.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}</p>
+                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {formatDate(tx.fecha)}</p>
                         </div>
                       </div>
                       <span className={`text-sm font-semibold tabular-nums ml-2 ${tx.tipo === 'Ingreso' ? 'text-emerald-600' : tx.tipo === 'Ahorro' ? 'text-blue-600' : 'text-rose-600'}`}>
@@ -443,7 +443,7 @@ export default function DashboardPage() {
                   >
                     <p className={`font-bold text-sm ${isActual ? 'text-white' : 'text-slate-800 dark:text-slate-100'}`}>{q.codigo}</p>
                     <p className={`text-xs mt-1 ${isActual ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                      {new Date(q.fechaInicio).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
+                      {new Date(q.fechaInicio + 'T00:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'short' })}
                     </p>
                   </button>
                 )
