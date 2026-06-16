@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown, CalendarClock, AlertTriangle } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
@@ -29,6 +30,7 @@ interface EntradaRapida {
 }
 interface GastoSinPresupuesto {
   categoriaId: number; categoriaNombre: string; total: number; count: number
+  categoriaTieneLineas: boolean
 }
 
 const EMPTY_FORM = {
@@ -108,21 +110,22 @@ export default function PresupuestoPage() {
       const data: Presupuesto[] = await presupRes.json()
       const entradas: EntradaRapida[] = await entradasRes.json()
       const txData = await txRes.json()
-      const transacciones: Array<{ categoriaId: number; monto: number; categoria: { nombre: string } }> = txData.data ?? []
+      const transacciones: Array<{ categoriaId: number; monto: number; categoria: { nombre: string }; presupuestoId: number | null }> = txData.data ?? []
 
       setPresupuestos(data)
       setEntradasRapidas(entradas)
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
 
-      const budgetedCatIds = new Set(data.map((p: Presupuesto) => p.categoriaId))
+      const categoriasConLineas = new Set(data.map((p: Presupuesto) => p.categoriaId))
       const noPresupMap: Record<number, GastoSinPresupuesto> = {}
       for (const tx of transacciones) {
-        if (!budgetedCatIds.has(tx.categoriaId)) {
+        if (tx.presupuestoId == null) {
           if (!noPresupMap[tx.categoriaId]) {
             noPresupMap[tx.categoriaId] = {
               categoriaId: tx.categoriaId,
               categoriaNombre: tx.categoria?.nombre ?? 'Sin categoría',
               total: 0, count: 0,
+              categoriaTieneLineas: categoriasConLineas.has(tx.categoriaId),
             }
           }
           noPresupMap[tx.categoriaId].total += Number(tx.monto)
@@ -457,13 +460,23 @@ export default function PresupuestoPage() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">{formatMXN(g.total)}</span>
-                  <button
-                    onClick={() => openCreateFromUnbudgeted(g.categoriaId, g.categoriaNombre)}
-                    className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                  >
-                    <Plus size={11} />
-                    Agregar al presupuesto
-                  </button>
+                  {g.categoriaTieneLineas ? (
+                    <Link
+                      href="/transacciones"
+                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      <Pencil size={11} />
+                      Asignar a partida existente
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => openCreateFromUnbudgeted(g.categoriaId, g.categoriaNombre)}
+                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      <Plus size={11} />
+                      Agregar al presupuesto
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

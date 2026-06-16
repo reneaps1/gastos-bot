@@ -14,7 +14,7 @@ export async function GET(
 
     const transaccion = await prisma.transaccion.findUnique({
       where: { id },
-      include: { categoria: true, user: true, quincena: true, metodoPago: true },
+      include: { categoria: true, user: true, quincena: true, metodoPago: true, presupuesto: true },
     })
 
     if (!transaccion) {
@@ -40,7 +40,7 @@ export async function PUT(
     }
 
     const body = await request.json()
-    const { fecha, quincenaId, userId, descripcion, categoriaId, tipo, monto, metodoPagoId, estatus, notas } = body
+    const { fecha, quincenaId, userId, descripcion, categoriaId, tipo, monto, metodoPagoId, estatus, notas, presupuestoId } = body
 
     const transaccion = await prisma.transaccion.update({
       where: { id },
@@ -55,8 +55,9 @@ export async function PUT(
         ...(metodoPagoId !== undefined && { metodoPagoId: metodoPagoId ? parseInt(metodoPagoId) : null }),
         ...(estatus && { estatus }),
         ...(notas !== undefined && { notas }),
+        ...(presupuestoId !== undefined && { presupuestoId: presupuestoId ? parseInt(presupuestoId) : null }),
       },
-      include: { categoria: true, user: true, quincena: true },
+      include: { categoria: true, user: true, quincena: true, presupuesto: true },
     })
 
     return NextResponse.json(transaccion)

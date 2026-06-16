@@ -21,7 +21,7 @@ export async function GET(request: Request) {
     const presupuestosConGasto = await Promise.all(
       presupuestos.map(async (p) => {
         const gastado = await prisma.transaccion.aggregate({
-          where: { quincenaId: p.quincenaId, categoriaId: p.categoriaId },
+          where: { presupuestoId: p.id },
           _sum: { monto: true },
         })
         const real = Number(gastado._sum.monto ?? 0)

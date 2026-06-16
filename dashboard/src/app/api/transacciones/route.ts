@@ -44,7 +44,7 @@ export async function GET(request: Request) {
         orderBy: { fecha: 'desc' },
         skip,
         take: limit,
-        include: { categoria: true, user: true, quincena: true, metodoPago: true },
+        include: { categoria: true, user: true, quincena: true, metodoPago: true, presupuesto: true },
       }),
       prisma.transaccion.count({ where }),
     ])
@@ -67,7 +67,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, tipo, monto, metodoPagoId, creditoId, fechaPagoProgramada, totalPagos, estatus, notas, source } = body
+    const { fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, tipo, monto, metodoPagoId, creditoId, fechaPagoProgramada, totalPagos, estatus, notas, source, presupuestoId } = body
 
     if (!fecha || !quincenaId || !descripcion || !categoriaId || !tipo || monto === undefined) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -138,12 +138,13 @@ export async function POST(request: Request) {
           monto: parsedMonto,
           metodoPagoId: metodoPagoId ? parseInt(metodoPagoId) : null,
           creditoId: parsedCreditoId,
+          presupuestoId: presupuestoId ? parseInt(presupuestoId) : null,
           fechaPagoProgramada: fechaPagoProgramada ? new Date(fechaPagoProgramada) : null,
           estatus: parsedCreditoId ? 'Pendiente' : (estatus ?? 'Pendiente'),
           notas,
           source: source ?? 'api',
         },
-        include: { categoria: true, user: true, quincena: true },
+        include: { categoria: true, user: true, quincena: true, presupuesto: true },
       })
 
       if (pagosData.length > 0) {

@@ -11,7 +11,7 @@ interface Categoria { id: number; nombre: string; tipo: string }
 interface User { id: number; nombre: string }
 interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: string; monto: number; estatus: string
-  categoria: Categoria; user: User | null
+  categoria: Categoria; user: User | null; presupuestoId: number | null
 }
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
@@ -128,9 +128,9 @@ export default function DashboardPage() {
         })
         .sort((a, b) => b.pct - a.pct)
 
-      const gastosNoCubiertos = Object.entries(gastosCat)
-        .filter(([nombre]) => !presupCat[nombre])
-        .reduce((s, [, monto]) => s + monto, 0)
+      const gastosNoCubiertos = txs
+        .filter(t => t.tipo === 'Gasto' && t.presupuestoId == null)
+        .reduce((s, t) => s + Number(t.monto), 0)
 
       setTransacciones(txs.slice(0, 8))
       setGastosPendientes(pends)

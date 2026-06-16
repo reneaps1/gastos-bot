@@ -119,6 +119,7 @@ model Transaccion {
   monto               Decimal             @db.Decimal(12, 2)
   metodoPagoId        Int?                @map("metodo_pago_id")
   creditoId           Int?                @map("credito_id")
+  presupuestoId       Int?                @map("presupuesto_id")
   fechaPagoProgramada DateTime?           @map("fecha_pago_programada") @db.Date
   estatus             EstatusPago         @default(Pendiente)
   notas               String?
@@ -131,6 +132,7 @@ model Transaccion {
   categoria       Categoria   @relation(fields: [categoriaId], references: [id])
   metodoPago      MetodoPago? @relation(fields: [metodoPagoId], references: [id])
   credito         Credito?    @relation(fields: [creditoId], references: [id])
+  presupuesto     Presupuesto? @relation(fields: [presupuestoId], references: [id], onDelete: SetNull)
 
   entradas     EntradaRapida[]
   whatsappMsgs WhatsappMessage[]
@@ -142,6 +144,7 @@ model Transaccion {
   @@index([fecha], name: "idx_tx_fecha")
   @@index([tipo], name: "idx_tx_tipo")
   @@index([creditoId], name: "idx_tx_credito")
+  @@index([presupuestoId], name: "idx_tx_presupuesto")
   @@map("transacciones")
 }
 
@@ -181,9 +184,10 @@ model Presupuesto {
   diaCobro           Int?                @map("dia_cobro")
   fechaRegistro      DateTime            @default(now()) @map("fecha_registro") @db.Timestamptz()
 
-  quincena     Quincena      @relation(fields: [quincenaId], references: [id])
-  categoria    Categoria     @relation(fields: [categoriaId], references: [id])
-  creditoPagos CreditoPago[]
+  quincena      Quincena      @relation(fields: [quincenaId], references: [id])
+  categoria     Categoria     @relation(fields: [categoriaId], references: [id])
+  creditoPagos  CreditoPago[]
+  transacciones Transaccion[]
 
   @@index([quincenaId], name: "idx_presupuesto_quincena")
   @@index([recurrenciaGrupoId], name: "idx_presupuesto_grupo")

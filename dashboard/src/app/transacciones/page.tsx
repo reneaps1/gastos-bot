@@ -26,18 +26,21 @@ interface User { id: number; nombre: string }
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface MetodoPago { id: number; nombre: string }
 interface Credito { id: number; nombre: string; tipoCredito: string; acreedor: string; activo: boolean; diaPago: number | null }
+interface PresupuestoOption { id: number; descripcion: string; montoPresupuestado: number }
 interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: 'Gasto' | 'Ingreso' | 'Ahorro'
   monto: number; estatus: 'Pagado' | 'Pendiente'; notas: string | null
   categoria: Categoria; user: User | null; quincena: Quincena; metodoPago: MetodoPago | null
+  presupuesto: { id: number; descripcion: string } | null
   quincenaId: number; categoriaId: number; userId: number | null; metodoPagoId: number | null; creditoId: number | null
+  presupuestoId: number | null
 }
 
 const EMPTY_FORM = {
   fecha: getMexicoDateString(), descripcion: '', categoriaId: '',
   tipo: 'Gasto', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
   creditoId: '', totalPagos: '', fechaPagoProgramada: '',
-  estatus: 'Pendiente', notas: '',
+  estatus: 'Pendiente', notas: '', presupuestoId: '',
 }
 
 const LIMIT = 25
@@ -74,6 +77,7 @@ export default function TransaccionesPage() {
   const [users, setUsers] = useState<User[]>([])
   const [metodosPago, setMetodosPago] = useState<MetodoPago[]>([])
   const [creditos, setCreditos] = useState<Credito[]>([])
+  const [presupuestoOpciones, setPresupuestoOpciones] = useState<PresupuestoOption[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingTx, setEditingTx] = useState<Transaccion | null>(null)
@@ -134,6 +138,18 @@ export default function TransaccionesPage() {
 
   useEffect(() => { fetchTxs() }, [fetchTxs])
 
+  useEffect(() => {
+    if (!modalOpen || !form.quincenaId || !form.categoriaId) {
+      setPresupuestoOpciones([])
+      return
+    }
+    const params = new URLSearchParams({ quincenaId: form.quincenaId, categoriaId: form.categoriaId })
+    fetch(`/api/presupuestos?${params}`)
+      .then(r => r.json())
+      .then((data: PresupuestoOption[]) => setPresupuestoOpciones(data))
+      .catch(() => setPresupuestoOpciones([]))
+  }, [modalOpen, form.quincenaId, form.categoriaId])
+
   function openCreate() {
     setEditingTx(null)
     const dateQuincenaId = getQuincenaIdForDate(quincenas, EMPTY_FORM.fecha)
@@ -148,7 +164,7 @@ export default function TransaccionesPage() {
       setForm(f => ({ ...f, fecha }))
       setPendingDateChange({ fecha, suggestedQuincenaId: dateQuincenaId })
     } else {
-      setForm(f => ({ ...f, fecha, quincenaId: dateQuincenaId || f.quincenaId }))
+      setForm(f => ({ ...f, fecha, quincenaId: dateQuincenaId || f.quincenaId, presupuestoId: dateQuincenaId && dateQuincenaId !== f.quincenaId ? '' : f.presupuestoId }))
     }
   }
 
@@ -174,6 +190,7 @@ export default function TransaccionesPage() {
       userId: tx.userId?.toString() ?? '', metodoPagoId: tx.metodoPagoId?.toString() ?? '',
       creditoId: tx.creditoId?.toString() ?? '', totalPagos: '', fechaPagoProgramada: '',
       estatus: tx.estatus, notas: tx.notas ?? '',
+      presupuestoId: tx.presupuestoId?.toString() ?? '',
     })
     setFormErrors({})
     setModalOpen(true)
@@ -206,6 +223,7 @@ export default function TransaccionesPage() {
         userId: form.userId || null, metodoPagoId: form.metodoPagoId || null, creditoId: form.creditoId || null,
         totalPagos: form.totalPagos || null, fechaPagoProgramada: form.fechaPagoProgramada || null,
         estatus: form.estatus, notas: form.notas || null, source: 'dashboard',
+        presupuestoId: form.presupuestoId || null,
       }
       const res = editingTx
         ? await fetch(`/api/transacciones/${editingTx.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -453,6 +471,13 @@ export default function TransaccionesPage() {
                   <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{detailTx.quincena.codigo}</span>
                 } />
                 <DetailRow icon={<div className={`w-2 h-2 rounded-full ${(CAT_COLORS[detailTx.categoria?.nombre] ?? DEFAULT_CAT_COLOR).dot}`} />} label="Categoría" value={detailTx.categoria?.nombre} />
+                {detailTx.tipo === 'Gasto' && (
+                  <DetailRow icon={<Wallet size={16} />} label="Partida de presupuesto" value={
+                    detailTx.presupuesto
+                      ? <span className="text-indigo-600 dark:text-indigo-400">{detailTx.presupuesto.descripcion}</span>
+                      : <span className="text-amber-600 dark:text-amber-400">Sin asignar</span>
+                  } />
+                )}
                 <DetailRow icon={<User size={16} />} label="Usuario" value={detailTx.user?.nombre ?? 'Sin asignar'} />
                 {detailTx.metodoPago && (
                   <DetailRow icon={<CreditCard size={16} />} label="Método de pago" value={detailTx.metodoPago.nombre} />
@@ -508,7 +533,7 @@ export default function TransaccionesPage() {
             </div>
             <div>
               <Label htmlFor="tx-quincena">Quincena *</Label>
-              <select id="tx-quincena" value={form.quincenaId} onChange={e => setForm(f => ({ ...f, quincenaId: e.target.value }))} className={fieldClass(formErrors.quincenaId)}>
+              <select id="tx-quincena" value={form.quincenaId} onChange={e => setForm(f => ({ ...f, quincenaId: e.target.value, presupuestoId: '' }))} className={fieldClass(formErrors.quincenaId)}>
                 <option value="">Seleccionar...</option>
                 {quincenas.map(q => <option key={q.id} value={q.id}>{formatQuincenaOption(q)}</option>)}
               </select>
@@ -525,7 +550,7 @@ export default function TransaccionesPage() {
               {suggestedQuincena && form.quincenaId !== suggestedQuincena.id.toString() && (
                 <button
                   type="button"
-                  onClick={() => setForm(f => ({ ...f, quincenaId: suggestedQuincena.id.toString() }))}
+                  onClick={() => setForm(f => ({ ...f, quincenaId: suggestedQuincena.id.toString(), presupuestoId: '' }))}
                   className="text-xs text-indigo-600 dark:text-indigo-400 font-medium mt-1 cursor-pointer hover:underline"
                 >
                   Usar {suggestedQuincena.codigo} según fecha
@@ -542,7 +567,7 @@ export default function TransaccionesPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="tx-categoria">Categoría *</Label>
-              <select id="tx-categoria" value={form.categoriaId} onChange={e => setForm(f => ({ ...f, categoriaId: e.target.value }))} className={fieldClass(formErrors.categoriaId)}>
+              <select id="tx-categoria" value={form.categoriaId} onChange={e => setForm(f => ({ ...f, categoriaId: e.target.value, presupuestoId: '' }))} className={fieldClass(formErrors.categoriaId)}>
                 <option value="">Seleccionar...</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
@@ -557,6 +582,20 @@ export default function TransaccionesPage() {
               </select>
             </div>
           </div>
+          {form.tipo === 'Gasto' && (
+            <div>
+              <Label htmlFor="tx-presupuesto">Línea de presupuesto</Label>
+              <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.categoriaId || !form.quincenaId}>
+                <option value="">Sin asignar</option>
+                {presupuestoOpciones.map(p => (
+                  <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(Number(p.montoPresupuestado))})</option>
+                ))}
+              </select>
+              {form.categoriaId && form.quincenaId && presupuestoOpciones.length === 0 && (
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Esta categoría no tiene partidas de presupuesto en esta quincena.</p>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="tx-monto">Monto (MXN) *</Label>
@@ -656,7 +695,7 @@ export default function TransaccionesPage() {
               <div className="flex gap-3">
                 <button
                   onClick={() => {
-                    setForm(f => ({ ...f, quincenaId: pendingDateChange.suggestedQuincenaId }))
+                    setForm(f => ({ ...f, quincenaId: pendingDateChange.suggestedQuincenaId, presupuestoId: '' }))
                     setPendingDateChange(null)
                   }}
                   className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium cursor-pointer transition-colors"
