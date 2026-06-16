@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, Wallet, PiggyBank, Clock, BarChart3, ArrowRight, Zap, ChevronRight, AlertTriangle } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, Clock, ArrowRight, Zap, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
@@ -56,6 +56,7 @@ export default function DashboardPage() {
   const [presupuestosDisplay, setPresupuestosDisplay] = useState<Presupuesto[]>([])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [entradasPendientes, setEntradasPendientes] = useState<EntradaRapida[]>([])
+  const [actividadTab, setActividadTab] = useState<'pendientes' | 'recientes'>('pendientes')
   const [metricas, setMetricas] = useState({
     ingresos: 0, gastos: 0, ahorros: 0, margen: 0,
     presupTotal: 0, pendientePorPagar: 0, totalGastosPendientes: 0, pctPresup: 0,
@@ -215,13 +216,12 @@ export default function DashboardPage() {
       ) : (
         <>
           {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
             <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
-            <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" />
+            <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} subtitle={metricas.presupTotal > 0 ? `${metricas.pctPresup.toFixed(0)}% del presupuesto` : undefined} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" subtitleColor={metricas.pctPresup > 90 ? 'text-rose-500 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'} />
             <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
             <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} />
             <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50" />
-            <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon={<BarChart3 size={20} className={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-300' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'} />} color={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'} bg={metricas.pctPresup > 90 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' : metricas.pctPresup > 70 ? 'bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'} />
           </div>
 
           {/* Planificación del presupuesto */}
@@ -243,13 +243,18 @@ export default function DashboardPage() {
                   <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.presupTotal)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Sin asignar</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    No comprometido
+                    <span className="cursor-help text-slate-300 dark:text-slate-600" title="Dinero de tus ingresos que no tiene destino en ninguna partida del presupuesto">ⓘ</span>
+                  </p>
                   <p className={`text-base font-bold tabular-nums ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Disponible real</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    Sobrante neto
+                    <span className="cursor-help text-slate-300 dark:text-slate-600" title="Lo que queda después de restar lo presupuestado, los gastos sin presupuesto y los excedidos">ⓘ</span>
+                  </p>
                   <p className={`text-base font-bold tabular-nums ${disponibleReal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(disponibleReal))}{disponibleReal < 0 ? ' de más' : ''}</p>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">neto de excedidos</p>
                 </div>
               </div>
               {/* Stacked bar con tooltips */}
@@ -507,28 +512,40 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Gastos pendientes + Últimos movimientos */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50 flex items-center justify-center">
-                    <Clock size={16} className="text-amber-600 dark:text-amber-300" />
-                  </div>
-                  <h3 className="font-semibold text-slate-700 dark:text-slate-200">Gastos pendientes</h3>
-                </div>
-                {metricas.totalGastosPendientes > 0 && (
-                  <span className="text-sm font-bold text-amber-600 tabular-nums">{formatMXN(metricas.totalGastosPendientes)}</span>
-                )}
+          {/* Actividad */}
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700 rounded-lg p-1">
+                <button
+                  onClick={() => setActividadTab('pendientes')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${actividadTab === 'pendientes' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                >
+                  Pendientes
+                  {metricas.totalGastosPendientes > 0 && (
+                    <span className="ml-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400 tabular-nums">{formatMXN(metricas.totalGastosPendientes)}</span>
+                  )}
+                </button>
+                <button
+                  onClick={() => setActividadTab('recientes')}
+                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${actividadTab === 'recientes' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                >
+                  Recientes
+                </button>
               </div>
-              {gastosPendientes.length === 0 ? (
+              <Link href={actividadTab === 'pendientes' ? '/transacciones?estatus=Pendiente&tipo=Gasto' : '/transacciones'} className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
+                Ver todos <ArrowRight size={12} />
+              </Link>
+            </div>
+
+            {actividadTab === 'pendientes' ? (
+              gastosPendientes.length === 0 ? (
                 <div className="text-center py-8 text-slate-400 dark:text-slate-500">
                   <p className="text-sm">Todo pagado en esta quincena</p>
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {gastosPendientes.slice(0, 6).map(tx => (
-                    <div key={tx.id} className="flex items-center justify-between py-2 border-b border-slate-50 last:border-0">
+                <div className="space-y-1">
+                  {gastosPendientes.slice(0, 8).map(tx => (
+                    <div key={tx.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <div className="flex items-center gap-2 min-w-0">
                         <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
                         <div className="min-w-0">
@@ -536,27 +553,14 @@ export default function DashboardPage() {
                           <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {tx.user?.nombre ?? '—'}</p>
                         </div>
                       </div>
-                      <span className="text-sm font-semibold text-rose-600 tabular-nums ml-2">-{formatMXN(Number(tx.monto))}</span>
+                      <span className="text-sm font-semibold text-rose-600 dark:text-rose-400 tabular-nums ml-2">-{formatMXN(Number(tx.monto))}</span>
                     </div>
                   ))}
                 </div>
-              )}
-              {gastosPendientes.length > 0 && (
-                <Link href="/transacciones?estatus=Pendiente&tipo=Gasto" className="flex items-center justify-center gap-1 mt-3 text-xs text-indigo-600 dark:text-indigo-400 font-medium">
-                  Ver todos <ArrowRight size={12} />
-                </Link>
-              )}
-            </div>
-
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Últimos movimientos</h3>
-                <Link href="/transacciones" className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
-                  Ver todos <ChevronRight size={12} />
-                </Link>
-              </div>
-              {transacciones.length === 0 ? (
-                <div className="text-center py-10 text-slate-400 dark:text-slate-500">
+              )
+            ) : (
+              transacciones.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 dark:text-slate-500">
                   <p className="text-sm">Sin transacciones en esta quincena</p>
                 </div>
               ) : (
@@ -570,14 +574,14 @@ export default function DashboardPage() {
                           <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {formatDate(tx.fecha)}</p>
                         </div>
                       </div>
-                      <span className={`text-sm font-semibold tabular-nums ml-2 ${tx.tipo === 'Ingreso' ? 'text-emerald-600' : tx.tipo === 'Ahorro' ? 'text-blue-600' : 'text-rose-600'}`}>
+                      <span className={`text-sm font-semibold tabular-nums ml-2 ${tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600 dark:text-rose-400'}`}>
                         {tx.tipo === 'Ingreso' ? '+' : '-'}{formatMXN(Number(tx.monto))}
                       </span>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
+              )
+            )}
           </div>
 
           {/* Liquidez */}
@@ -632,8 +636,9 @@ export default function DashboardPage() {
   )
 }
 
-function KpiCard({ label, value, icon, color, bg }: {
+function KpiCard({ label, value, icon, color, bg, subtitle, subtitleColor }: {
   label: string; value: string; icon: React.ReactNode; color: string; bg: string
+  subtitle?: string; subtitleColor?: string
 }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3 hover:border-indigo-200 hover:shadow-sm transition-all">
@@ -643,6 +648,7 @@ function KpiCard({ label, value, icon, color, bg }: {
       <div className="min-w-0">
         <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{label}</p>
         <p className={`text-lg font-bold ${color} truncate tabular-nums`}>{value}</p>
+        {subtitle && <p className={`text-xs truncate tabular-nums ${subtitleColor ?? 'text-slate-400 dark:text-slate-500'}`}>{subtitle}</p>}
       </div>
     </div>
   )
@@ -651,8 +657,8 @@ function KpiCard({ label, value, icon, color, bg }: {
 function DashboardSkeleton() {
   return (
     <div className="space-y-6 animate-pulse">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        {Array.from({ length: 6 }).map((_, i) => (
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-700" />
             <div className="flex-1">
