@@ -42,7 +42,7 @@ export async function GET(request: Request) {
     const presupuestosConGasto = presupuestos.map(p => {
       const real = gastoMap.get(p.id) ?? 0
       const presup = Number(p.montoPresupuestado)
-      const pct = presup > 0 ? Math.min((real / presup) * 100, 100) : 0
+      const pct = presup > 0 ? (real / presup) * 100 : 0
       const key = `${p.quincenaId}-${p.categoriaId}`
       const categoriaTotal = groupTotals.get(key) ?? presup
       return { ...p, real, pct, categoriaTotal }

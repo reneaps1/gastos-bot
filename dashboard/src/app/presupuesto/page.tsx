@@ -49,7 +49,7 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
     g.real += p.real
   }
   for (const g of map.values()) {
-    g.pct = g.montoPresupuestado > 0 ? Math.min((g.real / g.montoPresupuestado) * 100, 100) : 0
+    g.pct = g.montoPresupuestado > 0 ? (g.real / g.montoPresupuestado) * 100 : 0
   }
   return Array.from(map.values())
 }
