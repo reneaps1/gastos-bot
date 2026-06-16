@@ -163,6 +163,8 @@ export default function DashboardPage() {
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
   const sinAsignar = metricas.ingresos - metricas.presupTotal
+  const totalComprometido = metricas.presupTotal + metricas.gastosNoCubiertos + metricas.totalExcedido
+  const disponibleReal = metricas.ingresos - totalComprometido
   const pctPresupAsignado = metricas.ingresos > 0 ? (metricas.presupTotal / metricas.ingresos) * 100 : 0
   const pctSinPresupuesto = metricas.ingresos > 0 ? (metricas.gastosNoCubiertos / metricas.ingresos) * 100 : 0
   const pctExcedido = metricas.ingresos > 0 ? (metricas.totalExcedido / metricas.ingresos) * 100 : 0
@@ -231,7 +233,7 @@ export default function DashboardPage() {
                   {sinAsignar < 0 ? 'Over-budget' : sinAsignar === 0 ? 'Totalmente asignado' : 'Sin asignar'}
                 </span>
               </div>
-              <div className="grid grid-cols-3 gap-4 mb-3">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Ingresos</p>
                   <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.ingresos)}</p>
@@ -243,6 +245,11 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Sin asignar</p>
                   <p className={`text-base font-bold tabular-nums ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Disponible real</p>
+                  <p className={`text-base font-bold tabular-nums ${disponibleReal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(disponibleReal))}{disponibleReal < 0 ? ' de más' : ''}</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">neto de excedidos</p>
                 </div>
               </div>
               {/* Stacked bar con tooltips */}
