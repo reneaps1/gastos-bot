@@ -1,15 +1,15 @@
 'use client'
 import { useState } from 'react'
 import { usePathname } from 'next/navigation'
-import { Menu, X, Settings, Sun, Moon } from 'lucide-react'
+import { Menu, X, Settings, Sun, Moon, LayoutDashboard, ArrowLeftRight, Target, AlertCircle, Landmark } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
 
 const links = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/transacciones', label: 'Transacciones' },
-  { href: '/presupuesto', label: 'Presupuesto' },
-  { href: '/deudas', label: 'Deudas' },
-  { href: '/creditos', label: 'Créditos' },
+  { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/transacciones', label: 'Transacciones', icon: ArrowLeftRight },
+  { href: '/presupuesto', label: 'Presupuesto', icon: Target },
+  { href: '/deudas', label: 'Deudas', icon: AlertCircle },
+  { href: '/creditos', label: 'Créditos', icon: Landmark },
 ]
 
 const configLinks = [
@@ -39,11 +39,12 @@ export function NavBar() {
       <nav className="hidden md:flex items-center gap-1 text-sm font-medium">
         {links.map(l => (
           <a key={l.href} href={l.href}
-            className={`px-3 py-1.5 rounded-lg transition-colors ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg transition-colors ${
               isActive(l.href)
                 ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 font-semibold'
                 : 'text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800'
             }`}>
+            <l.icon size={15} />
             {l.label}
           </a>
         ))}
@@ -101,11 +102,12 @@ export function NavBar() {
             <nav className="flex flex-col p-3 gap-1">
               {links.map(l => (
                 <a key={l.href} href={l.href} onClick={() => setOpen(false)}
-                  className={`px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  className={`flex items-center gap-2.5 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                     isActive(l.href)
                       ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 font-semibold'
                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
                   }`}>
+                  <l.icon size={16} className="shrink-0" />
                   {l.label}
                 </a>
               ))}
