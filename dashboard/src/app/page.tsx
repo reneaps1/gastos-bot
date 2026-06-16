@@ -219,7 +219,7 @@ export default function DashboardPage() {
             <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
             <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" />
             <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
-            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-orange-600 dark:text-orange-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-orange-600 dark:text-orange-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-orange-50 dark:bg-orange-950/50 dark:ring-1 dark:ring-orange-800/50'} />
+            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} />
             <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50" />
             <KpiCard label="Presupuesto" value={`${metricas.pctPresup.toFixed(0)}%`} icon={<BarChart3 size={20} className={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-300' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'} />} color={metricas.pctPresup > 90 ? 'text-rose-600 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'} bg={metricas.pctPresup > 90 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' : metricas.pctPresup > 70 ? 'bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'} />
           </div>
@@ -257,18 +257,18 @@ export default function DashboardPage() {
                 {/* Barra visual (overflow-hidden para pill shape) */}
                 <div className="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden flex">
                   <div
-                    className={`h-full transition-all ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                    className="h-full transition-all bg-indigo-400 dark:bg-indigo-500"
                     style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}
                   />
                   {metricas.gastosNoCubiertos > 0 && (
                     <div
-                      className="h-full bg-rose-500 transition-all"
+                      className="h-full bg-amber-400 dark:bg-amber-500 transition-all"
                       style={{ width: `${pctSinPresupuestoBar}%` }}
                     />
                   )}
                   {metricas.totalExcedido > 0 && (
                     <div
-                      className="h-full bg-rose-700 transition-all"
+                      className="h-full bg-rose-500 dark:bg-rose-500 transition-all"
                       style={{ width: `${pctExcedidoBarClamped}%` }}
                     />
                   )}
@@ -280,7 +280,7 @@ export default function DashboardPage() {
                     style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}
                   >
                     <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/budget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
-                      <span className={`inline-block w-2 h-2 rounded-full mr-1.5 ${pctPresupAsignado > 85 ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+                      <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-indigo-400" />
                       Presupuestado: <span className="font-semibold">{formatMXN(metricas.presupTotal)}</span> · {pctPresupAsignado.toFixed(0)}%
                     </div>
                   </div>
@@ -290,7 +290,7 @@ export default function DashboardPage() {
                       style={{ width: `${pctSinPresupuestoBar}%` }}
                     >
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/unbudget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
-                        <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-400" />
+                        <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-amber-400" />
                         Sin presupuesto: <span className="font-semibold">{formatMXN(metricas.gastosNoCubiertos)}</span> · {pctSinPresupuesto.toFixed(1)}%
                       </div>
                     </div>
@@ -301,7 +301,7 @@ export default function DashboardPage() {
                       style={{ width: `${pctExcedidoBarClamped}%` }}
                     >
                       <div className="absolute bottom-full mb-2 right-0 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/excedido:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
-                        <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-700" />
+                        <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-500" />
                         Excedido: <span className="font-semibold">{formatMXN(metricas.totalExcedido)}</span> sobre partidas presupuestadas
                       </div>
                     </div>
@@ -311,12 +311,12 @@ export default function DashboardPage() {
               {/* Legend */}
               <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                 <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${pctPresupAsignado > 100 ? 'bg-rose-500' : pctPresupAsignado > 85 ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+                  <span className="w-2 h-2 rounded-full shrink-0 bg-indigo-400" />
                   {pctPresupAsignado.toFixed(0)}% presupuestado
                 </span>
                 {metricas.gastosNoCubiertos > 0 && (
-                  <span className="flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
-                    <span className="w-2 h-2 rounded-full shrink-0 bg-rose-500" />
+                  <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                    <span className="w-2 h-2 rounded-full shrink-0 bg-amber-400" />
                     {pctSinPresupuesto.toFixed(1)}% sin presupuesto
                   </span>
                 )}
@@ -329,12 +329,12 @@ export default function DashboardPage() {
               </div>
               {/* Alert strip */}
               {metricas.gastosNoCubiertos > 0 && (
-                <div className="mt-2.5 flex items-center justify-between gap-2 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/40 rounded-lg px-3 py-2">
-                  <span className="flex items-center gap-1.5 text-xs text-rose-700 dark:text-rose-400">
-                    <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                <div className="mt-2.5 flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
                     <span><span className="font-semibold tabular-nums">{formatMXN(metricas.gastosNoCubiertos)}</span> sin presupuesto · {pctSinPresupuesto.toFixed(1)}% del ingreso</span>
                   </span>
-                  <Link href="/presupuesto" className="text-xs font-medium text-rose-700 dark:text-rose-400 hover:underline flex items-center gap-0.5 shrink-0">
+                  <Link href="/presupuesto" className="text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline flex items-center gap-0.5 shrink-0">
                     Agregar <ChevronRight size={11} />
                   </Link>
                 </div>
@@ -495,7 +495,7 @@ export default function DashboardPage() {
                       </div>
                       <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
                         <div
-                          className={`h-2 rounded-full ${cat.pct > 50 ? 'bg-rose-500' : cat.pct > 25 ? 'bg-amber-500' : 'bg-indigo-500'}`}
+                          className={`h-2 rounded-full ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`}
                           style={{ width: `${cat.pct}%` }}
                         />
                       </div>
