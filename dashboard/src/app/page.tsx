@@ -59,7 +59,7 @@ export default function DashboardPage() {
   const [metricas, setMetricas] = useState({
     ingresos: 0, gastos: 0, ahorros: 0, margen: 0,
     presupTotal: 0, pendientePorPagar: 0, totalGastosPendientes: 0, pctPresup: 0,
-    gastosNoCubiertos: 0,
+    gastosNoCubiertos: 0, totalExcedido: 0,
   })
 
   useEffect(() => {
@@ -132,6 +132,10 @@ export default function DashboardPage() {
         .filter(t => t.tipo === 'Gasto' && t.presupuestoId == null)
         .reduce((s, t) => s + Number(t.monto), 0)
 
+      const totalExcedido = presupData
+        .filter(p => p.tipo === 'Gasto')
+        .reduce((s, p) => s + Math.max(0, p.real - Number(p.montoPresupuestado)), 0)
+
       setTransacciones(txs.slice(0, 8))
       setGastosPendientes(pends)
       setGastosPorCategoria(gastosCatArr)
@@ -144,7 +148,7 @@ export default function DashboardPage() {
         presupTotal, pendientePorPagar: gastos - gastosPagados,
         totalGastosPendientes: pends.reduce((s, t) => s + Number(t.monto), 0),
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
-        gastosNoCubiertos,
+        gastosNoCubiertos, totalExcedido,
       })
     } finally { setLoading(false) }
   }, [quincenaId])
@@ -217,11 +221,18 @@ export default function DashboardPage() {
           {/* Planificación del presupuesto */}
           {metricas.ingresos > 0 && (
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
-              <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Planificación del presupuesto</h3>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${sinAsignar < 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : sinAsignar === 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
-                  {sinAsignar < 0 ? 'Over-budget' : sinAsignar === 0 ? 'Totalmente asignado' : 'Sin asignar'}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                  {metricas.totalExcedido > 0 && (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                      <TrendingUp size={11} /> {formatMXN(metricas.totalExcedido)} excedido
+                    </span>
+                  )}
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${sinAsignar < 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : sinAsignar === 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+                    {sinAsignar < 0 ? 'Over-budget' : sinAsignar === 0 ? 'Totalmente asignado' : 'Sin asignar'}
+                  </span>
+                </div>
               </div>
               <div className="grid grid-cols-3 gap-4 mb-3">
                 <div>
@@ -288,6 +299,12 @@ export default function DashboardPage() {
                     {pctSinPresupuesto.toFixed(1)}% sin presupuesto
                   </span>
                 )}
+                {metricas.totalExcedido > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
+                    <TrendingUp size={11} className="shrink-0" />
+                    {formatMXN(metricas.totalExcedido)} excedido en partidas
+                  </span>
+                )}
               </div>
               {/* Alert strip */}
               {metricas.gastosNoCubiertos > 0 && (
@@ -298,6 +315,17 @@ export default function DashboardPage() {
                   </span>
                   <Link href="/presupuesto" className="text-xs font-medium text-rose-700 dark:text-rose-400 hover:underline flex items-center gap-0.5 shrink-0">
                     Agregar <ChevronRight size={11} />
+                  </Link>
+                </div>
+              )}
+              {metricas.totalExcedido > 0 && (
+                <div className="mt-2.5 flex items-center justify-between gap-2 bg-rose-50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-800/40 rounded-lg px-3 py-2">
+                  <span className="flex items-center gap-1.5 text-xs text-rose-700 dark:text-rose-400">
+                    <TrendingUp size={13} className="shrink-0" />
+                    <span><span className="font-semibold tabular-nums">{formatMXN(metricas.totalExcedido)}</span> excedido sobre partidas presupuestadas</span>
+                  </span>
+                  <Link href="/presupuesto" className="text-xs font-medium text-rose-700 dark:text-rose-400 hover:underline flex items-center gap-0.5 shrink-0">
+                    Revisar <ChevronRight size={11} />
                   </Link>
                 </div>
               )}
@@ -320,6 +348,11 @@ export default function DashboardPage() {
                 <p className="text-xs text-slate-500 dark:text-slate-400">
                   {formatMXN(totalGastadoPresupuesto)} de {formatMXN(totalPresupuestoCategorias)}
                 </p>
+                {metricas.totalExcedido > 0 && (
+                  <span className="inline-flex items-center gap-1 mt-1 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
+                    <TrendingUp size={10} /> +{formatMXN(metricas.totalExcedido)} excedido
+                  </span>
+                )}
               </div>
             </div>
 
