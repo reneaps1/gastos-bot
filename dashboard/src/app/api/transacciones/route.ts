@@ -29,6 +29,7 @@ export async function GET(request: Request) {
 
     const estatus = searchParams.get('estatus')
     const busqueda = searchParams.get('busqueda')
+    const asignado = searchParams.get('asignado')
 
     const where: any = {}
     if (quincenaId) where.quincenaId = parseInt(quincenaId)
@@ -37,6 +38,8 @@ export async function GET(request: Request) {
     if (userId) where.userId = parseInt(userId)
     if (estatus) where.estatus = estatus
     if (busqueda) where.descripcion = { contains: busqueda, mode: 'insensitive' }
+    if (asignado === 'si') where.presupuestoId = { not: null }
+    else if (asignado === 'no') where.presupuestoId = null
 
     const [transacciones, total] = await Promise.all([
       prisma.transaccion.findMany({

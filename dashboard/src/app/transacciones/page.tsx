@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -53,6 +53,34 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
   return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
+function FilterChip({ value, onChange, onClear, placeholder, children }: {
+  value: string; onChange: (v: string) => void; onClear: () => void
+  placeholder: string; children: React.ReactNode
+}) {
+  return (
+    <div className="relative inline-flex items-center">
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className={`text-sm rounded-full pl-3 py-2 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400 transition-colors appearance-none ${value ? 'pr-7 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800' : 'pr-3 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}
+      >
+        <option value="">{placeholder}</option>
+        {children}
+      </select>
+      {value && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="absolute right-1.5 text-indigo-400 hover:text-indigo-700 dark:text-indigo-500 dark:hover:text-indigo-300 cursor-pointer"
+          aria-label={`Quitar filtro ${placeholder}`}
+        >
+          <X size={13} />
+        </button>
+      )}
+    </div>
+  )
+}
+
 export default function TransaccionesPage() {
   const { toast } = useToast()
 
@@ -69,6 +97,7 @@ export default function TransaccionesPage() {
   const [categoriaId, setCategoriaId] = useState('')
   const [userId, setUserId] = useState('')
   const [estatus, setEstatus] = useState('')
+  const [asignacion, setAsignacion] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
 
@@ -125,6 +154,7 @@ export default function TransaccionesPage() {
     if (categoriaId) params.set('categoriaId', categoriaId)
     if (userId) params.set('userId', userId)
     if (estatus) params.set('estatus', estatus)
+    if (asignacion) params.set('asignado', asignacion)
     if (debouncedSearch) params.set('busqueda', debouncedSearch)
     params.set('page', page.toString())
     params.set('limit', LIMIT.toString())
@@ -134,7 +164,7 @@ export default function TransaccionesPage() {
       setTxs(json.data ?? [])
       setTotal(json.pagination?.total ?? 0)
     } finally { setLoading(false) }
-  }, [quincenaId, tipo, categoriaId, userId, estatus, debouncedSearch, page])
+  }, [quincenaId, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
 
   useEffect(() => { fetchTxs() }, [fetchTxs])
 
@@ -282,7 +312,7 @@ export default function TransaccionesPage() {
       </div>
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="flex flex-wrap items-center gap-2">
           <select value={quincenaId} onChange={e => selectQuincena(e.target.value)} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
             {quincenas.map(q => {
               const ini = q.fechaInicio.split('T')[0]
@@ -291,29 +321,35 @@ export default function TransaccionesPage() {
               return <option key={q.id} value={q.id}>{isActive ? '● ' : ''}{formatQuincenaOption(q)}{isActive ? ' · En curso' : ''}</option>
             })}
           </select>
-          <select value={tipo} onChange={e => { setTipo(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
-            <option value="">Todos los tipos</option>
+          <FilterChip value={tipo} onChange={v => { setTipo(v); setPage(1) }} onClear={() => { setTipo(''); setPage(1) }} placeholder="Tipo">
             <option value="Gasto">Gasto</option>
             <option value="Ingreso">Ingreso</option>
             <option value="Ahorro">Ahorro</option>
-          </select>
-          <select value={categoriaId} onChange={e => { setCategoriaId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
-            <option value="">Todas las categorías</option>
+          </FilterChip>
+          <FilterChip value={categoriaId} onChange={v => { setCategoriaId(v); setPage(1) }} onClear={() => { setCategoriaId(''); setPage(1) }} placeholder="Categoría">
             {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-          </select>
-          <select value={userId} onChange={e => { setUserId(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
-            <option value="">Todos los usuarios</option>
+          </FilterChip>
+          <FilterChip value={userId} onChange={v => { setUserId(v); setPage(1) }} onClear={() => { setUserId(''); setPage(1) }} placeholder="Usuario">
             {users.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
-          </select>
-          <select value={estatus} onChange={e => { setEstatus(e.target.value); setPage(1) }} className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white text-slate-700 dark:text-slate-300">
-            <option value="">Todos los estatus</option>
+          </FilterChip>
+          <FilterChip value={estatus} onChange={v => { setEstatus(v); setPage(1) }} onClear={() => { setEstatus(''); setPage(1) }} placeholder="Estatus">
             <option value="Pagado">Pagado</option>
             <option value="Pendiente">Pendiente</option>
-          </select>
-          <div className="relative">
+          </FilterChip>
+          <FilterChip value={asignacion} onChange={v => { setAsignacion(v); setPage(1) }} onClear={() => { setAsignacion(''); setPage(1) }} placeholder="Asignación">
+            <option value="si">Asignada</option>
+            <option value="no">Sin asignar</option>
+          </FilterChip>
+          <div className="relative flex-1 min-w-[160px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
             <input type="text" placeholder="Buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
-              className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-3 py-2 bg-white text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            {busqueda && (
+              <button type="button" onClick={() => setBusqueda('')} aria-label="Quitar búsqueda"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer">
+                <X size={13} />
+              </button>
+            )}
           </div>
         </div>
         <div className="mt-3">
@@ -352,7 +388,7 @@ export default function TransaccionesPage() {
             </div>
             <p className="font-medium text-slate-600 dark:text-slate-400">Sin transacciones</p>
             <p className="text-sm mt-1">
-              {quincenaId || tipo || categoriaId || userId || estatus || debouncedSearch
+              {quincenaId || tipo || categoriaId || userId || estatus || asignacion || debouncedSearch
                 ? 'No hay resultados para los filtros seleccionados'
                 : 'Crea una transacción para comenzar'}
             </p>
@@ -364,6 +400,7 @@ export default function TransaccionesPage() {
                 <tr>
                   <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>
+                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Presup.</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>
@@ -386,6 +423,21 @@ export default function TransaccionesPage() {
                           <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
                           {tx.categoria?.nombre}
                         </span>
+                      </td>
+                      <td className="px-4 py-3.5 text-center">
+                        {tx.tipo === 'Gasto' ? (
+                          tx.presupuestoId ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400" title={tx.presupuesto?.descripcion}>
+                              <Check size={10} /> Asignada
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                              <AlertCircle size={10} /> Sin asignar
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-slate-300 dark:text-slate-600 text-xs">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3.5">
                         <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
