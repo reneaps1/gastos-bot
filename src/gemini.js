@@ -80,17 +80,27 @@ async function getSystemContext(prisma) {
     let presupuestos = []
     let gastosPendientes = []
     let deudasActivas = []
+    let gastadoPorCategoria = {}
 
     if (quincenaId) {
-      const [ing, gas, aho] = await Promise.all([
+      const [ing, gas, aho, gastosActivos] = await Promise.all([
         prisma.transaccion.aggregate({ where: { quincenaId, tipo: 'Ingreso' }, _sum: { monto: true } }),
         prisma.transaccion.aggregate({ where: { quincenaId, tipo: 'Gasto' }, _sum: { monto: true } }),
         prisma.transaccion.aggregate({ where: { quincenaId, tipo: 'Ahorro' }, _sum: { monto: true } }),
+        prisma.transaccion.findMany({
+          where: { quincenaId, tipo: 'Gasto' },
+          select: { categoriaId: true, categoria: { select: { nombre: true } }, monto: true },
+        }),
       ])
       resumen.ingresos = Number(ing._sum.monto ?? 0)
       resumen.gastos = Number(gas._sum.monto ?? 0)
       resumen.ahorro = Number(aho._sum.monto ?? 0)
       resumen.saldo = resumen.ingresos - resumen.gastos - resumen.ahorro
+
+      for (const tx of gastosActivos) {
+        const cat = tx.categoria?.nombre || 'Personal'
+        gastadoPorCategoria[cat] = (gastadoPorCategoria[cat] || 0) + Number(tx.monto)
+      }
 
       const [presupData, pendientes] = await Promise.all([
         prisma.presupuesto.findMany({
@@ -135,7 +145,7 @@ async function getSystemContext(prisma) {
 
     cachedContext = {
       quincenaActiva: quincenaActiva ? { codigo: quincenaActiva.codigo, inicio: quincenaActiva.fechaInicio.toISOString().slice(0, 10), fin: quincenaActiva.fechaFin.toISOString().slice(0, 10) } : null,
-      resumen,
+      resumen: { ...resumen, gastadoPorCategoria },
       ultimos,
       categorias: categoriasResumen,
       presupuestos: presupuestos.map(p => ({ descripcion: p.descripcion, categoria: p.categoria?.nombre || 'Sin categoria', monto: Number(p.monto), tipo: p.tipo })),
@@ -163,8 +173,15 @@ function buildSystemPrompt(context) {
     parts.push(`Gastos pendientes por pagar esta quincena:\n${pend}`)
   }
   if (context?.presupuestos?.length) {
-    const pres = context.presupuestos.filter(p => p.tipo === 'Gasto').map(p => `  - ${p.descripcion} (${p.categoria}): $${p.monto}`).join('\n')
-    if (pres) parts.push(`Presupuesto de la quincena:\n${pres}`)
+    const pres = context.presupuestos
+      .filter(p => p.tipo === 'Gasto')
+      .map(p => {
+        const gastado = context.resumen?.gastadoPorCategoria?.[p.categoria] || 0
+        const pct = p.monto > 0 ? Math.round((gastado / p.monto) * 100) : 0
+        return `  - ${p.descripcion} (${p.categoria}): presupuestado $${p.monto} | gastado $${gastado} | queda $${p.monto - gastado} (${pct}%)`
+      })
+      .join('\n')
+    if (pres) parts.push(`Presupuesto de la quincena con ejecucion:\n${pres}`)
   }
   if (context?.ultimos?.length) {
     const movs = context.ultimos.slice(0, 10).map(tx => `  ${tx.fecha} | ${tx.tipo} | $${tx.monto} | ${tx.descripcion} | ${tx.categoria} | ${tx.usuario}`).join('\n')
@@ -226,6 +243,13 @@ PREGUNTA: el usuario pregunta sobre sus finanzas (cuanto gasto, como va, que fal
   - "que falta pagar", "cual es mi saldo", "estoy pasado en algo"
   - "resumen", "balance", "top gastos", "ultimos movimientos"
   - "cuanto he gastado en super este mes"
+  - "cuanto me queda del presupuesto de guarderia"
+  - "como voy con el presupuesto de renta"
+  - "cuanto gaste de la categoria transporte"
+  - "cuanto presupuesto me queda en comida"
+  - "estoy pasado en el presupuesto de diversiones"
+  - "que presupuestos tengo esta quincena"
+  - "cuanto llevo gastado de familia"
 
 CHAT: cualquier otra cosa — saludos, despedidas, gracias, comentarios, preguntas no financieras.
   Ejemplos: "hola", "gracias", "ok", "perfecto", "buenos dias", "hasta luego", "que tal"
@@ -283,8 +307,14 @@ Pregunta: "${text}"
 Responde en espanol mexicano, de forma concisa, util y amigable. Maximo 5 lineas.
 Usa los datos reales del contexto para dar numeros exactos.
 Si el usuario pregunta "como vamos" o "como va la quincena", di ingresos, gastos y saldo real.
-Si pregunta "que falta pagar", menciona los pendientes.
-Si pregunta por una categoria especifica, suma los gastos reales de esa categoria.
+Si pregunta "que falta pagar", menciona los gastos pendientes de la lista PENDIENTES.
+Si pregunta por una categoria especifica o "cuanto gaste en X", filtra los registros por esa categoria y suma los montos.
+Si pregunta por un presupuesto especifico ("cuanto me queda del presupuesto de guarderia", "como voy con la renta", "presupuesto de comida"):
+  - Busca esa linea en el PRESUPUESTO para ver el monto presupuestado.
+  - De los REGISTROS, suma todos los gastos de la misma categoria en esta quincena.
+  - Calcula: queda = presupuestado - gastado. Di el porcentaje.
+  - Ejemplo: "Guarderia: presupuesto $2,500. Llevas gastado $800. Te quedan $1,700 (32% usado)."
+Si pide "ver mis presupuestos" o "que presupuestos tengo", lista las lineas del presupuesto con montos y avance.
 Si no tienes suficientes datos para responder, dilo honestamente.
 Usa formato: $1,234.56 para cantidades.`
 
