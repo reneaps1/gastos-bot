@@ -35,6 +35,14 @@ const SHEETS_ENABLED = process.env.GOOGLE_SHEETS_ENABLED !== 'false'
 // Previene race condition cuando Meta envía el mismo webhook dos veces en rápida sucesión
 const processingMessages = new Set()
 
+async function assuredSend(to, message, context) {
+  const result = await sendWhatsAppMessage(to, message)
+  if (!result.ok) {
+    console.error(`MESSAGE_NOT_DELIVERED to=${to} context=${context} error=`, JSON.stringify(result.error))
+  }
+  return result
+}
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode']
   const token = req.query['hub.verify_token']
@@ -101,7 +109,7 @@ app.post('/webhook', async (req, res) => {
           try {
             const answer = await handleQuestion(text, senderName)
             if (answer) {
-              await sendWhatsAppMessage(senderPhone, answer)
+              await assuredSend(senderPhone, answer, `analytics:${intent}`)
               await react(senderPhone, message.id, '✅')
               await db.saveMessage({
                 waMessageId: message.id,
@@ -130,7 +138,7 @@ app.post('/webhook', async (req, res) => {
             if (geminiData?.type === 'chat') {
               const chatReply = await gemini.chat(text, senderName)
               if (chatReply) {
-                await sendWhatsAppMessage(senderPhone, chatReply)
+                await assuredSend(senderPhone, chatReply, 'gemini:chat')
                 await react(senderPhone, message.id, '✅')
                 await db.saveMessage({
                   waMessageId: message.id,
@@ -151,7 +159,7 @@ app.post('/webhook', async (req, res) => {
               const data = await getData()
               const geminiAnswer = await gemini.answer(text, data, senderName)
               if (geminiAnswer) {
-                await sendWhatsAppMessage(senderPhone, geminiAnswer)
+                await assuredSend(senderPhone, geminiAnswer, 'gemini:question')
                 await react(senderPhone, message.id, '✅')
                 await db.saveMessage({
                   waMessageId: message.id,
@@ -177,7 +185,7 @@ app.post('/webhook', async (req, res) => {
         const hasNumber = /\d/.test(text)
         if (!hasNumber && geminiData?.type !== 'expense') {
           await react(senderPhone, message.id, '❓')
-          await sendWhatsAppMessage(senderPhone, '🤖 No entendí ese mensaje. Puedes registrar un gasto (ej: "gasté 150 en uber") o hacerme una pregunta sobre tus finanzas.')
+          await assuredSend(senderPhone, '🤖 No entendí ese mensaje. Puedes registrar un gasto (ej: "gasté 150 en uber") o hacerme una pregunta sobre tus finanzas.', 'fallback:no_recognize')
           await db.saveMessage({
             waMessageId: message.id,
             fromNumber: senderPhone,
@@ -205,7 +213,7 @@ app.post('/webhook', async (req, res) => {
           if (!categoria || !quincena) {
             console.error(`No se encontro categoria (${parsed.categoria}) o quincena (${parsed.quincena})`)
             await react(senderPhone, message.id, '❌')
-            await sendWhatsAppMessage(senderPhone, '❌ Error: categoria o quincena no encontrada.')
+            await assuredSend(senderPhone, '❌ Error: categoria o quincena no encontrada.', 'error:categoria_quincena')
             await db.saveMessage({
               waMessageId: message.id,
               fromNumber: senderPhone,
@@ -271,13 +279,13 @@ app.post('/webhook', async (req, res) => {
           }
 
           const confirmation = formatConfirmation(parsed)
-          await sendWhatsAppMessage(senderPhone, confirmation)
+          await assuredSend(senderPhone, confirmation, 'tx:success')
           await react(senderPhone, message.id, '✅')
           console.log('Transaccion guardada en DB:', tx.id)
         } catch (error) {
           console.error('Error processing message:', error)
           await react(senderPhone, message.id, '❌')
-          await sendWhatsAppMessage(senderPhone, '❌ Error al procesar tu mensaje. Intenta de nuevo.')
+          await assuredSend(senderPhone, '❌ Error al procesar tu mensaje. Intenta de nuevo.', 'error:tx_process')
           await db.saveMessage({
             waMessageId: message.id,
             fromNumber: senderPhone,
@@ -297,6 +305,10 @@ app.post('/webhook', async (req, res) => {
   } catch (error) {
     console.error('Webhook error:', error)
   }
+})
+
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'gastos-bot', version: '2.0', timestamp: new Date().toISOString() })
 })
 
 app.get('/health', (req, res) => {
