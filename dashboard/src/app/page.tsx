@@ -165,6 +165,10 @@ export default function DashboardPage() {
   const sinAsignar = metricas.ingresos - metricas.presupTotal
   const pctPresupAsignado = metricas.ingresos > 0 ? (metricas.presupTotal / metricas.ingresos) * 100 : 0
   const pctSinPresupuesto = metricas.ingresos > 0 ? (metricas.gastosNoCubiertos / metricas.ingresos) * 100 : 0
+  const pctExcedido = metricas.ingresos > 0 ? (metricas.totalExcedido / metricas.ingresos) * 100 : 0
+  const pctExcedidoBar = metricas.totalExcedido > 0 ? Math.max(pctExcedido, 1) : 0
+  const pctSinPresupuestoBar = Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))
+  const pctExcedidoBarClamped = Math.min(pctExcedidoBar, Math.max(0, 100 - pctPresupAsignado - pctSinPresupuestoBar))
 
   return (
     <div className="space-y-6">
@@ -221,18 +225,11 @@ export default function DashboardPage() {
           {/* Planificación del presupuesto */}
           {metricas.ingresos > 0 && (
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
-              <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+              <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Planificación del presupuesto</h3>
-                <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                  {metricas.totalExcedido > 0 && (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300">
-                      <TrendingUp size={11} /> {formatMXN(metricas.totalExcedido)} excedido
-                    </span>
-                  )}
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${sinAsignar < 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : sinAsignar === 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
-                    {sinAsignar < 0 ? 'Over-budget' : sinAsignar === 0 ? 'Totalmente asignado' : 'Sin asignar'}
-                  </span>
-                </div>
+                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${sinAsignar < 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : sinAsignar === 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+                  {sinAsignar < 0 ? 'Over-budget' : sinAsignar === 0 ? 'Totalmente asignado' : 'Sin asignar'}
+                </span>
               </div>
               <div className="grid grid-cols-3 gap-4 mb-3">
                 <div>
@@ -259,7 +256,13 @@ export default function DashboardPage() {
                   {metricas.gastosNoCubiertos > 0 && (
                     <div
                       className="h-full bg-rose-500 transition-all"
-                      style={{ width: `${Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))}%` }}
+                      style={{ width: `${pctSinPresupuestoBar}%` }}
+                    />
+                  )}
+                  {metricas.totalExcedido > 0 && (
+                    <div
+                      className="h-full bg-rose-700 transition-all"
+                      style={{ width: `${pctExcedidoBarClamped}%` }}
                     />
                   )}
                 </div>
@@ -277,11 +280,22 @@ export default function DashboardPage() {
                   {metricas.gastosNoCubiertos > 0 && (
                     <div
                       className="relative group/unbudget h-full cursor-default"
-                      style={{ width: `${Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))}%` }}
+                      style={{ width: `${pctSinPresupuestoBar}%` }}
                     >
                       <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/unbudget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
                         <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-400" />
                         Sin presupuesto: <span className="font-semibold">{formatMXN(metricas.gastosNoCubiertos)}</span> · {pctSinPresupuesto.toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
+                  {metricas.totalExcedido > 0 && (
+                    <div
+                      className="relative group/excedido h-full cursor-default"
+                      style={{ width: `${pctExcedidoBarClamped}%` }}
+                    >
+                      <div className="absolute bottom-full mb-2 right-0 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/excedido:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                        <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-700" />
+                        Excedido: <span className="font-semibold">{formatMXN(metricas.totalExcedido)}</span> sobre partidas presupuestadas
                       </div>
                     </div>
                   )}
