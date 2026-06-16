@@ -52,9 +52,40 @@ async function sendWhatsAppMessage(to, message) {
   }
 }
 
+async function getMediaUrl(mediaId) {
+  try {
+    const response = await axios({
+      method: 'get',
+      url: `https://graph.facebook.com/v18.0/${mediaId}`,
+      headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
+    })
+    return response.data
+  } catch (error) {
+    console.error('getMediaUrl error:', error.response?.data || error.message)
+    return null
+  }
+}
+
+async function downloadMedia(mediaId) {
+  const meta = await getMediaUrl(mediaId)
+  if (!meta?.url) return null
+  try {
+    const response = await axios({
+      method: 'get',
+      url: meta.url,
+      headers: { Authorization: `Bearer ${process.env.META_ACCESS_TOKEN}` },
+      responseType: 'arraybuffer',
+    })
+    return { buffer: Buffer.from(response.data), mimeType: meta.mime_type || 'application/octet-stream' }
+  } catch (error) {
+    console.error('downloadMedia error:', error.message)
+    return null
+  }
+}
+
 function extractPhoneNumber(value) {
   if (!value) return null;
   return value.replace(/\D/g, '');
 }
 
-module.exports = { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react };
+module.exports = { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, getMediaUrl, downloadMedia };

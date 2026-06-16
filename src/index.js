@@ -25,10 +25,12 @@ if (realDbUrl) {
 
 const express = require('express')
 const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
-const { parseMessage, formatConfirmation } = require('./parser')
-const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react } = require('./whatsapp')
+const { parseMessage, formatConfirmation, cleanDescription } = require('./parser')
+const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedia } = require('./whatsapp')
 const { handleQuestion, detectIntent, getData } = require('./analytics')
+const { getCurrentQuincena } = require('./quincenas')
 const gemini = require('./gemini')
+const media = require('./media')
 const db = require('./database')
 const prisma = require('./lib/prisma')
 
@@ -47,6 +49,76 @@ async function assuredSend(to, message, context) {
     console.error(`MESSAGE_NOT_DELIVERED to=${to} context=${context} error=`, JSON.stringify(result.error))
   }
   return result
+}
+
+function parseMessageFromMedia(analysis, senderName, senderPhone, messageId) {
+  const CLASIFICACION_POR = {
+    Hogar: 'Fijo', Salud: 'Fijo', Familia: 'Variable', Transporte: 'Variable',
+    Suscripciones: 'Fijo', Deudas: 'Fijo', Personal: 'Variable', Ingresos: null, Ahorro: null,
+  }
+  const categoria = analysis.categoria || 'Personal'
+  const now = new Date()
+  const fechaMexico = new Date(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T00:00:00.000Z`)
+  return {
+    timestamp: now,
+    fecha: fechaMexico,
+    usuario: senderName || 'Rene',
+    phone: senderPhone || null,
+    monto: analysis.monto || 0,
+    descripcion: analysis.descripcion || 'Sin descripcion',
+    categoria,
+    formaPago: 'Efectivo',
+    tipo: categoria === 'Ingresos' ? 'Ingreso' : categoria === 'Ahorro' ? 'Ahorro' : 'Gasto',
+    clasificacion: CLASIFICACION_POR[categoria] || null,
+    quincena: getCurrentQuincena(),
+    estatus: 'Pagado',
+    messageId: messageId || null,
+  }
+}
+
+async function registerAndConfirm(parsed, senderPhone, messageId, senderName, user) {
+  const categoria = await db.findCategoria(parsed.categoria)
+  const metodoPago = await db.findMetodoPago(parsed.formaPago)
+  const quincena = await db.findQuincenaByCodigo(parsed.quincena)
+
+  if (!categoria || !quincena) {
+    console.error(`No se encontro categoria (${parsed.categoria}) o quincena (${parsed.quincena})`)
+    await react(senderPhone, messageId, '❌')
+    await assuredSend(senderPhone, 'Error: categoria o quincena no encontrada.', 'media:error_cat')
+    return
+  }
+
+  const tx = await db.saveTransaccion({
+    fecha: parsed.fecha,
+    quincenaId: quincena.id,
+    userId: user?.id || null,
+    descripcion: parsed.descripcion,
+    categoriaId: categoria.id,
+    clasificacion: parsed.clasificacion,
+    tipo: parsed.tipo,
+    monto: parsed.monto,
+    metodoPagoId: metodoPago?.id || null,
+    estatus: parsed.estatus,
+    notas: null,
+    source: 'whatsapp_media',
+  })
+
+  await db.saveMessage({
+    waMessageId: messageId,
+    fromNumber: senderPhone,
+    fromName: senderName,
+    userId: user?.id || null,
+    body: parsed.descripcion,
+    tipo: parsed.tipo.toLowerCase(),
+    procesado: true,
+    transaccionId: tx.id,
+    fechaMensaje: new Date(),
+  })
+
+  const confirmation = `Registrado desde imagen/audio:\n${parsed.tipo}: $${parsed.monto} - ${parsed.descripcion} (${parsed.categoria})`
+  await assuredSend(senderPhone, confirmation, 'media:success')
+  await react(senderPhone, messageId, '✅')
+  console.log('Media transaccion guardada:', tx.id)
 }
 
 app.get('/webhook', (req, res) => {
@@ -81,10 +153,22 @@ app.post('/webhook', async (req, res) => {
     if (!messages || messages.length === 0) return
 
     for (const message of messages) {
-      if (message.type !== 'text') continue
+      let text = null
+      let mediaMeta = null
 
-      const text = message.text?.body?.trim()
-      if (!text) continue
+      if (message.type === 'text') {
+        text = message.text?.body?.trim()
+      } else if (message.type === 'audio') {
+        mediaMeta = { type: 'audio', id: message.audio?.id, mimeType: message.audio?.mime_type }
+      } else if (message.type === 'image') {
+        mediaMeta = { type: 'image', id: message.image?.id, mimeType: message.image?.mime_type }
+      } else if (message.type === 'document') {
+        mediaMeta = { type: 'document', id: message.document?.id, mimeType: message.document?.mime_type, filename: message.document?.filename }
+      } else {
+        continue
+      }
+
+      if (!text && !mediaMeta) continue
 
       if (processingMessages.has(message.id)) continue
       processingMessages.add(message.id)
@@ -92,13 +176,80 @@ app.post('/webhook', async (req, res) => {
       try {
         const senderPhone = extractPhoneNumber(message.from)
         const senderName = changes.value.contacts?.[0]?.profile?.name || 'Rene'
+        const user = await db.findUserByPhone(senderPhone) || await db.findUserByName(senderName)
+
+        if (mediaMeta) {
+          console.log(`Media from ${senderName} (${senderPhone}): ${mediaMeta.type} ${mediaMeta.id}`)
+          await markAsRead(message.id)
+          await react(senderPhone, message.id, '⏳')
+
+          const dl = await downloadMedia(mediaMeta.id)
+          if (!dl) {
+            await assuredSend(senderPhone, 'No pude descargar ese archivo. Intentá de nuevo.', 'media:download_fail')
+            await react(senderPhone, message.id, '❌')
+            continue
+          }
+
+          if (mediaMeta.type === 'audio') {
+            const transcribed = await media.transcribeAudio(dl.buffer, dl.mimeType || mediaMeta.mimeType)
+            if (transcribed) {
+              text = transcribed
+              console.log(`Audio transcribed: "${text}"`)
+            }
+          } else if (mediaMeta.type === 'image' || mediaMeta.type === 'document') {
+            const analysis = await media.analyzeImage(dl.buffer, dl.mimeType || mediaMeta.mimeType)
+            if (analysis?.type === 'expense' && analysis.monto) {
+              await db.saveMessage({
+                waMessageId: message.id,
+                fromNumber: senderPhone,
+                fromName: senderName,
+                userId: user?.id || null,
+                body: `[${mediaMeta.type}] ${analysis.textoExtraido || analysis.descripcion}`,
+                tipo: 'media',
+                procesado: true,
+                fechaMensaje: new Date(),
+              })
+              const parsed = parseMessageFromMedia(analysis, senderName, senderPhone, message.id)
+              await registerAndConfirm(parsed, senderPhone, message.id, senderName, user)
+              continue
+            } else if (analysis?.type === 'no_financiero') {
+              await db.saveMessage({
+                waMessageId: message.id,
+                fromNumber: senderPhone,
+                fromName: senderName,
+                userId: user?.id || null,
+                body: `[${mediaMeta.type}] imagen no financiera`,
+                tipo: 'media',
+                procesado: false,
+                fechaMensaje: new Date(),
+              })
+              await assuredSend(senderPhone, 'Esa imagen no parece ser un ticket o documento financiero. Mandame un ticket, factura o comprobante y lo registro.', 'media:no_financiero')
+              await react(senderPhone, message.id, '❓')
+              continue
+            }
+          }
+
+          if (!text) {
+            await db.saveMessage({
+              waMessageId: message.id,
+              fromNumber: senderPhone,
+              fromName: senderName,
+              userId: user?.id || null,
+              body: `[${mediaMeta.type}] sin texto extraible`,
+              tipo: 'media',
+              procesado: false,
+              error: 'no se pudo extraer texto del media',
+              fechaMensaje: new Date(),
+            })
+            await assuredSend(senderPhone, 'No pude extraer informacion de ese archivo. Intentá enviar un mensaje de texto o un audio mas claro.', 'media:no_text')
+            await react(senderPhone, message.id, '❌')
+            continue
+          }
+        }
 
         console.log(`Message from ${senderName} (${senderPhone}): ${text}`)
 
         await markAsRead(message.id)
-
-        let user = await db.findUserByPhone(senderPhone)
-        if (!user) user = await db.findUserByName(senderName)
 
         const existsInDb = await db.messageExists(message.id)
         const existsInSheets = SHEETS_ENABLED ? await sheetsMessageExists(message.id) : false
