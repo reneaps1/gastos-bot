@@ -2,20 +2,25 @@ process.env.TZ = 'America/Mexico_City'
 require('dotenv').config()
 
 // Render no preserva node_modules/.prisma entre build y runtime.
-// DATABASE_URL debe existir para que prisma.config.ts cargue, aunque generate no conecta a la DB.
-process.env.DATABASE_URL = process.env.DATABASE_URL || 'postgresql://x:x@localhost:0/x'
+// Prisma 7 necesita DATABASE_URL para generate (prisma.config.ts), aunque no conecta a la DB.
 const { execSync } = require('child_process')
+const realDbUrl = process.env.DATABASE_URL
+process.env.DATABASE_URL = realDbUrl || 'postgresql://x:x@localhost:0/x'
 try {
   execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
 } catch (e) {
   console.error('prisma generate failed:', e.message)
   process.exit(1)
 }
-try {
-  execSync('node_modules/.bin/prisma migrate deploy', { stdio: 'inherit' })
-} catch (e) {
-  console.error('prisma migrate deploy failed:', e.message)
-  process.exit(1)
+process.env.DATABASE_URL = realDbUrl
+if (realDbUrl) {
+  try {
+    execSync('node_modules/.bin/prisma migrate deploy', { stdio: 'inherit' })
+  } catch (e) {
+    console.error('prisma migrate deploy failed:', e.message)
+  }
+} else {
+  console.warn('DATABASE_URL not set — skipping prisma migrate deploy')
 }
 
 const express = require('express')
