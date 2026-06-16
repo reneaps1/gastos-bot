@@ -1,11 +1,34 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
+const GEMINI_MODEL_MEDIA = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
 
 function getModel() {
   if (!GEMINI_API_KEY) return null
   const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
-  return genAI.getGenerativeModel({ model: 'gemini-2.5-flash' })
+  return genAI.getGenerativeModel({ model: GEMINI_MODEL_MEDIA })
+}
+
+async function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+async function generateWithRetry(model, contents, maxRetries = 2) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await model.generateContent(contents)
+    } catch (e) {
+      const msg = e.message || ''
+      const isOverloaded = msg.includes('503') || msg.includes('overloaded') || msg.includes('high demand') || msg.includes('Unavailable')
+      if (isOverloaded && attempt < maxRetries) {
+        const delay = (attempt + 1) * 3000
+        console.log(`MEDIA_RETRY attempt=${attempt + 1} delay=${delay}ms`)
+        await sleep(delay)
+        continue
+      }
+      throw e
+    }
+  }
 }
 
 async function transcribeAudio(audioBuffer, mimeType) {
@@ -13,7 +36,7 @@ async function transcribeAudio(audioBuffer, mimeType) {
   if (!m) return null
   try {
     const base64 = audioBuffer.toString('base64')
-    const result = await m.generateContent([
+    const result = await generateWithRetry(m, [
       { inlineData: { mimeType: mimeType || 'audio/ogg', data: base64 } },
       { text: 'Transcribe este audio a texto en espanol. Responde solo con el texto transcrito, sin explicaciones ni markdown.' },
     ])
@@ -31,7 +54,7 @@ async function analyzeImage(imageBuffer, mimeType) {
   if (!m) return null
   try {
     const base64 = imageBuffer.toString('base64')
-    const result = await m.generateContent([
+    const result = await generateWithRetry(m, [
       { inlineData: { mimeType: mimeType || 'image/jpeg', data: base64 } },
       { text: `Analiza esta imagen en el contexto de finanzas personales familiares en Mexico.
 
