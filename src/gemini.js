@@ -71,6 +71,7 @@ async function getSystemContext(prisma) {
       for (const q of quincenas) {
         if (hoy >= q.fechaInicio.toISOString().slice(0, 10) && hoy <= q.fechaFin.toISOString().slice(0, 10)) {
           quincenaId = q.id
+          quincenaActiva = q
           break
         }
       }
