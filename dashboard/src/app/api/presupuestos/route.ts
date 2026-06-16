@@ -18,18 +18,35 @@ export async function GET(request: Request) {
       orderBy: [{ quincena: { fechaInicio: 'desc' } }, { categoria: { nombre: 'asc' } }],
     })
 
-    const presupuestosConGasto = await Promise.all(
-      presupuestos.map(async (p) => {
-        const gastado = await prisma.transaccion.aggregate({
-          where: { presupuestoId: p.id },
+    // Total presupuestado por grupo (quincenaId, categoriaId), para el rollup de categoría en la UI
+    const groupTotals = new Map<string, number>()
+    for (const p of presupuestos) {
+      const key = `${p.quincenaId}-${p.categoriaId}`
+      groupTotals.set(key, (groupTotals.get(key) ?? 0) + Number(p.montoPresupuestado))
+    }
+
+    // Gasto real por línea específica (presupuestoId) — una sola query agrupada en vez de N aggregates
+    const presupuestoIds = presupuestos.map(p => p.id)
+    const gastosRows = presupuestoIds.length > 0
+      ? await prisma.transaccion.groupBy({
+          by: ['presupuestoId'],
+          where: { presupuestoId: { in: presupuestoIds } },
           _sum: { monto: true },
         })
-        const real = Number(gastado._sum.monto ?? 0)
-        const presup = Number(p.montoPresupuestado)
-        const pct = presup > 0 ? Math.min((real / presup) * 100, 100) : 0
-        return { ...p, real, pct }
-      })
+      : []
+
+    const gastoMap = new Map<number, number>(
+      gastosRows.map(g => [g.presupuestoId as number, Number(g._sum.monto ?? 0)])
     )
+
+    const presupuestosConGasto = presupuestos.map(p => {
+      const real = gastoMap.get(p.id) ?? 0
+      const presup = Number(p.montoPresupuestado)
+      const pct = presup > 0 ? Math.min((real / presup) * 100, 100) : 0
+      const key = `${p.quincenaId}-${p.categoriaId}`
+      const categoriaTotal = groupTotals.get(key) ?? presup
+      return { ...p, real, pct, categoriaTotal }
+    })
 
     return NextResponse.json(presupuestosConGasto)
   } catch (error) {
