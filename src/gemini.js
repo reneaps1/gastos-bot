@@ -53,27 +53,26 @@ async function getSystemContext(prisma) {
     return cachedContext
   }
   try {
-    const [lastTxs, categoriasDb, quincenas] = await Promise.all([
+    const [lastTxs, categoriasDb, allQuincenas] = await Promise.all([
       prisma.transaccion.findMany({
         orderBy: { fecha: 'desc' },
         take: 15,
         include: { categoria: true, user: true, metodoPago: true, quincena: true },
       }),
       prisma.categoria.findMany({ where: { activo: true }, orderBy: { nombre: 'asc' } }),
-      prisma.quincena.findMany({ orderBy: { fechaInicio: 'desc' }, take: 5 }),
+      prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } }),
     ])
 
-    const quincenaActiva = quincenas[0] || null
+    const today = new Date()
+    const hoy = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+    let quincenaActiva = null
     let quincenaId = null
-    if (quincenaActiva) {
-      const today = new Date()
-      const hoy = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
-      for (const q of quincenas) {
-        if (hoy >= q.fechaInicio.toISOString().slice(0, 10) && hoy <= q.fechaFin.toISOString().slice(0, 10)) {
-          quincenaId = q.id
-          quincenaActiva = q
-          break
-        }
+    for (const q of allQuincenas) {
+      if (hoy >= q.fechaInicio.toISOString().slice(0, 10) && hoy <= q.fechaFin.toISOString().slice(0, 10)) {
+        quincenaActiva = q
+        quincenaId = q.id
+        break
       }
     }
 
