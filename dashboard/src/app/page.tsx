@@ -174,11 +174,11 @@ export default function DashboardPage() {
   const pctExcedidoBarClamped = Math.min(pctExcedidoBar, Math.max(0, 100 - pctPresupAsignado - pctSinPresupuestoBar))
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">
             {qActual ? qActual.codigo : 'Sin quincena activa'}
           </h1>
           {qActual && (
@@ -189,25 +189,39 @@ export default function DashboardPage() {
             </p>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${sem.bg}`}>
-            <div className={`w-2.5 h-2.5 rounded-full ${sem.color}`} />
-            <span className={`text-sm font-semibold ${sem.text}`}>{sem.label}</span>
-          </div>
-          <select
-            value={quincenaId}
-            onChange={e => selectQuincena(e.target.value)}
-            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer shadow-sm dark:shadow-none"
-          >
-            {quincenas.map(q => {
-              const ini = q.fechaInicio.split('T')[0]
-              const fin = q.fechaFin.split('T')[0]
-              const isActive = today >= ini && today <= fin
-              return <option key={q.id} value={q.id}>{isActive ? '● ' : ''}{q.codigo}{isActive ? ' · En curso' : ''}</option>
-            })}
-          </select>
+        <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${sem.bg}`}>
+          <div className={`w-2.5 h-2.5 rounded-full ${sem.color}`} />
+          <span className={`text-sm font-semibold ${sem.text}`}>{sem.label}</span>
         </div>
       </div>
+
+      {/* Selector de quincena */}
+      {quincenas.length > 0 && (
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
+          {quincenas.slice(0, 8).map(q => {
+            const ini = q.fechaInicio.split('T')[0]
+            const fin = q.fechaFin.split('T')[0]
+            const isRunning = today >= ini && today <= fin
+            const isSelected = quincenaId === q.id.toString()
+            return (
+              <button
+                key={q.id}
+                onClick={() => selectQuincena(q.id.toString())}
+                className={`flex-none px-3 py-1.5 rounded-full text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+                  isSelected
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : isRunning
+                    ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
+                    : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400'
+                }`}
+              >
+                {q.codigo}
+                {isRunning && !isSelected && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 align-middle mb-0.5" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
@@ -362,7 +376,7 @@ export default function DashboardPage() {
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
               <div>
-                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Gastos vs presupuesto</h3>
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Gastos vs presupuesto</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                   Partidas de presupuesto de esta quincena
                 </p>
@@ -450,7 +464,7 @@ export default function DashboardPage() {
                   <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50 flex items-center justify-center">
                     <Zap size={16} className="text-amber-600 dark:text-amber-300" />
                   </div>
-                  <h3 className="font-semibold text-slate-700 dark:text-slate-200">Recurrentes</h3>
+                  <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Recurrentes</h3>
                 </div>
                 <Link href="/configuracion/entradas-rapidas" className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
                   Ver todas <ChevronRight size={12} />
@@ -588,7 +602,7 @@ export default function DashboardPage() {
           {snapshot && (
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="font-semibold text-slate-700 dark:text-slate-200">Liquidez</h3>
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Liquidez</h3>
                 <span className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
