@@ -30,6 +30,7 @@ const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react } = require('
 const { handleQuestion, detectIntent, getData } = require('./analytics')
 const gemini = require('./gemini')
 const db = require('./database')
+const prisma = require('./lib/prisma')
 
 const app = express()
 app.use(express.json())
@@ -138,10 +139,11 @@ app.post('/webhook', async (req, res) => {
         let geminiData = null
         if (gemini.isEnabled()) {
           try {
-            geminiData = await gemini.classify(text)
+            const sysCtx = await gemini.getSystemContext(prisma)
+            geminiData = await gemini.classify(text, sysCtx)
 
             if (geminiData?.type === 'chat') {
-              const chatReply = await gemini.chat(text, senderName)
+              const chatReply = await gemini.chat(text, senderName, sysCtx)
               if (chatReply) {
                 await assuredSend(senderPhone, chatReply, 'gemini:chat')
                 await react(senderPhone, message.id, '✅')
@@ -162,7 +164,7 @@ app.post('/webhook', async (req, res) => {
 
             if (geminiData?.type === 'question') {
               const data = await getData()
-              const geminiAnswer = await gemini.answer(text, data, senderName)
+              const geminiAnswer = await gemini.answer(text, data, senderName, sysCtx)
               if (geminiAnswer) {
                 await assuredSend(senderPhone, geminiAnswer, 'gemini:question')
                 await react(senderPhone, message.id, '✅')
@@ -322,6 +324,7 @@ app.get('/health', (req, res) => {
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, () => {
+  console.log('GEMINI_ENABLED:', gemini.isEnabled(), 'GEMINI_MODEL:', process.env.GEMINI_MODEL || 'gemini-2.0-flash')
   console.log(`Bot de Gastos running on port ${PORT}`)
   console.log(`Webhook URL: http://localhost:${PORT}/webhook`)
 })
