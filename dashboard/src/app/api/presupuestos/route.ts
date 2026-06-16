@@ -18,18 +18,36 @@ export async function GET(request: Request) {
       orderBy: [{ quincena: { fechaInicio: 'desc' } }, { categoria: { nombre: 'asc' } }],
     })
 
-    const presupuestosConGasto = await Promise.all(
-      presupuestos.map(async (p) => {
-        const gastado = await prisma.transaccion.aggregate({
-          where: { quincenaId: p.quincenaId, categoriaId: p.categoriaId },
+    // Sum budgets per (quincenaId, categoriaId) group so pct is calculated against the full group total
+    const groupTotals = new Map<string, number>()
+    for (const p of presupuestos) {
+      const key = `${p.quincenaId}-${p.categoriaId}`
+      groupTotals.set(key, (groupTotals.get(key) ?? 0) + Number(p.montoPresupuestado))
+    }
+
+    // Batch spending query — one groupBy instead of N individual aggregates
+    const quincenaIds = [...new Set(presupuestos.map(p => p.quincenaId))]
+    const categoriaIds = [...new Set(presupuestos.map(p => p.categoriaId))]
+
+    const gastosRows = quincenaIds.length > 0 && categoriaIds.length > 0
+      ? await prisma.transaccion.groupBy({
+          by: ['quincenaId', 'categoriaId'],
+          where: { quincenaId: { in: quincenaIds }, categoriaId: { in: categoriaIds } },
           _sum: { monto: true },
         })
-        const real = Number(gastado._sum.monto ?? 0)
-        const presup = Number(p.montoPresupuestado)
-        const pct = presup > 0 ? Math.min((real / presup) * 100, 100) : 0
-        return { ...p, real, pct }
-      })
+      : []
+
+    const gastoMap = new Map<string, number>(
+      gastosRows.map(g => [`${g.quincenaId}-${g.categoriaId}`, Number(g._sum.monto ?? 0)])
     )
+
+    const presupuestosConGasto = presupuestos.map(p => {
+      const key = `${p.quincenaId}-${p.categoriaId}`
+      const real = gastoMap.get(key) ?? 0
+      const categoriaTotal = groupTotals.get(key) ?? Number(p.montoPresupuestado)
+      const pct = categoriaTotal > 0 ? Math.min((real / categoriaTotal) * 100, 100) : 0
+      return { ...p, real, pct, categoriaTotal }
+    })
 
     return NextResponse.json(presupuestosConGasto)
   } catch (error) {

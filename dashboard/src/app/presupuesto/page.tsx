@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown, CalendarClock, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -21,7 +21,31 @@ interface Presupuesto {
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
   numOcurrencias: number | null; diaCobro: number | null; fechaVencimiento: string | null
-  categoria: Categoria; quincena: Quincena; real: number; pct: number
+  categoria: Categoria; quincena: Quincena; real: number; pct: number; categoriaTotal: number
+}
+
+function groupKey(p: Pick<Presupuesto, 'quincenaId' | 'categoriaId'>) {
+  return `${p.quincenaId}-${p.categoriaId}`
+}
+
+interface PresupuestoGrupo {
+  key: string; categoriaId: number; categoria: Categoria
+  quincenaId: number; quincena: Quincena
+  montoPresupuestado: number; real: number; pct: number; items: Presupuesto[]
+}
+
+function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
+  const map = new Map<string, PresupuestoGrupo>()
+  for (const p of presupuestos) {
+    const k = groupKey(p)
+    if (!map.has(k)) {
+      map.set(k, { key: k, categoriaId: p.categoriaId, categoria: p.categoria,
+        quincenaId: p.quincenaId, quincena: p.quincena,
+        montoPresupuestado: p.categoriaTotal, real: p.real, pct: p.pct, items: [] })
+    }
+    map.get(k)!.items.push(p)
+  }
+  return Array.from(map.values())
 }
 interface EntradaRapida {
   id: number; descripcion: string; monto: number; tipo: string | null
@@ -72,6 +96,7 @@ export default function PresupuestoPage() {
 
   const [entradasRapidas, setEntradasRapidas] = useState<EntradaRapida[]>([])
   const [gastosSinPresupuesto, setGastosSinPresupuesto] = useState<GastoSinPresupuesto[]>([])
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingP, setEditingP] = useState<Presupuesto | null>(null)
@@ -249,8 +274,19 @@ export default function PresupuestoPage() {
     } catch { toast('Error al copiar presupuestos', 'error') } finally { setCopying(false) }
   }
 
-  const totalPresupuestado = presupuestos.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
-  const totalGastado = presupuestos.reduce((s, p) => s + p.real, 0)
+  function toggleGroup(key: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  const grupos = buildGrupos(presupuestos)
+
+  // Totals deduplicated by (quincena, categoria) — no double-counting
+  const totalPresupuestado = grupos.reduce((s, g) => s + g.montoPresupuestado, 0)
+  const totalGastado = grupos.reduce((s, g) => s + g.real, 0)
   const pctGlobal = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0
 
   const entradasPorCategoria = entradasRapidas.reduce((acc, e) => {
@@ -308,7 +344,7 @@ export default function PresupuestoPage() {
       <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
       {/* Summary cards */}
-      {presupuestos.length > 0 && (
+      {grupos.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Progreso global</p>
@@ -347,10 +383,10 @@ export default function PresupuestoPage() {
         </div>
       )}
 
-      {/* Per-category */}
+      {/* Per-category groups */}
       {loading ? (
         <PresupuestoSkeleton />
-      ) : presupuestos.length === 0 ? (
+      ) : grupos.length === 0 ? (
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
           <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
             <Copy size={28} className="text-slate-300 dark:text-slate-600" />
@@ -360,76 +396,154 @@ export default function PresupuestoPage() {
         </div>
       ) : (
         <div className="grid gap-3">
-          {presupuestos.map(p => {
-            const recurrence = entradasPorCategoria[p.categoriaId]
+          {grupos.map(grupo => {
+            const recurrence = entradasPorCategoria[grupo.categoriaId]
+            const isMulti = grupo.items.length > 1
+            const expanded = expandedGroups.has(grupo.key)
+            const singleItem = grupo.items[0]
+
             return (
-              <div key={p.id} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 hover:border-indigo-200 dark:hover:border-indigo-700 hover:shadow-sm transition-all">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
-                        {p.recurrente && (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full shrink-0">
-                            <Repeat size={9} />
-                            {p.frecuencia === 'MENSUAL'
-                              ? p.diaCobro ? `mensual · día ${p.diaCobro}` : 'mensual'
-                              : 'quincenal'}
-                          </span>
-                        )}
-                        {recurrence && (
-                          <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 rounded-full shrink-0">
-                            <Zap size={10} /> entrada rápida
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <p className="text-xs text-slate-400 dark:text-slate-500">
-                          {p.categoria.nombre}{p.clasificacion && ` · ${p.clasificacion}`}
-                        </p>
-                        {p.fechaVencimiento && (() => {
-                          const d = new Date(`${p.fechaVencimiento.split('T')[0]}T00:00:00`)
-                          const dia = d.getDate()
-                          const esQ1 = dia <= 15
-                          return (
-                            <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
-                              <CalendarClock size={10} />
-                              vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
+              <div key={grupo.key} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-indigo-200 dark:hover:border-indigo-700 hover:shadow-sm transition-all">
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {isMulti && (
+                        <button onClick={() => toggleGroup(grupo.key)}
+                          className="text-slate-400 dark:text-slate-500 hover:text-indigo-500 transition-colors cursor-pointer shrink-0">
+                          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        </button>
+                      )}
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[grupo.categoria.nombre] ?? 'bg-slate-400'}`} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">
+                            {isMulti ? grupo.categoria.nombre : singleItem.descripcion}
+                          </p>
+                          {!isMulti && singleItem.recurrente && (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full shrink-0">
+                              <Repeat size={9} />
+                              {singleItem.frecuencia === 'MENSUAL'
+                                ? singleItem.diaCobro ? `mensual · día ${singleItem.diaCobro}` : 'mensual'
+                                : 'quincenal'}
                             </span>
-                          )
-                        })()}
+                          )}
+                          {recurrence && (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 rounded-full shrink-0">
+                              <Zap size={10} /> entrada rápida
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-xs text-slate-400 dark:text-slate-500">
+                            {isMulti
+                              ? `${grupo.items.length} conceptos`
+                              : `${grupo.categoria.nombre}${singleItem.clasificacion ? ` · ${singleItem.clasificacion}` : ''}`}
+                          </p>
+                          {!isMulti && singleItem.fechaVencimiento && (() => {
+                            const d = new Date(`${singleItem.fechaVencimiento.split('T')[0]}T00:00:00`)
+                            const esQ1 = d.getDate() <= 15
+                            return (
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
+                                <CalendarClock size={10} />
+                                vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
+                              </span>
+                            )
+                          })()}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="text-right">
-                      <p className="font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">de {formatMXN(Number(p.montoPresupuestado))}</p>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        <p className="font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(grupo.real)}</p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500">de {formatMXN(grupo.montoPresupuestado)}</p>
+                      </div>
+                      {!isMulti && (
+                        <>
+                          <button onClick={() => openEdit(singleItem)}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => setDeleteTarget({ id: singleItem.id, p: singleItem })}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
                     </div>
-                    <button onClick={() => openEdit(p)}
-                      className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
-                      <Pencil size={14} />
-                    </button>
-                    <button onClick={() => setDeleteTarget({ id: p.id, p })}
-                      className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
-                      <Trash2 size={14} />
-                    </button>
                   </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-2">
+                      <div className={`h-2 rounded-full transition-all ${pctColor(grupo.pct)}`} style={{ width: `${Math.min(grupo.pct, 100)}%` }} />
+                    </div>
+                    <span className={`text-xs font-semibold w-10 text-right tabular-nums ${pctTextColor(grupo.pct)}`}>
+                      {grupo.pct.toFixed(0)}%
+                    </span>
+                  </div>
+                  {recurrence && (
+                    <div className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                      <Repeat size={11} className="text-amber-500" />
+                      {recurrence.count} {recurrence.count === 1 ? 'concepto' : 'conceptos'} recurrente{recurrence.count > 1 ? 's' : ''} · {formatMXN(recurrence.total)}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-2">
-                    <div className={`h-2 rounded-full transition-all ${pctColor(p.pct)}`} style={{ width: `${Math.min(p.pct, 100)}%` }} />
+
+                {/* Sub-items for multi-category groups */}
+                {isMulti && expanded && (
+                  <div className="border-t border-slate-100 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
+                    {grupo.items.map(item => (
+                      <div key={item.id} className="px-4 py-2.5 flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="w-1 h-4 rounded-full bg-slate-200 dark:bg-slate-600 shrink-0" />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <p className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{item.descripcion}</p>
+                              {item.recurrente && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-1 py-0.5 rounded-full shrink-0">
+                                  <Repeat size={8} />
+                                  {item.frecuencia === 'MENSUAL' ? (item.diaCobro ? `día ${item.diaCobro}` : 'mensual') : 'quincenal'}
+                                </span>
+                              )}
+                            </div>
+                            {item.fechaVencimiento && (() => {
+                              const d = new Date(`${item.fechaVencimiento.split('T')[0]}T00:00:00`)
+                              const esQ1 = d.getDate() <= 15
+                              return (
+                                <span className={`text-[10px] flex items-center gap-0.5 mt-0.5 font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
+                                  <CalendarClock size={9} />
+                                  vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}
+                                </span>
+                              )
+                            })()}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 tabular-nums">
+                            {formatMXN(Number(item.montoPresupuestado))}
+                          </span>
+                          <button onClick={() => openEdit(item)}
+                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                            <Pencil size={13} />
+                          </button>
+                          <button onClick={() => setDeleteTarget({ id: item.id, p: item })}
+                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="px-4 py-2 flex items-center justify-between bg-slate-50 dark:bg-slate-700/40 rounded-b-xl">
+                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total {grupo.categoria.nombre}</span>
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 tabular-nums">{formatMXN(grupo.montoPresupuestado)}</span>
+                    </div>
                   </div>
-                  <span className={`text-xs font-semibold w-10 text-right tabular-nums ${pctTextColor(p.pct)}`}>
-                    {p.pct.toFixed(0)}%
-                  </span>
-                </div>
-                {recurrence && (
-                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                    <Repeat size={11} className="text-amber-500" />
-                    {recurrence.count} {recurrence.count === 1 ? 'concepto' : 'conceptos'} recurrente{recurrence.count > 1 ? 's' : ''} · {formatMXN(recurrence.total)}
-                  </div>
+                )}
+
+                {/* Collapsed hint for multi groups */}
+                {isMulti && !expanded && (
+                  <button onClick={() => toggleGroup(grupo.key)}
+                    className="w-full px-4 py-1.5 text-xs text-slate-400 dark:text-slate-500 hover:text-indigo-500 dark:hover:text-indigo-400 text-left border-t border-slate-100 dark:border-slate-700 transition-colors cursor-pointer rounded-b-xl">
+                    Ver {grupo.items.length} conceptos: {grupo.items.map(i => i.descripcion).join(', ')}
+                  </button>
                 )}
               </div>
             )
