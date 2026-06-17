@@ -82,7 +82,7 @@ export default function DashboardPage() {
     setOpenPopoverId(null)
     try {
       const res = await fetch(`/api/transacciones/${txId}`, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ presupuestoId }),
       })
@@ -114,7 +114,7 @@ export default function DashboardPage() {
       if (!presupRes.ok) return
       const newPresup = await presupRes.json()
       const txRes = await fetch(`/api/transacciones/${txId}`, {
-        method: 'PATCH',
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ presupuestoId: newPresup.id }),
       })
