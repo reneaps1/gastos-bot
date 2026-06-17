@@ -285,8 +285,8 @@ export default function PresupuestoPage() {
 
   const grupos = buildGrupos(presupuestos)
 
-  // Totals deduplicated by (quincena, categoria) — only Gasto lines (Ingreso/Ahorro excluded from spending progress)
-  const gastoGrupos = grupos.filter(g => g.items[0]?.tipo === 'Gasto')
+  // Totals: only categories of tipo Gasto — excludes Ingresos/Ahorro categories from spending progress
+  const gastoGrupos = grupos.filter(g => g.categoria.tipo === 'Gasto')
   const totalPresupuestado = gastoGrupos.reduce((s, g) => s + g.montoPresupuestado, 0)
   const totalGastado = gastoGrupos.reduce((s, g) => s + g.real, 0)
   const pctGlobal = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0

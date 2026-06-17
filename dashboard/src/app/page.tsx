@@ -167,7 +167,7 @@ export default function DashboardPage() {
       const gastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
       const ahorros = txs.filter(t => t.tipo === 'Ahorro').reduce((s, t) => s + Number(t.monto), 0)
       const gastosPagados = txs.filter(t => t.tipo === 'Gasto' && t.estatus === 'Pagado').reduce((s, t) => s + Number(t.monto), 0)
-      const presupTotal = presupData.filter((p: { tipo: string }) => p.tipo === 'Gasto').reduce((s: number, p: { montoPresupuestado: number }) => s + Number(p.montoPresupuestado), 0)
+      const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
 
       const gastosCat = txs.filter(t => t.tipo === 'Gasto').reduce((acc, t) => {
         acc[t.categoria.nombre] = (acc[t.categoria.nombre] ?? 0) + Number(t.monto)
