@@ -178,7 +178,7 @@ export default function DashboardPage() {
         .sort((a, b) => b.monto - a.monto)
 
       const presupCat = presupData
-        .filter(p => p.tipo === 'Gasto' || p.categoria.tipo === 'Gasto')
+        .filter(p => p.categoria.tipo === 'Gasto')
         .reduce((acc, p) => {
           const nombre = p.categoria.nombre
           acc[nombre] = (acc[nombre] ?? 0) + Number(p.montoPresupuestado)
@@ -202,7 +202,7 @@ export default function DashboardPage() {
         .reduce((s, t) => s + Number(t.monto), 0)
 
       const totalExcedido = presupData
-        .filter(p => p.tipo === 'Gasto')
+        .filter(p => p.categoria.tipo === 'Gasto')
         .reduce((s, p) => s + Math.max(0, p.real - Number(p.montoPresupuestado)), 0)
 
       setTransacciones(txs.slice(0, 8))
@@ -212,7 +212,7 @@ export default function DashboardPage() {
       setExpandedBudgetIds(new Set())
       setGastosPorCategoria(gastosCatArr)
       setPresupuestoPorCategoria(presupuestoCatArr)
-      setPresupuestosDisplay([...presupData].filter(p => p.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
+      setPresupuestosDisplay([...presupData].filter(p => p.categoria.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
       setSnapshot(liqData.length > 0 ? liqData[0] : null)
       setTendencia(Array.isArray(tendData) ? tendData : [])
       setMetricas({
