@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
 import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronDown, Plus, Loader2, Check } from 'lucide-react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
@@ -25,6 +26,10 @@ interface Presupuesto {
 }
 interface PresupuestoCategoria {
   nombre: string; presupuestado: number; gastado: number; restante: number; pct: number
+}
+interface TendenciaPoint {
+  quincenaId: number; codigo: string; fechaInicio: string
+  ingresos: number; gastos: number; esCurrent: boolean
 }
 
 const CAT_DOT: Record<string, string> = {
@@ -63,6 +68,7 @@ export default function DashboardPage() {
   const [crearLineaForm, setCrearLineaForm] = useState({ descripcion: '', categoriaId: '', monto: '' })
   const [creandoLinea, setCreandoLinea] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(new Set())
+  const [tendencia, setTendencia] = useState<TendenciaPoint[]>([])
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -144,14 +150,16 @@ export default function DashboardPage() {
     if (!quincenaId) { setLoading(false); return }
     setLoading(true)
     try {
-      const [txRes, presupRes, liqRes] = await Promise.all([
+      const [txRes, presupRes, liqRes, tendRes] = await Promise.all([
         fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=200`),
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
         fetch(`/api/liquidez?quincenaId=${quincenaId}`),
+        fetch(`/api/tendencia?quincenaId=${quincenaId}&range=3`),
       ])
       const txJson = await txRes.json()
       const presupData: Presupuesto[] = await presupRes.json()
       const liqData: Snapshot[] = await liqRes.json()
+      const tendData = await tendRes.json()
 
       const txs: Transaccion[] = txJson.data ?? []
 
@@ -206,6 +214,7 @@ export default function DashboardPage() {
       setPresupuestoPorCategoria(presupuestoCatArr)
       setPresupuestosDisplay([...presupData].filter(p => p.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
       setSnapshot(liqData.length > 0 ? liqData[0] : null)
+      setTendencia(Array.isArray(tendData) ? tendData : [])
       setMetricas({
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
         presupTotal, pendientePorPagar: gastos - gastosPagados,
@@ -820,6 +829,49 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
+
+          {/* Tendencia quincenal */}
+          {tendencia.length > 1 && (() => {
+            const current = tendencia.find(t => t.esCurrent)
+            return (
+              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4">Tendencia quincenal</h3>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={tendencia} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="codigo"
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      width={44}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip
+                      formatter={(value: number) => [formatMXN(value)]}
+                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                    />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                    {current && (
+                      <ReferenceLine
+                        x={current.codigo}
+                        stroke="#6366f1"
+                        strokeDasharray="4 2"
+                        label={{ value: 'actual', fontSize: 10, fill: '#6366f1', position: 'insideTopLeft' }}
+                      />
+                    )}
+                    <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
+                    <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )
+          })()}
 
         </>
       )}
