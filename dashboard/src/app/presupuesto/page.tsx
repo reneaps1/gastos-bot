@@ -456,12 +456,6 @@ export default function PresupuestoPage() {
                       +{formatMXN(grupo.excedido)} excedido
                     </p>
                   )}
-                  {recurrence && (
-                    <div className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                      <Repeat size={11} className="text-amber-500" />
-                      {recurrence.count} {recurrence.count === 1 ? 'concepto' : 'conceptos'} recurrente{recurrence.count > 1 ? 's' : ''} · {formatMXN(recurrence.total)}
-                    </div>
-                  )}
                 </div>
 
                 {/* Sub-items for multi-category groups */}
