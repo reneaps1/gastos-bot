@@ -64,7 +64,6 @@ model Categoria {
   activo        Boolean             @default(true)
 
   transacciones Transaccion[]
-  entradas      EntradaRapida[]
   presupuestos  Presupuesto[]
   creditoPagos  CreditoPago[]
 
@@ -88,7 +87,6 @@ model Quincena {
 
   transacciones        Transaccion[]      @relation("TransaccionImpacto")
   transaccionesConsumo Transaccion[]      @relation("TransaccionConsumo")
-  entradas             EntradaRapida[]
   presupuestos         Presupuesto[]
   liquidezSnapshots    LiquidezSnapshot[]
   creditoPagos         CreditoPago[]
@@ -134,7 +132,6 @@ model Transaccion {
   credito         Credito?    @relation(fields: [creditoId], references: [id])
   presupuesto     Presupuesto? @relation(fields: [presupuestoId], references: [id], onDelete: SetNull)
 
-  entradas     EntradaRapida[]
   whatsappMsgs WhatsappMessage[]
   creditoPagos CreditoPago[]
 
@@ -146,26 +143,6 @@ model Transaccion {
   @@index([creditoId], name: "idx_tx_credito")
   @@index([presupuestoId], name: "idx_tx_presupuesto")
   @@map("transacciones")
-}
-
-model EntradaRapida {
-  id            Int             @id @default(autoincrement())
-  fecha         DateTime        @db.Date
-  descripcion   String          @db.VarChar(200)
-  monto         Decimal         @db.Decimal(12, 2)
-  categoriaId   Int?            @map("categoria_id")
-  tipo          TipoMovimiento?
-  quincenaId    Int?            @map("quincena_id")
-  notas         String?
-  procesado     Boolean         @default(false)
-  transaccionId Int?            @map("transaccion_id")
-  fechaRegistro DateTime        @default(now()) @map("fecha_registro") @db.Timestamptz()
-
-  categoria   Categoria?   @relation(fields: [categoriaId], references: [id])
-  quincena    Quincena?    @relation(fields: [quincenaId], references: [id])
-  transaccion Transaccion? @relation(fields: [transaccionId], references: [id])
-
-  @@map("entrada_rapida")
 }
 
 model Presupuesto {

@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, Clock, ArrowRight, Zap, ChevronRight } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, Clock, ArrowRight, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
@@ -17,10 +17,6 @@ interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
   efectivo: number; valesDespensa: number; valesGasolina: number; faltaPagar: number
   teorico: number | null; quincena: Quincena
-}
-interface EntradaRapida {
-  id: number; descripcion: string; monto: number; tipo: string | null
-  categoria: { nombre: string } | null; procesado: boolean
 }
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; tipo: string
@@ -50,16 +46,13 @@ export default function DashboardPage() {
   const [quincenaId, setQuincenaId] = useState<string>('')
   const [loading, setLoading] = useState(true)
   const [transacciones, setTransacciones] = useState<Transaccion[]>([])
-  const [gastosPendientes, setGastosPendientes] = useState<Transaccion[]>([])
   const [gastosPorCategoria, setGastosPorCategoria] = useState<{ nombre: string; monto: number; pct: number }[]>([])
   const [presupuestoPorCategoria, setPresupuestoPorCategoria] = useState<PresupuestoCategoria[]>([])
   const [presupuestosDisplay, setPresupuestosDisplay] = useState<Presupuesto[]>([])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
-  const [entradasPendientes, setEntradasPendientes] = useState<EntradaRapida[]>([])
-  const [actividadTab, setActividadTab] = useState<'pendientes' | 'recientes'>('pendientes')
   const [metricas, setMetricas] = useState({
     ingresos: 0, gastos: 0, ahorros: 0, margen: 0, balanceNeto: 0,
-    presupTotal: 0, pendientePorPagar: 0, totalGastosPendientes: 0, pctPresup: 0,
+    presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
     gastosNoCubiertos: 0, totalExcedido: 0,
   })
 
@@ -79,21 +72,16 @@ export default function DashboardPage() {
     if (!quincenaId) { setLoading(false); return }
     setLoading(true)
     try {
-      const [txRes, pendRes, presupRes, liqRes, entradasRes] = await Promise.all([
+      const [txRes, presupRes, liqRes] = await Promise.all([
         fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=200`),
-        fetch(`/api/transacciones?quincenaId=${quincenaId}&tipo=Gasto&estatus=Pendiente&limit=200`),
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
         fetch(`/api/liquidez?quincenaId=${quincenaId}`),
-        fetch(`/api/entradas-rapidas?quincenaId=${quincenaId}&procesado=false`),
       ])
       const txJson = await txRes.json()
-      const pendJson = await pendRes.json()
       const presupData: Presupuesto[] = await presupRes.json()
       const liqData: Snapshot[] = await liqRes.json()
-      const entradasData: EntradaRapida[] = await entradasRes.json()
 
       const txs: Transaccion[] = txJson.data ?? []
-      const pends: Transaccion[] = pendJson.data ?? []
 
       const ingresos = txs.filter(t => t.tipo === 'Ingreso').reduce((s, t) => s + Number(t.monto), 0)
       const gastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
@@ -138,16 +126,13 @@ export default function DashboardPage() {
         .reduce((s, p) => s + Math.max(0, p.real - Number(p.montoPresupuestado)), 0)
 
       setTransacciones(txs.slice(0, 8))
-      setGastosPendientes(pends)
       setGastosPorCategoria(gastosCatArr)
       setPresupuestoPorCategoria(presupuestoCatArr)
       setPresupuestosDisplay([...presupData].filter(p => p.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
       setSnapshot(liqData.length > 0 ? liqData[0] : null)
-      setEntradasPendientes(entradasData)
       setMetricas({
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
         presupTotal, pendientePorPagar: gastos - gastosPagados,
-        totalGastosPendientes: pends.reduce((s, t) => s + Number(t.monto), 0),
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
         gastosNoCubiertos, totalExcedido,
       })
@@ -464,146 +449,66 @@ export default function DashboardPage() {
             )}
           </div>
 
-          {/* Recurrence + Gastos por categoría */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Conceptos recurrentes pendientes */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50 flex items-center justify-center">
-                    <Zap size={16} className="text-amber-600 dark:text-amber-300" />
-                  </div>
-                  <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Recurrentes</h3>
-                </div>
-                <Link href="/configuracion/entradas-rapidas" className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
-                  Ver todas <ChevronRight size={12} />
-                </Link>
+          {/* Gastos por categoría */}
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <h3 className="font-semibold text-slate-700 dark:text-slate-200 mb-4">Gastos por categoría</h3>
+            {gastosPorCategoria.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 dark:text-slate-500">
+                <p className="text-sm">Sin gastos en esta quincena</p>
               </div>
-              {entradasPendientes.length === 0 ? (
-                <div className="text-center py-6 text-slate-400 dark:text-slate-500">
-                  <p className="text-sm">Sin pendientes</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {entradasPendientes.slice(0, 5).map(e => (
-                    <div key={e.id} className="flex items-center justify-between py-1.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${CAT_DOT[e.categoria?.nombre ?? ''] ?? 'bg-slate-400'}`} />
-                        <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{e.descripcion}</span>
-                      </div>
-                      <span className={`text-sm font-semibold tabular-nums ml-2 ${e.tipo === 'INGRESO' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {e.tipo === 'INGRESO' ? '+' : '-'}{formatMXN(Number(e.monto))}
+            ) : (
+              <div className="space-y-3">
+                {gastosPorCategoria.map(cat => (
+                  <div key={cat.nombre}>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-sm text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`} />
+                        {cat.nombre}
                       </span>
+                      <span className="text-sm font-semibold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(cat.monto)}</span>
                     </div>
-                  ))}
-                  {entradasPendientes.length > 5 && (
-                    <p className="text-xs text-slate-400 dark:text-slate-500 text-center pt-1">+{entradasPendientes.length - 5} más</p>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Gastos por categoría */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 lg:col-span-2">
-              <h3 className="font-semibold text-slate-700 dark:text-slate-200 mb-4">Gastos por categoría</h3>
-              {gastosPorCategoria.length === 0 ? (
-                <div className="text-center py-8 text-slate-400 dark:text-slate-500">
-                  <p className="text-sm">Sin gastos en esta quincena</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {gastosPorCategoria.map(cat => (
-                    <div key={cat.nombre}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`} />
-                          {cat.nombre}
-                        </span>
-                        <span className="text-sm font-semibold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(cat.monto)}</span>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
-                        <div
-                          className={`h-2 rounded-full ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`}
-                          style={{ width: `${cat.pct}%` }}
-                        />
-                      </div>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{cat.pct.toFixed(1)}% del total</p>
+                    <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2">
+                      <div
+                        className={`h-2 rounded-full ${CAT_DOT[cat.nombre] ?? 'bg-slate-400'}`}
+                        style={{ width: `${cat.pct}%` }}
+                      />
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
+                    <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">{cat.pct.toFixed(1)}% del total</p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Actividad */}
+          {/* Actividad reciente */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-700 rounded-lg p-1">
-                <button
-                  onClick={() => setActividadTab('pendientes')}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${actividadTab === 'pendientes' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                >
-                  Pendientes
-                  {metricas.totalGastosPendientes > 0 && (
-                    <span className="ml-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400 tabular-nums">{formatMXN(metricas.totalGastosPendientes)}</span>
-                  )}
-                </button>
-                <button
-                  onClick={() => setActividadTab('recientes')}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all cursor-pointer ${actividadTab === 'recientes' ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}
-                >
-                  Recientes
-                </button>
-              </div>
-              <Link href={actividadTab === 'pendientes' ? '/transacciones?estatus=Pendiente&tipo=Gasto' : '/transacciones'} className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Actividad reciente</h3>
+              <Link href="/transacciones" className="text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-0.5">
                 Ver todos <ArrowRight size={12} />
               </Link>
             </div>
-
-            {actividadTab === 'pendientes' ? (
-              gastosPendientes.length === 0 ? (
-                <div className="text-center py-8 text-slate-400 dark:text-slate-500">
-                  <p className="text-sm">Todo pagado en esta quincena</p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {gastosPendientes.slice(0, 8).map(tx => (
-                    <div key={tx.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {tx.user?.nombre ?? '—'}</p>
-                        </div>
-                      </div>
-                      <span className="text-sm font-semibold text-rose-600 dark:text-rose-400 tabular-nums ml-2">-{formatMXN(Number(tx.monto))}</span>
-                    </div>
-                  ))}
-                </div>
-              )
+            {transacciones.length === 0 ? (
+              <div className="text-center py-8 text-slate-400 dark:text-slate-500">
+                <p className="text-sm">Sin transacciones en esta quincena</p>
+              </div>
             ) : (
-              transacciones.length === 0 ? (
-                <div className="text-center py-8 text-slate-400 dark:text-slate-500">
-                  <p className="text-sm">Sin transacciones en esta quincena</p>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {transacciones.map(tx => (
-                    <div key={tx.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {formatDate(tx.fecha)}</p>
-                        </div>
+              <div className="space-y-1">
+                {transacciones.map(tx => (
+                  <div key={tx.id} className="flex items-center justify-between py-2 px-2 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {formatDate(tx.fecha)}</p>
                       </div>
-                      <span className={`text-sm font-semibold tabular-nums ml-2 ${tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                        {tx.tipo === 'Ingreso' ? '+' : '-'}{formatMXN(Number(tx.monto))}
-                      </span>
                     </div>
-                  ))}
-                </div>
-              )
+                    <span className={`text-sm font-semibold tabular-nums ml-2 ${tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                      {tx.tipo === 'Ingreso' ? '+' : '-'}{formatMXN(Number(tx.monto))}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
 

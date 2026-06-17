@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Zap, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -54,10 +54,6 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
   }
   return Array.from(map.values())
 }
-interface EntradaRapida {
-  id: number; descripcion: string; monto: number; tipo: string | null
-  categoriaId: number | null; categoria: { nombre: string } | null; procesado: boolean
-}
 interface GastoSinPresupuesto {
   categoriaId: number; categoriaNombre: string; total: number; count: number
   categoriaTieneLineas: boolean
@@ -102,7 +98,6 @@ export default function PresupuestoPage() {
   const [deleting, setDeleting] = useState(false)
   const [copying, setCopying] = useState(false)
 
-  const [entradasRapidas, setEntradasRapidas] = useState<EntradaRapida[]>([])
   const [gastosSinPresupuesto, setGastosSinPresupuesto] = useState<GastoSinPresupuesto[]>([])
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
@@ -133,18 +128,15 @@ export default function PresupuestoPage() {
     if (!quincenaId) return
     setLoading(true)
     try {
-      const [presupRes, entradasRes, txRes] = await Promise.all([
+      const [presupRes, txRes] = await Promise.all([
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
-        fetch(`/api/entradas-rapidas?quincenaId=${quincenaId}`),
         fetch(`/api/transacciones?quincenaId=${quincenaId}&tipo=Gasto&limit=500`),
       ])
       const data: Presupuesto[] = await presupRes.json()
-      const entradas: EntradaRapida[] = await entradasRes.json()
       const txData = await txRes.json()
       const transacciones: Array<{ categoriaId: number; monto: number; categoria: { nombre: string }; presupuestoId: number | null }> = txData.data ?? []
 
       setPresupuestos(data)
-      setEntradasRapidas(entradas)
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
 
       const categoriasConLineas = new Set(data.map((p: Presupuesto) => p.categoriaId))
@@ -298,18 +290,6 @@ export default function PresupuestoPage() {
   const totalGastado = grupos.reduce((s, g) => s + g.real, 0)
   const pctGlobal = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0
 
-  const entradasPorCategoria = entradasRapidas.reduce((acc, e) => {
-    const catId = e.categoriaId
-    if (catId) {
-      if (!acc[catId]) acc[catId] = { total: 0, count: 0 }
-      acc[catId].total += Number(e.monto)
-      acc[catId].count++
-    }
-    return acc
-  }, {} as Record<number, { total: number; count: number }>)
-
-  const totalRecurrente = entradasRapidas.reduce((s, e) => s + Number(e.monto), 0)
-
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
 
@@ -354,7 +334,7 @@ export default function PresupuestoPage() {
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Progreso global</p>
             <div className="flex justify-between items-end mb-2">
@@ -367,17 +347,6 @@ export default function PresupuestoPage() {
             <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-3">
               <div className={`h-3 rounded-full transition-all ${pctColor(pctGlobal)}`} style={{ width: `${Math.min(pctGlobal, 100)}%` }} />
             </div>
-          </div>
-
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-            <div className="flex items-center gap-2 mb-1">
-              <div className="w-7 h-7 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
-                <Repeat size={14} className="text-amber-600 dark:text-amber-400" />
-              </div>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Recurrentes</p>
-            </div>
-            <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalRecurrente)}</p>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{entradasRapidas.length} conceptos configurados</p>
           </div>
 
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
@@ -406,7 +375,6 @@ export default function PresupuestoPage() {
       ) : (
         <div className="grid gap-3">
           {grupos.map(grupo => {
-            const recurrence = entradasPorCategoria[grupo.categoriaId]
             const isMulti = grupo.items.length > 1
             const expanded = expandedGroups.has(grupo.key)
             const singleItem = grupo.items[0]
@@ -434,11 +402,6 @@ export default function PresupuestoPage() {
                               {singleItem.frecuencia === 'MENSUAL'
                                 ? singleItem.diaCobro ? `mensual · día ${singleItem.diaCobro}` : 'mensual'
                                 : 'quincenal'}
-                            </span>
-                          )}
-                          {recurrence && (
-                            <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/30 px-1.5 py-0.5 rounded-full shrink-0">
-                              <Zap size={10} /> entrada rápida
                             </span>
                           )}
                         </div>
