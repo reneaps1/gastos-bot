@@ -26,7 +26,7 @@ export async function GET(request: Request) {
       }),
       prisma.presupuesto.groupBy({
         by: ['quincenaId'],
-        where: { quincenaId: { in: sliceIds }, tipo: 'Gasto' },
+        where: { quincenaId: { in: sliceIds }, categoria: { tipo: 'Gasto' } },
         _sum: { montoPresupuestado: true },
       }),
     ])
