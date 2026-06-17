@@ -853,7 +853,7 @@ export default function DashboardPage() {
                       axisLine={false}
                     />
                     <Tooltip
-                      formatter={(value: number) => [formatMXN(value)]}
+                      formatter={(value) => [formatMXN(Number(value ?? 0))]}
                       contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
                     />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
