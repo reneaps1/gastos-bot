@@ -285,9 +285,10 @@ export default function PresupuestoPage() {
 
   const grupos = buildGrupos(presupuestos)
 
-  // Totals deduplicated by (quincena, categoria) — no double-counting
-  const totalPresupuestado = grupos.reduce((s, g) => s + g.montoPresupuestado, 0)
-  const totalGastado = grupos.reduce((s, g) => s + g.real, 0)
+  // Totals deduplicated by (quincena, categoria) — only Gasto lines (Ingreso/Ahorro excluded from spending progress)
+  const gastoGrupos = grupos.filter(g => g.items[0]?.tipo === 'Gasto')
+  const totalPresupuestado = gastoGrupos.reduce((s, g) => s + g.montoPresupuestado, 0)
+  const totalGastado = gastoGrupos.reduce((s, g) => s + g.real, 0)
   const pctGlobal = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0
 
   const today = getMexicoDateString()
