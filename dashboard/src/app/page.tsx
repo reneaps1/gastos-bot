@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, Clock, ArrowRight, ChevronRight } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
@@ -221,12 +221,11 @@ export default function DashboardPage() {
       ) : (
         <>
           {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
             <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} subtitle={metricas.presupTotal > 0 ? `${metricas.pctPresup.toFixed(0)}% del presupuesto` : undefined} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" subtitleColor={metricas.pctPresup > 90 ? 'text-rose-500 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'} />
             <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
             <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} subtitle={metricas.ahorros > 0 ? `neto ${formatMXN(metricas.balanceNeto)}` : undefined} />
-            <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50" />
           </div>
 
           {/* Planificación del presupuesto */}
@@ -542,29 +541,6 @@ export default function DashboardPage() {
             </div>
           )}
 
-          {/* Quincenas */}
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-            <h3 className="font-semibold text-slate-700 dark:text-slate-200 mb-4">Quincenas</h3>
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-7 gap-2">
-              {quincenas.slice(0, 14).map(q => {
-                const isActual = quincenaId === q.id.toString()
-                return (
-                  <button
-                    key={q.id}
-                    onClick={() => selectQuincena(q.id.toString())}
-                    className={`rounded-xl p-3 text-center border transition-all cursor-pointer ${
-                      isActual ? 'bg-indigo-600 border-indigo-600 text-white shadow-lg shadow-indigo-200 dark:shadow-indigo-900/50' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:border-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
-                    }`}
-                  >
-                    <p className={`font-bold text-sm ${isActual ? 'text-white' : 'text-slate-800 dark:text-slate-100'}`}>{q.codigo}</p>
-                    <p className={`text-xs mt-1 ${isActual ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>
-                      {formatDateStr(q.fechaInicio, { day: '2-digit', month: 'short' })}
-                    </p>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
         </>
       )}
     </div>
