@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronDown, Plus, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
@@ -55,6 +55,10 @@ export default function DashboardPage() {
     presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
     gastosNoCubiertos: 0, totalExcedido: 0,
   })
+  const [txSinPresupuesto, setTxSinPresupuesto] = useState<Transaccion[]>([])
+  const [expandedSinPresupuesto, setExpandedSinPresupuesto] = useState(false)
+  const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
+  const [assigningTxId, setAssigningTxId] = useState<number | null>(null)
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -66,6 +70,27 @@ export default function DashboardPage() {
   function selectQuincena(id: string) {
     setQuincenaId(id)
     persistQuincenaId(id)
+    setExpandedSinPresupuesto(false)
+    setOpenPopoverId(null)
+  }
+
+  async function handleAsignar(txId: number, presupuestoId: number) {
+    setAssigningTxId(txId)
+    setOpenPopoverId(null)
+    try {
+      const res = await fetch(`/api/transacciones/${txId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presupuestoId }),
+      })
+      if (res.ok) {
+        const tx = txSinPresupuesto.find(t => t.id === txId)
+        setTxSinPresupuesto(prev => prev.filter(t => t.id !== txId))
+        setMetricas(m => ({ ...m, gastosNoCubiertos: m.gastosNoCubiertos - (tx ? Number(tx.monto) : 0) }))
+      }
+    } finally {
+      setAssigningTxId(null)
+    }
   }
 
   const fetchData = useCallback(async () => {
@@ -126,6 +151,9 @@ export default function DashboardPage() {
         .reduce((s, p) => s + Math.max(0, p.real - Number(p.montoPresupuestado)), 0)
 
       setTransacciones(txs.slice(0, 8))
+      setTxSinPresupuesto(txs.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null))
+      setExpandedSinPresupuesto(false)
+      setOpenPopoverId(null)
       setGastosPorCategoria(gastosCatArr)
       setPresupuestoPorCategoria(presupuestoCatArr)
       setPresupuestosDisplay([...presupData].filter(p => p.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
@@ -336,16 +364,93 @@ export default function DashboardPage() {
                   </span>
                 )}
               </div>
-              {/* Alert strip */}
+              {/* Alert strip expandible */}
               {metricas.gastosNoCubiertos > 0 && (
-                <div className="mt-2.5 flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2">
-                  <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
-                    <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
-                    <span><span className="font-semibold tabular-nums">{formatMXN(metricas.gastosNoCubiertos)}</span> sin presupuesto · {pctSinPresupuesto.toFixed(1)}% del ingreso</span>
-                  </span>
-                  <Link href="/presupuesto" className="text-xs font-medium text-amber-700 dark:text-amber-400 hover:underline flex items-center gap-0.5 shrink-0">
-                    Agregar <ChevronRight size={11} />
-                  </Link>
+                <div className="mt-2.5">
+                  <button
+                    onClick={() => setExpandedSinPresupuesto(e => !e)}
+                    className="w-full flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors cursor-pointer"
+                  >
+                    <span className="flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-400 shrink-0" />
+                      <span><span className="font-semibold tabular-nums">{formatMXN(metricas.gastosNoCubiertos)}</span> sin presupuesto · {pctSinPresupuesto.toFixed(1)}% del ingreso</span>
+                    </span>
+                    <ChevronDown size={14} className={`text-amber-600 dark:text-amber-400 transition-transform duration-200 shrink-0 ${expandedSinPresupuesto ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {expandedSinPresupuesto && (
+                    <div className="mt-1 border border-amber-200 dark:border-amber-800/40 rounded-lg overflow-visible bg-white dark:bg-slate-800/60">
+                      {txSinPresupuesto.map((tx, idx) => {
+                        const opciones = presupuestosDisplay.filter(p => p.categoria.id === tx.categoria.id)
+                        const isOpen = openPopoverId === tx.id
+                        const isAssigning = assigningTxId === tx.id
+                        return (
+                          <div
+                            key={tx.id}
+                            className={`relative flex items-center justify-between gap-3 px-3 py-2.5 ${idx < txSinPresupuesto.length - 1 ? 'border-b border-amber-100 dark:border-amber-900/40' : ''}`}
+                          >
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
+                              <div className="min-w-0">
+                                <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
+                                <p className="text-[11px] text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {formatDate(tx.fecha)}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">{formatMXN(Number(tx.monto))}</span>
+                              <div className="relative">
+                                <button
+                                  onClick={() => setOpenPopoverId(isOpen ? null : tx.id)}
+                                  disabled={isAssigning}
+                                  className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/70 text-amber-700 dark:text-amber-400 flex items-center justify-center transition-colors disabled:opacity-50"
+                                  aria-label="Asignar a línea de presupuesto"
+                                >
+                                  {isAssigning ? <Loader2 size={10} className="animate-spin" /> : <Plus size={12} />}
+                                </button>
+                                {isOpen && (
+                                  <>
+                                    <div className="fixed inset-0 z-20" onClick={() => setOpenPopoverId(null)} aria-hidden />
+                                    <div className="absolute right-0 bottom-full mb-1.5 w-56 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl z-30 py-1">
+                                      <p className="px-3 pt-1.5 pb-1 text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Asignar a:</p>
+                                      {opciones.length > 0 ? opciones.map(p => (
+                                        <button
+                                          key={p.id}
+                                          onClick={() => handleAsignar(tx.id, p.id)}
+                                          className="w-full text-left px-3 py-2 text-xs text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/60 flex items-center justify-between gap-2 transition-colors"
+                                        >
+                                          <span className="truncate">{p.descripcion}</span>
+                                          <span className="text-slate-400 dark:text-slate-500 tabular-nums shrink-0">{formatMXN(Number(p.montoPresupuestado))}</span>
+                                        </button>
+                                      )) : (
+                                        <div className="px-3 py-2.5">
+                                          <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Sin línea para <span className="font-medium">{tx.categoria.nombre}</span></p>
+                                          <Link
+                                            href="/presupuesto"
+                                            className="text-xs text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center gap-0.5"
+                                            onClick={() => setOpenPopoverId(null)}
+                                          >
+                                            Crear línea <ChevronRight size={10} />
+                                          </Link>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <div className="flex justify-end px-3 py-2 border-t border-amber-100 dark:border-amber-900/40">
+                        <Link
+                          href={`/transacciones?asignado=no&quincenaId=${quincenaId}`}
+                          className="text-xs text-amber-700 dark:text-amber-400 hover:underline flex items-center gap-0.5"
+                        >
+                          Ver todas en transacciones <ChevronRight size={11} />
+                        </Link>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               {metricas.totalExcedido > 0 && (
