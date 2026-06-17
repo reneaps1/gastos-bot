@@ -45,7 +45,8 @@ export async function GET(request: Request) {
       const pct = presup > 0 ? (real / presup) * 100 : 0
       const key = `${p.quincenaId}-${p.categoriaId}`
       const categoriaTotal = groupTotals.get(key) ?? presup
-      return { ...p, real, pct, categoriaTotal }
+      const excedido = real > presup ? Number((real - presup).toFixed(2)) : 0
+      return { ...p, real, pct, categoriaTotal, excedido }
     })
 
     return NextResponse.json(presupuestosConGasto)

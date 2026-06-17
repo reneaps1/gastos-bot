@@ -53,10 +53,18 @@ export function getQuincenaIdForDate(quincenas: SelectableQuincena[], dateString
   if (!first || dateString < first.fechaInicio) return ''
 
   const active = sorted.find(q => q.fechaInicio <= dateString && dateString <= q.fechaFin)
-  if (active) return active.id.toString()
+  // '' signals date is in a gap — callers should warn the user to pick a quincena manually
+  return active?.id.toString() ?? ''
+}
 
-  const next = sorted.find(q => dateString <= q.fechaFin)
-  return next?.id.toString() ?? ''
+export function isDateInQuincenaGap(quincenas: SelectableQuincena[], dateString: string) {
+  if (!dateString) return false
+  const sorted = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
+  const first = sorted[0]
+  const last = sorted.at(-1)
+  if (!first || !last) return false
+  if (dateString < first.fechaInicio || dateString > last.fechaFin) return false
+  return !sorted.some(q => q.fechaInicio <= dateString && dateString <= q.fechaFin)
 }
 
 export function formatQuincenaRange(quincena: SelectableQuincena) {

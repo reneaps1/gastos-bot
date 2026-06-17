@@ -29,7 +29,7 @@ export async function GET() {
         .filter((p) => p.estatus === 'Pagado')
         .reduce((sum, p) => sum + Number(p.montoTotal), 0)
       const base = Number(credito.montoOriginal ?? credito.saldoInicial ?? 0)
-      const saldo = pendiente || Math.max(base - pagado, 0)
+      const saldo = pendiente > 0 ? pendiente : Math.max(base - pagado, 0)
 
       return { ...credito, pendiente, pagado, saldo }
     })

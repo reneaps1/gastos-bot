@@ -25,7 +25,7 @@ interface EntradaRapida {
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; tipo: string
   diaCobro?: number | null; fechaVencimiento?: string | null
-  categoria: Categoria; real: number; pct: number
+  categoria: Categoria; real: number; pct: number; excedido?: number
 }
 interface PresupuestoCategoria {
   nombre: string; presupuestado: number; gastado: number; restante: number; pct: number
@@ -58,7 +58,7 @@ export default function DashboardPage() {
   const [entradasPendientes, setEntradasPendientes] = useState<EntradaRapida[]>([])
   const [actividadTab, setActividadTab] = useState<'pendientes' | 'recientes'>('pendientes')
   const [metricas, setMetricas] = useState({
-    ingresos: 0, gastos: 0, ahorros: 0, margen: 0,
+    ingresos: 0, gastos: 0, ahorros: 0, margen: 0, balanceNeto: 0,
     presupTotal: 0, pendientePorPagar: 0, totalGastosPendientes: 0, pctPresup: 0,
     gastosNoCubiertos: 0, totalExcedido: 0,
   })
@@ -145,7 +145,7 @@ export default function DashboardPage() {
       setSnapshot(liqData.length > 0 ? liqData[0] : null)
       setEntradasPendientes(entradasData)
       setMetricas({
-        ingresos, gastos, ahorros, margen: ingresos - gastos,
+        ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
         presupTotal, pendientePorPagar: gastos - gastosPagados,
         totalGastosPendientes: pends.reduce((s, t) => s + Number(t.monto), 0),
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
@@ -160,6 +160,7 @@ export default function DashboardPage() {
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
   const totalLiquidez = snapshot ? snapshot.bbva + snapshot.banamex + snapshot.uala + snapshot.ualaInversion + snapshot.efectivo : 0
+  const liquidezNeta = snapshot ? totalLiquidez - snapshot.faltaPagar : 0
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
@@ -234,7 +235,7 @@ export default function DashboardPage() {
             <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
             <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} subtitle={metricas.presupTotal > 0 ? `${metricas.pctPresup.toFixed(0)}% del presupuesto` : undefined} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" subtitleColor={metricas.pctPresup > 90 ? 'text-rose-500 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'} />
             <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
-            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} />
+            <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} subtitle={metricas.ahorros > 0 ? `neto ${formatMXN(metricas.balanceNeto)}` : undefined} />
             <KpiCard label="Pendiente" value={formatMXN(metricas.pendientePorPagar)} icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />} color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50" />
           </div>
 
@@ -407,9 +408,10 @@ export default function DashboardPage() {
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                 {presupuestosDisplay.map(p => {
                   const restante = Number(p.montoPresupuestado) - p.real
-                  const status = p.pct > 100 ? 'Excedido' : p.pct > 80 ? 'Vigilando' : 'En rango'
-                  const barColor = p.pct > 100 ? 'bg-rose-500' : p.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
-                  const statusColor = p.pct > 100 ? 'text-rose-600 dark:text-rose-400' : p.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+                  const isExcedido = (p.excedido ?? 0) > 0
+                  const status = isExcedido ? 'Excedido' : p.pct > 80 ? 'Vigilando' : 'En rango'
+                  const barColor = isExcedido ? 'bg-rose-500' : p.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
+                  const statusColor = isExcedido ? 'text-rose-600 dark:text-rose-400' : p.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
                   return (
                     <div key={p.id} className="rounded-xl border border-slate-100 dark:border-slate-700/60 p-3 bg-slate-50/60 dark:bg-slate-900/30">
                       <div className="flex items-start justify-between gap-3 mb-0.5">
@@ -417,7 +419,9 @@ export default function DashboardPage() {
                           <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
                           <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</span>
                         </div>
-                        <span className={`text-xs font-semibold shrink-0 ${statusColor}`}>{status}</span>
+                        <span className={`text-xs font-semibold shrink-0 ${statusColor}`}>
+                          {isExcedido ? `+${formatMXN(p.excedido ?? 0)}` : status}
+                        </span>
                       </div>
                       <div className="flex items-center gap-2 ml-4.5 mb-2">
                         <p className="text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
@@ -603,7 +607,14 @@ export default function DashboardPage() {
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Liquidez</h3>
-                <span className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</span>
+                <div className="text-right">
+                  <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</p>
+                  {snapshot && snapshot.faltaPagar > 0 && (
+                    <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                      neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.faltaPagar)} por pagar)</span>
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {[
@@ -662,7 +673,7 @@ function KpiCard({ label, value, icon, color, bg, subtitle, subtitleColor }: {
       <div className="min-w-0">
         <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{label}</p>
         <p className={`text-lg font-bold ${color} truncate tabular-nums`}>{value}</p>
-        {subtitle && <p className={`text-xs truncate tabular-nums ${subtitleColor ?? 'text-slate-400 dark:text-slate-500'}`}>{subtitle}</p>}
+        {subtitle && <p className={`text-xs truncate tabular-nums mt-0.5 ${subtitleColor ?? 'text-slate-400 dark:text-slate-500'}`}>{subtitle}</p>}
       </div>
     </div>
   )

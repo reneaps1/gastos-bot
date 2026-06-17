@@ -5,7 +5,7 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
-import { formatQuincenaOption, formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, persistQuincenaId } from '@/lib/quincena-selection'
+import { formatQuincenaOption, formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, isDateInQuincenaGap, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
@@ -299,6 +299,7 @@ export default function TransaccionesPage() {
   const formQuincena = quincenas.find(q => q.id.toString() === form.quincenaId)
   const suggestedQuincenaId = form.fecha ? getQuincenaIdForDate(quincenas, form.fecha) : ''
   const suggestedQuincena = quincenas.find(q => q.id.toString() === suggestedQuincenaId)
+  const fechaEnGap = form.fecha ? isDateInQuincenaGap(quincenas, form.fecha) : false
   const selectedMetodo = metodosPago.find(m => m.id.toString() === form.metodoPagoId)
   const isCredito = selectedMetodo?.nombre === 'Credito'
 
@@ -582,6 +583,11 @@ export default function TransaccionesPage() {
               <Label htmlFor="tx-fecha">Fecha *</Label>
               <input id="tx-fecha" type="date" value={form.fecha} onChange={e => setFormDate(e.target.value)} className={fieldClass(formErrors.fecha)} />
               {formErrors.fecha && <p className="text-xs text-rose-500 mt-1">{formErrors.fecha}</p>}
+              {fechaEnGap && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  Esta fecha cae entre quincenas. Selecciona la quincena manualmente.
+                </p>
+              )}
             </div>
             <div>
               <Label htmlFor="tx-quincena">Quincena *</Label>

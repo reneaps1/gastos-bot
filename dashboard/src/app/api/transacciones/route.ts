@@ -7,13 +7,11 @@ function addMonths(dateString: string, months: number) {
   return date
 }
 
-async function findQuincenaIdForDate(date: Date) {
+async function findQuincenaIdForDate(date: Date): Promise<number | null> {
   const quincenas = await prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
   const found = quincenas.find(q => q.fechaInicio <= date && date <= q.fechaFin)
-  if (found) return found.id
-
-  const next = quincenas.find(q => date < q.fechaFin)
-  return next?.id ?? null
+  // Return null for dates in gaps — callers must handle this explicitly
+  return found?.id ?? null
 }
 
 export async function GET(request: Request) {

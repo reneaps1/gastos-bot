@@ -22,7 +22,7 @@ interface Presupuesto {
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
   numOcurrencias: number | null; diaCobro: number | null; fechaVencimiento: string | null
-  categoria: Categoria; quincena: Quincena; real: number; pct: number; categoriaTotal: number
+  categoria: Categoria; quincena: Quincena; real: number; pct: number; categoriaTotal: number; excedido: number
 }
 
 function groupKey(p: Pick<Presupuesto, 'quincenaId' | 'categoriaId'>) {
@@ -32,7 +32,7 @@ function groupKey(p: Pick<Presupuesto, 'quincenaId' | 'categoriaId'>) {
 interface PresupuestoGrupo {
   key: string; categoriaId: number; categoria: Categoria
   quincenaId: number; quincena: Quincena
-  montoPresupuestado: number; real: number; pct: number; items: Presupuesto[]
+  montoPresupuestado: number; real: number; pct: number; excedido: number; items: Presupuesto[]
 }
 
 function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
@@ -42,7 +42,7 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
     if (!map.has(k)) {
       map.set(k, { key: k, categoriaId: p.categoriaId, categoria: p.categoria,
         quincenaId: p.quincenaId, quincena: p.quincena,
-        montoPresupuestado: p.categoriaTotal, real: 0, pct: 0, items: [] })
+        montoPresupuestado: p.categoriaTotal, real: 0, pct: 0, excedido: 0, items: [] })
     }
     const g = map.get(k)!
     g.items.push(p)
@@ -50,6 +50,7 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
   }
   for (const g of map.values()) {
     g.pct = g.montoPresupuestado > 0 ? (g.real / g.montoPresupuestado) * 100 : 0
+    g.excedido = g.real > g.montoPresupuestado ? Number((g.real - g.montoPresupuestado).toFixed(2)) : 0
   }
   return Array.from(map.values())
 }
@@ -487,6 +488,11 @@ export default function PresupuestoPage() {
                       {grupo.pct.toFixed(0)}%
                     </span>
                   </div>
+                  {grupo.excedido > 0 && (
+                    <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 mt-1">
+                      +{formatMXN(grupo.excedido)} excedido
+                    </p>
+                  )}
                   {recurrence && (
                     <div className="mt-2 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
                       <Repeat size={11} className="text-amber-500" />
