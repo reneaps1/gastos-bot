@@ -22,7 +22,8 @@ export function formatDateStr(
   options: Intl.DateTimeFormatOptions,
 ): string {
   if (!date) return '—'
-  const d = new Date(`${date}T00:00:00`)
+  const dateStr = date.split('T')[0]
+  const d = new Date(`${dateStr}T00:00:00`)
   if (isNaN(d.getTime())) return '—'
   return new Intl.DateTimeFormat('es-MX', options).format(d)
 }

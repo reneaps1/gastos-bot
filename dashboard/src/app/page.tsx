@@ -197,9 +197,13 @@ export default function DashboardPage() {
       </div>
 
       {/* Selector de quincena */}
-      {quincenas.length > 0 && (
+      {quincenas.length > 0 && (() => {
+        const selectedIdx = quincenas.findIndex(q => quincenaId === q.id.toString())
+        const windowStart = Math.max(0, Math.min(selectedIdx < 0 ? 0 : selectedIdx - 1, quincenas.length - 8))
+        const visibleChips = quincenas.slice(windowStart, windowStart + 8)
+        return (
         <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
-          {quincenas.slice(0, 8).map(q => {
+          {visibleChips.map(q => {
             const ini = q.fechaInicio.split('T')[0]
             const fin = q.fechaFin.split('T')[0]
             const isRunning = today >= ini && today <= fin
@@ -222,7 +226,8 @@ export default function DashboardPage() {
             )
           })}
         </div>
-      )}
+        )
+      })()}
 
       <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
