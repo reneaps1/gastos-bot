@@ -29,7 +29,7 @@ interface PresupuestoCategoria {
 }
 interface TendenciaPoint {
   quincenaId: number; codigo: string; fechaInicio: string
-  ingresos: number; gastos: number; esCurrent: boolean
+  ingresos: number; gastos: number; presupuestado: number; esCurrent: boolean
 }
 
 const CAT_DOT: Record<string, string> = {
@@ -366,6 +366,31 @@ export default function DashboardPage() {
             <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
             <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} subtitle={metricas.ahorros > 0 ? `neto ${formatMXN(metricas.balanceNeto)}` : undefined} />
           </div>
+
+          {/* Tendencia quincenal */}
+          {tendencia.length > 1 && (() => {
+            const current = tendencia.find(t => t.esCurrent)
+            return (
+              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4">Tendencia quincenal</h3>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={tendencia} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                    <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
+                    <Tooltip formatter={(value) => [formatMXN(Number(value ?? 0))]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                    {current && (
+                      <ReferenceLine x={current.codigo} stroke="#6366f1" strokeDasharray="4 2" label={{ value: 'actual', fontSize: 10, fill: '#6366f1', position: 'insideTopLeft' }} />
+                    )}
+                    <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
+                    <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
+                    <Line type="monotone" dataKey="presupuestado" name="Presupuestado" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, fill: '#8b5cf6' }} activeDot={{ r: 5 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )
+          })()}
 
           {/* Planificación del presupuesto */}
           {metricas.ingresos > 0 && (
@@ -829,49 +854,6 @@ export default function DashboardPage() {
               </div>
             </div>
           )}
-
-          {/* Tendencia quincenal */}
-          {tendencia.length > 1 && (() => {
-            const current = tendencia.find(t => t.esCurrent)
-            return (
-              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4">Tendencia quincenal</h3>
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={tendencia} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                    <XAxis
-                      dataKey="codigo"
-                      tick={{ fontSize: 11, fill: '#64748b' }}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <YAxis
-                      tickFormatter={(v: number) => `$${(v / 1000).toFixed(0)}k`}
-                      tick={{ fontSize: 11, fill: '#64748b' }}
-                      width={44}
-                      tickLine={false}
-                      axisLine={false}
-                    />
-                    <Tooltip
-                      formatter={(value) => [formatMXN(Number(value ?? 0))]}
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                    />
-                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                    {current && (
-                      <ReferenceLine
-                        x={current.codigo}
-                        stroke="#6366f1"
-                        strokeDasharray="4 2"
-                        label={{ value: 'actual', fontSize: 10, fill: '#6366f1', position: 'insideTopLeft' }}
-                      />
-                    )}
-                    <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
-                    <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            )
-          })()}
 
         </>
       )}

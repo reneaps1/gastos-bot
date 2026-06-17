@@ -18,21 +18,30 @@ export async function GET(request: Request) {
     const slice = allQuincenas.slice(start, end + 1)
     const sliceIds = slice.map(q => q.id)
 
-    const rows = await prisma.transaccion.groupBy({
-      by: ['quincenaId', 'tipo'],
-      where: { quincenaId: { in: sliceIds } },
-      _sum: { monto: true },
-    })
+    const [rows, presupRows] = await Promise.all([
+      prisma.transaccion.groupBy({
+        by: ['quincenaId', 'tipo'],
+        where: { quincenaId: { in: sliceIds } },
+        _sum: { monto: true },
+      }),
+      prisma.presupuesto.groupBy({
+        by: ['quincenaId'],
+        where: { quincenaId: { in: sliceIds }, tipo: 'Gasto' },
+        _sum: { montoPresupuestado: true },
+      }),
+    ])
 
     const result = slice.map(q => {
       const ingRow = rows.find(r => r.quincenaId === q.id && r.tipo === 'Ingreso')
       const gastoRow = rows.find(r => r.quincenaId === q.id && r.tipo === 'Gasto')
+      const presupRow = presupRows.find(r => r.quincenaId === q.id)
       return {
         quincenaId: q.id,
         codigo: q.codigo,
         fechaInicio: q.fechaInicio,
         ingresos: Number(ingRow?._sum?.monto ?? 0),
         gastos: Number(gastoRow?._sum?.monto ?? 0),
+        presupuestado: Number(presupRow?._sum?.montoPresupuestado ?? 0),
         esCurrent: q.id === quincenaId,
       }
     })
