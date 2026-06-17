@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronDown, Plus, Loader2 } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronDown, Plus, Loader2, Check } from 'lucide-react'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
@@ -62,6 +62,7 @@ export default function DashboardPage() {
   const [crearLineaForTxId, setCrearLineaForTxId] = useState<number | null>(null)
   const [crearLineaForm, setCrearLineaForm] = useState({ descripcion: '', categoriaId: '', monto: '' })
   const [creandoLinea, setCreandoLinea] = useState(false)
+  const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(new Set())
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -75,6 +76,15 @@ export default function DashboardPage() {
     persistQuincenaId(id)
     setExpandedSinPresupuesto(false)
     setOpenPopoverId(null)
+    setExpandedBudgetIds(new Set())
+  }
+
+  function toggleBudget(id: number) {
+    setExpandedBudgetIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
   }
 
   async function handleAsignar(txId: number, presupuestoId: number) {
@@ -191,6 +201,7 @@ export default function DashboardPage() {
       setTxSinPresupuesto(txs.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null))
       setExpandedSinPresupuesto(false)
       setOpenPopoverId(null)
+      setExpandedBudgetIds(new Set())
       setGastosPorCategoria(gastosCatArr)
       setPresupuestoPorCategoria(presupuestoCatArr)
       setPresupuestosDisplay([...presupData].filter(p => p.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
@@ -223,6 +234,60 @@ export default function DashboardPage() {
   const pctExcedidoBar = metricas.totalExcedido > 0 ? Math.max(pctExcedido, 1) : 0
   const pctSinPresupuestoBar = Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))
   const pctExcedidoBarClamped = Math.min(pctExcedidoBar, Math.max(0, 100 - pctPresupAsignado - pctSinPresupuestoBar))
+
+  const excedidos = presupuestosDisplay.filter(p => (p.excedido ?? 0) > 0)
+  const vigilandoItems = presupuestosDisplay.filter(p => (p.excedido ?? 0) === 0 && p.pct > 80)
+  const enRangoItems = presupuestosDisplay.filter(p => (p.excedido ?? 0) === 0 && p.pct <= 80)
+
+  const budgetCardBody = (p: Presupuesto) => {
+    const restante = Number(p.montoPresupuestado) - p.real
+    const isExcedido = (p.excedido ?? 0) > 0
+    const barColor = isExcedido ? 'bg-rose-500' : p.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
+    const statusColor = isExcedido ? 'text-rose-600 dark:text-rose-400' : p.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+    const status = isExcedido ? 'Excedido' : p.pct > 80 ? 'Vigilando' : 'En rango'
+    return (
+      <>
+        <div className="flex items-start justify-between gap-3 mb-0.5">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</span>
+          </div>
+          <span className={`text-xs font-semibold shrink-0 ${statusColor}`}>
+            {isExcedido ? `+${formatMXN(p.excedido ?? 0)}` : status}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 ml-[18px] mb-2">
+          <p className="text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
+          {p.fechaVencimiento && (() => {
+            const d = new Date(`${p.fechaVencimiento.split('T')[0]}T00:00:00`)
+            const dia = d.getDate()
+            const esQ1 = dia <= 15
+            return (
+              <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${esQ1 ? 'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'}`}>
+                vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}
+              </span>
+            )
+          })()}
+        </div>
+        <div className="flex items-end justify-between gap-3 mb-2">
+          <div>
+            <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">presupuesto {formatMXN(Number(p.montoPresupuestado))}</p>
+          </div>
+          <div className="text-right">
+            <p className={`text-sm font-semibold tabular-nums ${restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>
+              {restante < 0 ? '+' : ''}{formatMXN(Math.abs(restante))}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500">{restante < 0 ? 'excedido' : 'restante'}</p>
+          </div>
+        </div>
+        <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
+          <div className={`h-2.5 rounded-full ${barColor}`} style={{ width: `${Math.min(p.pct, 100)}%` }} />
+        </div>
+        <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{p.pct.toFixed(1)}% usado</p>
+      </>
+    )
+  }
 
   return (
     <div className="space-y-8">
@@ -604,56 +669,61 @@ export default function DashboardPage() {
                 </Link>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {presupuestosDisplay.map(p => {
-                  const restante = Number(p.montoPresupuestado) - p.real
-                  const isExcedido = (p.excedido ?? 0) > 0
-                  const status = isExcedido ? 'Excedido' : p.pct > 80 ? 'Vigilando' : 'En rango'
-                  const barColor = isExcedido ? 'bg-rose-500' : p.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
-                  const statusColor = isExcedido ? 'text-rose-600 dark:text-rose-400' : p.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
-                  return (
-                    <div key={p.id} className="rounded-xl border border-slate-100 dark:border-slate-700/60 p-3 bg-slate-50/60 dark:bg-slate-900/30">
-                      <div className="flex items-start justify-between gap-3 mb-0.5">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className={`w-2.5 h-2.5 rounded-full shrink-0 mt-0.5 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
-                          <span className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</span>
-                        </div>
-                        <span className={`text-xs font-semibold shrink-0 ${statusColor}`}>
-                          {isExcedido ? `+${formatMXN(p.excedido ?? 0)}` : status}
-                        </span>
+              <div className="space-y-3">
+                {/* Tier 1: Excedido — full width, borde rojo */}
+                {excedidos.map(p => (
+                  <div key={p.id} className="rounded-xl border border-rose-200 dark:border-rose-800/50 border-l-4 border-l-rose-500 p-3 bg-rose-50/20 dark:bg-rose-950/10">
+                    {budgetCardBody(p)}
+                  </div>
+                ))}
+
+                {/* Tier 2: Vigilando >80% — grid 2col, acento ámbar */}
+                {vigilandoItems.length > 0 && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    {vigilandoItems.map(p => (
+                      <div key={p.id} className="rounded-xl border border-amber-200/70 dark:border-amber-800/40 border-l-4 border-l-amber-500 p-3 bg-amber-50/20 dark:bg-amber-950/10">
+                        {budgetCardBody(p)}
                       </div>
-                      <div className="flex items-center gap-2 ml-4.5 mb-2">
-                        <p className="text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
-                        {p.fechaVencimiento && (() => {
-                          const d = new Date(`${p.fechaVencimiento.split('T')[0]}T00:00:00`)
-                          const dia = d.getDate()
-                          const esQ1 = dia <= 15
-                          return (
-                            <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${esQ1 ? 'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'}`}>
-                              vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}
-                            </span>
-                          )
-                        })()}
-                      </div>
-                      <div className="flex items-end justify-between gap-3 mb-2">
-                        <div>
-                          <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">presupuesto {formatMXN(Number(p.montoPresupuestado))}</p>
-                        </div>
-                        <div className="text-right">
-                          <p className={`text-sm font-semibold tabular-nums ${restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>
-                            {restante < 0 ? '+' : ''}{formatMXN(Math.abs(restante))}
-                          </p>
-                          <p className="text-xs text-slate-400 dark:text-slate-500">{restante < 0 ? 'excedido' : 'restante'}</p>
-                        </div>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5 overflow-hidden">
-                        <div className={`h-2.5 rounded-full ${barColor}`} style={{ width: `${Math.min(p.pct, 100)}%` }} />
-                      </div>
-                      <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">{p.pct.toFixed(1)}% usado</p>
+                    ))}
+                  </div>
+                )}
+
+                {/* Tier 3: En rango — strips compactos colapsables */}
+                {enRangoItems.length > 0 && (
+                  <div className="rounded-xl border border-slate-100 dark:border-slate-700/60 overflow-hidden bg-white dark:bg-slate-800/40">
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 dark:border-slate-700/60">
+                      <Check size={12} className="text-emerald-500 shrink-0" />
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                        En rango · {enRangoItems.length} {enRangoItems.length === 1 ? 'partida' : 'partidas'}
+                      </span>
                     </div>
-                  )
-                })}
+                    {enRangoItems.map((p, idx) => {
+                      const isExpanded = expandedBudgetIds.has(p.id)
+                      return (
+                        <div key={p.id} className={idx < enRangoItems.length - 1 ? 'border-b border-slate-100 dark:border-slate-700/40' : ''}>
+                          <button
+                            onClick={() => toggleBudget(p.id)}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors text-left"
+                          >
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                            <span className="text-sm text-slate-700 dark:text-slate-200 flex-1 truncate">{p.descripcion}</span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0 hidden sm:block">{p.categoria.nombre}</span>
+                            <div className="w-20 shrink-0 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                              <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${Math.min(p.pct, 100)}%` }} />
+                            </div>
+                            <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 w-9 text-right">{p.pct.toFixed(0)}%</span>
+                            <ChevronDown size={12} className={`text-slate-300 dark:text-slate-600 shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+                          {isExpanded && (
+                            <div className="px-3 pb-3 pt-1 border-t border-slate-100 dark:border-slate-700/60 bg-slate-50/50 dark:bg-slate-900/20">
+                              {budgetCardBody(p)}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>
