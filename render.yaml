@@ -26,6 +26,8 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      - key: TODOIST_API_TOKEN
+        sync: false
     healthCheckPath: /health
     autoDeploy: true
 

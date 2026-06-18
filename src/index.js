@@ -30,6 +30,7 @@ const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedi
 const { handleQuestion, detectIntent, getData } = require('./analytics')
 const { getCurrentQuincena } = require('./quincenas')
 const gemini = require('./gemini')
+const todoist = require('./todoist')
 const media = require('./media')
 const db = require('./database')
 const prisma = require('./lib/prisma')
@@ -330,6 +331,31 @@ app.post('/webhook', async (req, res) => {
                   fechaMensaje: new Date(),
                 })
                 console.log('Gemini answered free-form question')
+                continue
+              }
+            }
+
+            if (geminiData?.type === 'task' && todoist.isEnabled()) {
+              const task = await todoist.createTask({
+                content: geminiData.content || text,
+                due_string: geminiData.due_string || null,
+                priority: geminiData.priority || 1,
+              })
+              if (task) {
+                const dueText = task.due?.string ? ` para el ${task.due.string}` : ''
+                await assuredSend(senderPhone, `✅ Tarea agregada en Todoist: "${task.content}"${dueText}`, 'todoist:task_created')
+                await react(senderPhone, message.id, '✅')
+                await db.saveMessage({
+                  waMessageId: message.id,
+                  fromNumber: senderPhone,
+                  fromName: senderName,
+                  userId: user?.id || null,
+                  body: text,
+                  tipo: 'chat',
+                  procesado: true,
+                  fechaMensaje: new Date(),
+                })
+                console.log('Todoist task created for message:', text)
                 continue
               }
             }

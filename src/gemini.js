@@ -251,6 +251,16 @@ PREGUNTA: el usuario pregunta sobre sus finanzas (cuanto gasto, como va, que fal
   - "que presupuestos tengo esta quincena"
   - "cuanto llevo gastado de familia"
 
+TAREA: el usuario quiere crear un recordatorio o tarea (no necesariamente financiera). No incluye monto.
+  Ejemplos:
+  - "recuerdame pagar la renta el viernes" → task, content:"Pagar la renta", due_string:"viernes"
+  - "agrega una tarea de llamar al doctor" → task, content:"Llamar al doctor", due_string:null
+  - "tarea: comprar panales mañana" → task, content:"Comprar panales", due_string:"mañana"
+  - "no olvides que tengo cita con el dentista el lunes" → task, content:"Cita con el dentista", due_string:"lunes"
+  - "recuerda que debo renovar el seguro" → task, content:"Renovar el seguro", due_string:null
+  - "pon una tarea de hacer ejercicio todos los días" → task, content:"Hacer ejercicio", due_string:"todos los dias"
+  IMPORTANTE: si el mensaje tiene monto Y parece un gasto, clasifícalo como REGISTRO, no TAREA.
+
 CHAT: cualquier otra cosa — saludos, despedidas, gracias, comentarios, preguntas no financieras.
   Ejemplos: "hola", "gracias", "ok", "perfecto", "buenos dias", "hasta luego", "que tal"
   Tambien: mensajes cortos sin numero ni pregunta financiera clara.
@@ -260,6 +270,7 @@ Mensaje: "${text}"
 Responde SOLO con JSON sin markdown:
 - REGISTRO: {"type":"expense","monto":numero,"descripcion":"breve","categoria":"categoria","formaPago":"forma","tipo":"Gasto|Ingreso|Ahorro","estatus":"Pagado|Pendiente"}
 - PREGUNTA: {"type":"question"}
+- TAREA: {"type":"task","content":"texto claro de la tarea","due_string":"fecha en ingles o null","priority":1}
 - CHAT: {"type":"chat"}`
 
     const result = await m.generateContent(prompt)
