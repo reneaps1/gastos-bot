@@ -308,15 +308,6 @@ export default function PresupuestoPage() {
           )}
         </div>
         <div className="flex items-center gap-3">
-          <select value={quincenaId} onChange={e => selectQuincena(e.target.value)}
-            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer">
-            {quincenas.map(q => {
-              const ini = q.fechaInicio.split('T')[0]
-              const fin = q.fechaFin.split('T')[0]
-              const isActive = today >= ini && today <= fin
-              return <option key={q.id} value={q.id}>{isActive ? '● ' : ''}{q.codigo}{isActive ? ' · En curso' : ''}</option>
-            })}
-          </select>
           {presupuestos.length === 0 && !loading && (
             <button onClick={handleCopiar} disabled={copying}
               className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
@@ -330,6 +321,39 @@ export default function PresupuestoPage() {
           </button>
         </div>
       </div>
+
+      {/* Selector de quincena */}
+      {quincenas.length > 0 && (() => {
+        const selectedIdx = quincenas.findIndex(q => quincenaId === q.id.toString())
+        const windowStart = Math.max(0, Math.min(selectedIdx < 0 ? 0 : selectedIdx - 1, quincenas.length - 8))
+        const visibleChips = quincenas.slice(windowStart, windowStart + 8)
+        return (
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
+            {visibleChips.map(q => {
+              const ini = q.fechaInicio.split('T')[0]
+              const fin = q.fechaFin.split('T')[0]
+              const isRunning = today >= ini && today <= fin
+              const isSelected = quincenaId === q.id.toString()
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => selectQuincena(q.id.toString())}
+                  className={`flex-none px-3 py-1.5 rounded-full text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+                    isSelected
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : isRunning
+                      ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400'
+                  }`}
+                >
+                  {q.codigo}
+                  {isRunning && !isSelected && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 align-middle mb-0.5" />}
+                </button>
+              )
+            })}
+          </div>
+        )
+      })()}
 
       <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
@@ -358,6 +382,56 @@ export default function PresupuestoPage() {
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
               {pctGlobal > 90 ? 'Cuidado: casi agotado' : pctGlobal > 70 ? 'Va bien, pero vigilante' : 'Suficiente para la quincena'}
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Gastos sin presupuesto */}
+      {!loading && gastosSinPresupuesto.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl border border-amber-200 dark:border-amber-800/50 p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
+            <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Gastos sin presupuesto</h3>
+            <span className="ml-auto text-xs text-amber-600 dark:text-amber-500">esta quincena</span>
+          </div>
+          <div className="space-y-2.5">
+            {gastosSinPresupuesto.map(g => (
+              <div key={g.categoriaId} className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[g.categoriaNombre] ?? 'bg-slate-400'}`} />
+                  <span className="text-sm text-amber-900 dark:text-amber-200 truncate">{g.categoriaNombre}</span>
+                  <span className="text-xs text-amber-500 dark:text-amber-500 shrink-0">
+                    {g.count} {g.count === 1 ? 'gasto' : 'gastos'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">{formatMXN(g.total)}</span>
+                  {g.categoriaTieneLineas ? (
+                    <Link
+                      href="/transacciones"
+                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      <Pencil size={11} />
+                      Asignar a partida existente
+                    </Link>
+                  ) : (
+                    <button
+                      onClick={() => openCreateFromUnbudgeted(g.categoriaId, g.categoriaNombre)}
+                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
+                    >
+                      <Plus size={11} />
+                      Agregar al presupuesto
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-3.5 pt-3 border-t border-amber-200 dark:border-amber-800/50 flex justify-between items-center">
+            <span className="text-xs text-amber-600 dark:text-amber-500">Total fuera de plan</span>
+            <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">
+              {formatMXN(gastosSinPresupuesto.reduce((s, g) => s + g.total, 0))}
+            </span>
           </div>
         </div>
       )}
@@ -530,56 +604,6 @@ export default function PresupuestoPage() {
               </div>
             )
           })}
-        </div>
-      )}
-
-      {/* Gastos sin presupuesto */}
-      {!loading && gastosSinPresupuesto.length > 0 && (
-        <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl border border-amber-200 dark:border-amber-800/50 p-5">
-          <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
-            <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Gastos sin presupuesto</h3>
-            <span className="ml-auto text-xs text-amber-600 dark:text-amber-500">esta quincena</span>
-          </div>
-          <div className="space-y-2.5">
-            {gastosSinPresupuesto.map(g => (
-              <div key={g.categoriaId} className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[g.categoriaNombre] ?? 'bg-slate-400'}`} />
-                  <span className="text-sm text-amber-900 dark:text-amber-200 truncate">{g.categoriaNombre}</span>
-                  <span className="text-xs text-amber-500 dark:text-amber-500 shrink-0">
-                    {g.count} {g.count === 1 ? 'gasto' : 'gastos'}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">{formatMXN(g.total)}</span>
-                  {g.categoriaTieneLineas ? (
-                    <Link
-                      href="/transacciones"
-                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                    >
-                      <Pencil size={11} />
-                      Asignar a partida existente
-                    </Link>
-                  ) : (
-                    <button
-                      onClick={() => openCreateFromUnbudgeted(g.categoriaId, g.categoriaNombre)}
-                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                    >
-                      <Plus size={11} />
-                      Agregar al presupuesto
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-3.5 pt-3 border-t border-amber-200 dark:border-amber-800/50 flex justify-between items-center">
-            <span className="text-xs text-amber-600 dark:text-amber-500">Total fuera de plan</span>
-            <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">
-              {formatMXN(gastosSinPresupuesto.reduce((s, g) => s + g.total, 0))}
-            </span>
-          </div>
         </div>
       )}
 
