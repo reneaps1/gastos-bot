@@ -88,7 +88,11 @@ export default function DashboardPage() {
   function toggleBudget(id: number) {
     setExpandedBudgetIds(prev => {
       const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
       return next
     })
   }
@@ -224,7 +228,10 @@ export default function DashboardPage() {
     } finally { setLoading(false) }
   }, [quincenaId])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void fetchData() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [fetchData])
 
   const today = getMexicoDateString()
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
@@ -248,6 +255,35 @@ export default function DashboardPage() {
   const vigilandoItems = presupuestosDisplay.filter(p => (p.excedido ?? 0) === 0 && p.pct > 80)
   const enRangoItems = presupuestosDisplay.filter(p => (p.excedido ?? 0) === 0 && p.pct <= 80)
 
+  function getDueInfo(fechaVencimiento?: string | null) {
+    if (!fechaVencimiento) return null
+    const dateOnly = fechaVencimiento.split('T')[0]
+    const d = new Date(`${dateOnly}T00:00:00`)
+    const dia = d.getDate()
+    return {
+      isOverdue: dateOnly < today,
+      isQ1: dia <= 15,
+      label: d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' }),
+    }
+  }
+
+  function dueChip(p: Presupuesto, compact = false) {
+    const due = getDueInfo(p.fechaVencimiento)
+    if (!due) return null
+    const classes = due.isOverdue
+      ? 'border-rose-200 bg-rose-100 text-rose-700 shadow-sm dark:border-rose-800/60 dark:bg-rose-950/60 dark:text-rose-300'
+      : due.isQ1
+      ? 'border-sky-200 bg-sky-100 text-sky-700 shadow-sm dark:border-sky-800/60 dark:bg-sky-950/50 dark:text-sky-300'
+      : 'border-violet-200 bg-violet-100 text-violet-700 shadow-sm dark:border-violet-800/60 dark:bg-violet-950/50 dark:text-violet-300'
+
+    return (
+      <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border font-semibold leading-none ${classes} ${compact ? 'px-1.5 py-1 text-[10px]' : 'px-2 py-1 text-[11px]'}`}>
+        <span className={`h-1.5 w-1.5 rounded-full ${due.isOverdue ? 'bg-rose-500' : due.isQ1 ? 'bg-sky-500' : 'bg-violet-500'}`} />
+        {due.isOverdue ? 'venció' : 'vence'} {due.label}
+      </span>
+    )
+  }
+
   const budgetCardBody = (p: Presupuesto) => {
     const restante = Number(p.montoPresupuestado) - p.real
     const isExcedido = (p.excedido ?? 0) > 0
@@ -265,18 +301,9 @@ export default function DashboardPage() {
             {isExcedido ? `+${formatMXN(p.excedido ?? 0)}` : status}
           </span>
         </div>
-        <div className="flex items-center gap-2 ml-[18px] mb-2">
+        <div className="flex items-center gap-2 ml-[18px] mb-2 flex-wrap">
           <p className="text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
-          {p.fechaVencimiento && (() => {
-            const d = new Date(`${p.fechaVencimiento.split('T')[0]}T00:00:00`)
-            const dia = d.getDate()
-            const esQ1 = dia <= 15
-            return (
-              <span className={`inline-flex items-center gap-0.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${esQ1 ? 'bg-sky-50 text-sky-600 dark:bg-sky-900/30 dark:text-sky-400' : 'bg-violet-50 text-violet-600 dark:bg-violet-900/30 dark:text-violet-400'}`}>
-                vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}
-              </span>
-            )
-          })()}
+          {dueChip(p)}
         </div>
         <div className="flex items-end justify-between gap-3 mb-2">
           <div>
@@ -716,14 +743,44 @@ export default function DashboardPage() {
                   </div>
                 ))}
 
-                {/* Tier 2: Vigilando >80% — grid 2col, acento ámbar */}
+                {/* Tier 2: Vigilando >80% — strips colapsables con acento ámbar */}
                 {vigilandoItems.length > 0 && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                    {vigilandoItems.map(p => (
-                      <div key={p.id} className="rounded-xl border border-amber-200/70 dark:border-amber-800/40 border-l-4 border-l-amber-500 p-3 bg-amber-50/20 dark:bg-amber-950/10">
-                        {budgetCardBody(p)}
-                      </div>
-                    ))}
+                  <div className="rounded-xl border border-amber-200/70 dark:border-amber-800/40 overflow-hidden bg-amber-50/20 dark:bg-amber-950/10">
+                    <div className="flex items-center gap-2 px-3 py-2 border-b border-amber-100 dark:border-amber-900/40">
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
+                      <span className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                        Vigilando · {vigilandoItems.length} {vigilandoItems.length === 1 ? 'partida' : 'partidas'}
+                      </span>
+                    </div>
+                    {vigilandoItems.map((p, idx) => {
+                      const isExpanded = expandedBudgetIds.has(p.id)
+                      return (
+                        <div key={p.id} className={idx < vigilandoItems.length - 1 ? 'border-b border-amber-100 dark:border-amber-900/40' : ''}>
+                          <button
+                            onClick={() => toggleBudget(p.id)}
+                            className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors text-left"
+                            aria-expanded={isExpanded}
+                          >
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                            <span className="flex min-w-0 flex-1 items-center gap-2">
+                              <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</span>
+                              {dueChip(p, true)}
+                            </span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0 hidden md:block">{p.categoria.nombre}</span>
+                            <div className="w-20 shrink-0 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                              <div className="h-1.5 rounded-full bg-amber-500" style={{ width: `${Math.min(p.pct, 100)}%` }} />
+                            </div>
+                            <span className="text-xs text-amber-600 dark:text-amber-400 tabular-nums shrink-0 w-9 text-right">{p.pct.toFixed(0)}%</span>
+                            <ChevronDown size={12} className={`text-amber-500 dark:text-amber-400 shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+                          {isExpanded && (
+                            <div className="px-3 pb-3 pt-1 border-t border-amber-100 dark:border-amber-900/40 bg-white/60 dark:bg-slate-900/20">
+                              {budgetCardBody(p)}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
 
@@ -743,10 +800,14 @@ export default function DashboardPage() {
                           <button
                             onClick={() => toggleBudget(p.id)}
                             className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors text-left"
+                            aria-expanded={isExpanded}
                           >
                             <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
-                            <span className="text-sm text-slate-700 dark:text-slate-200 flex-1 truncate">{p.descripcion}</span>
-                            <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0 hidden sm:block">{p.categoria.nombre}</span>
+                            <span className="flex min-w-0 flex-1 items-center gap-2">
+                              <span className="text-sm text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</span>
+                              {dueChip(p, true)}
+                            </span>
+                            <span className="text-[11px] text-slate-400 dark:text-slate-500 shrink-0 hidden md:block">{p.categoria.nombre}</span>
                             <div className="w-20 shrink-0 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
                               <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${Math.min(p.pct, 100)}%` }} />
                             </div>
