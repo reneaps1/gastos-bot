@@ -364,6 +364,13 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
+        // Si Gemini clasificó como tarea pero Todoist falló, no procesar como gasto
+        if (geminiData?.type === 'task') {
+          await react(senderPhone, message.id, '❌')
+          await assuredSend(senderPhone, '❌ No pude crear la tarea en Todoist. Intenta de nuevo.', 'todoist:error')
+          continue
+        }
+
         // Si Gemini no lo clasificó como gasto y tampoco hay número en el texto,
         // es un mensaje que no entendemos — responder y no procesar como gasto
         const hasNumber = /\d/.test(text)

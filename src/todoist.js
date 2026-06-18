@@ -1,5 +1,5 @@
 const TODOIST_API_TOKEN = process.env.TODOIST_API_TOKEN
-const TODOIST_BASE = 'https://api.todoist.com/rest/v2'
+const TODOIST_BASE = 'https://api.todoist.com/api/v1'
 
 function isEnabled() {
   return !!TODOIST_API_TOKEN
