@@ -1,7 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle, Loader2 } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -54,9 +53,9 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
   }
   return Array.from(map.values())
 }
-interface GastoSinPresupuesto {
-  categoriaId: number; categoriaNombre: string; total: number; count: number
-  categoriaTieneLineas: boolean
+interface TxSinPresupuesto {
+  id: number; descripcion: string; monto: string | number
+  categoria: { id: number; nombre: string }; fecha: string
 }
 
 const EMPTY_FORM = {
@@ -98,7 +97,11 @@ export default function PresupuestoPage() {
   const [deleting, setDeleting] = useState(false)
   const [copying, setCopying] = useState(false)
 
-  const [gastosSinPresupuesto, setGastosSinPresupuesto] = useState<GastoSinPresupuesto[]>([])
+  const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
+  const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
+  const [assigningTxId, setAssigningTxId] = useState<number | null>(null)
+  const [crearLineaForTxId, setCrearLineaForTxId] = useState<number | null>(null)
+  const [crearLineaForm, setCrearLineaForm] = useState({ descripcion: '', categoriaId: '', monto: '' })
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   const [modalOpen, setModalOpen] = useState(false)
@@ -134,32 +137,62 @@ export default function PresupuestoPage() {
       ])
       const data: Presupuesto[] = await presupRes.json()
       const txData = await txRes.json()
-      const transacciones: Array<{ categoriaId: number; monto: number; categoria: { nombre: string }; presupuestoId: number | null }> = txData.data ?? []
+      const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> = txData.data ?? []
 
       setPresupuestos(data)
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
 
-      const categoriasConLineas = new Set(data.map((p: Presupuesto) => p.categoriaId))
-      const noPresupMap: Record<number, GastoSinPresupuesto> = {}
-      for (const tx of transacciones) {
-        if (tx.presupuestoId == null) {
-          if (!noPresupMap[tx.categoriaId]) {
-            noPresupMap[tx.categoriaId] = {
-              categoriaId: tx.categoriaId,
-              categoriaNombre: tx.categoria?.nombre ?? 'Sin categoría',
-              total: 0, count: 0,
-              categoriaTieneLineas: categoriasConLineas.has(tx.categoriaId),
-            }
-          }
-          noPresupMap[tx.categoriaId].total += Number(tx.monto)
-          noPresupMap[tx.categoriaId].count++
-        }
-      }
-      setGastosSinPresupuesto(Object.values(noPresupMap).sort((a, b) => b.total - a.total))
+      setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
     } finally { setLoading(false) }
   }, [quincenaId, quincenas])
 
   useEffect(() => { fetchPresupuestos() }, [fetchPresupuestos])
+
+  async function handleAsignar(txId: number, presupuestoId: number) {
+    setAssigningTxId(txId)
+    setOpenPopoverId(null)
+    try {
+      const res = await fetch(`/api/transacciones/${txId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presupuestoId }),
+      })
+      if (res.ok) {
+        setTxSinPresupuesto(prev => prev.filter(t => t.id !== txId))
+        fetchPresupuestos()
+      }
+    } finally { setAssigningTxId(null) }
+  }
+
+  async function handleCrearYAsignar(txId: number) {
+    if (!crearLineaForm.descripcion || !crearLineaForm.categoriaId || !crearLineaForm.monto) return
+    setSaving(true)
+    try {
+      const presupRes = await fetch('/api/presupuestos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quincenaId, descripcion: crearLineaForm.descripcion,
+          categoriaId: crearLineaForm.categoriaId,
+          montoPresupuestado: crearLineaForm.monto,
+          tipo: 'Gasto',
+        }),
+      })
+      if (!presupRes.ok) return
+      const newPresup = await presupRes.json()
+      const txRes = await fetch(`/api/transacciones/${txId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presupuestoId: newPresup.id }),
+      })
+      if (txRes.ok) {
+        setTxSinPresupuesto(prev => prev.filter(t => t.id !== txId))
+        setOpenPopoverId(null)
+        setCrearLineaForTxId(null)
+        fetchPresupuestos()
+      }
+    } finally { setSaving(false) }
+  }
 
   function openCreate() {
     setEditingP(null)
@@ -180,13 +213,6 @@ export default function PresupuestoPage() {
       fechaVencimiento: p.fechaVencimiento ? p.fechaVencimiento.split('T')[0] : '',
       targetQuincenaId: '',
     })
-    setFormErrors({})
-    setModalOpen(true)
-  }
-
-  function openCreateFromUnbudgeted(catId: number, categoriaNombre: string) {
-    setEditingP(null)
-    setForm({ ...EMPTY_FORM, categoriaId: catId.toString(), descripcion: categoriaNombre })
     setFormErrors({})
     setModalOpen(true)
   }
@@ -387,50 +413,123 @@ export default function PresupuestoPage() {
       )}
 
       {/* Gastos sin presupuesto */}
-      {!loading && gastosSinPresupuesto.length > 0 && (
+      {!loading && txSinPresupuesto.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl border border-amber-200 dark:border-amber-800/50 p-5">
-          <div className="flex items-center gap-2 mb-4">
+          <div className="flex items-center gap-2 mb-3">
             <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
             <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Gastos sin presupuesto</h3>
-            <span className="ml-auto text-xs text-amber-600 dark:text-amber-500">esta quincena</span>
+            <span className="ml-auto text-xs text-amber-600 dark:text-amber-500">{txSinPresupuesto.length} {txSinPresupuesto.length === 1 ? 'transacción' : 'transacciones'}</span>
           </div>
-          <div className="space-y-2.5">
-            {gastosSinPresupuesto.map(g => (
-              <div key={g.categoriaId} className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[g.categoriaNombre] ?? 'bg-slate-400'}`} />
-                  <span className="text-sm text-amber-900 dark:text-amber-200 truncate">{g.categoriaNombre}</span>
-                  <span className="text-xs text-amber-500 dark:text-amber-500 shrink-0">
-                    {g.count} {g.count === 1 ? 'gasto' : 'gastos'}
-                  </span>
+          <div className="border border-amber-200 dark:border-amber-800/40 rounded-xl overflow-visible bg-white dark:bg-slate-800/60">
+            {txSinPresupuesto.map((tx, idx) => {
+              const isOpen = openPopoverId === tx.id
+              const isAssigning = assigningTxId === tx.id
+              const showCrearForm = crearLineaForTxId === tx.id
+              const categoriasDisponibles = Array.from(
+                new Map([tx.categoria, ...presupuestos.map(p => p.categoria)].map(c => [c.id, c])).values()
+              ).sort((a, b) => a.nombre.localeCompare(b.nombre))
+              return (
+                <div key={tx.id}
+                  className={`relative flex items-center justify-between gap-3 px-3 py-2.5 ${idx < txSinPresupuesto.length - 1 ? 'border-b border-amber-100 dark:border-amber-900/40' : ''}`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {new Date(tx.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <span className="text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">{formatMXN(Number(tx.monto))}</span>
+                    <div className="relative">
+                      <button
+                        onClick={() => { setOpenPopoverId(isOpen ? null : tx.id); setCrearLineaForTxId(null) }}
+                        disabled={isAssigning}
+                        className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/70 text-amber-700 dark:text-amber-400 flex items-center justify-center transition-colors disabled:opacity-50 cursor-pointer"
+                        aria-label="Asignar a línea de presupuesto"
+                      >
+                        {isAssigning ? <Loader2 size={10} className="animate-spin" /> : <Plus size={12} />}
+                      </button>
+                      {isOpen && (
+                        <>
+                          <div className="fixed inset-0 z-20" onClick={() => { setOpenPopoverId(null); setCrearLineaForTxId(null) }} aria-hidden />
+                          <div className="absolute right-0 bottom-full mb-1.5 w-64 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl z-30 overflow-hidden">
+                            {!showCrearForm ? (
+                              <>
+                                <div className="px-3 pt-2 pb-1 border-b border-slate-100 dark:border-slate-700">
+                                  <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Asignar a:</p>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto py-1">
+                                  {presupuestos.length > 0 ? presupuestos.map(p => (
+                                    <button key={p.id} onClick={() => handleAsignar(tx.id, p.id)}
+                                      className="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 flex items-start justify-between gap-2 transition-colors cursor-pointer">
+                                      <div className="min-w-0">
+                                        <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</p>
+                                        <p className="text-[11px] text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
+                                      </div>
+                                      <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(Number(p.montoPresupuestado))}</span>
+                                    </button>
+                                  )) : (
+                                    <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas en esta quincena</p>
+                                  )}
+                                </div>
+                                <div className="border-t border-slate-100 dark:border-slate-700">
+                                  <button
+                                    onClick={() => { setCrearLineaForTxId(tx.id); setCrearLineaForm({ descripcion: tx.descripcion, categoriaId: tx.categoria.id.toString(), monto: tx.monto.toString() }) }}
+                                    className="w-full text-left px-3 py-2 text-xs text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 flex items-center gap-1.5 transition-colors font-medium cursor-pointer">
+                                    <Plus size={11} /> Crear nueva línea
+                                  </button>
+                                </div>
+                              </>
+                            ) : (
+                              <div className="p-3 space-y-2">
+                                <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Nueva línea de presupuesto</p>
+                                <div>
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">Descripción</p>
+                                  <input type="text" value={crearLineaForm.descripcion}
+                                    onChange={e => setCrearLineaForm(f => ({ ...f, descripcion: e.target.value }))}
+                                    className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                                </div>
+                                <div>
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">Categoría</p>
+                                  <select value={crearLineaForm.categoriaId}
+                                    onChange={e => setCrearLineaForm(f => ({ ...f, categoriaId: e.target.value }))}
+                                    className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                                    {categoriasDisponibles.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                                  </select>
+                                </div>
+                                <div>
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">Presupuesto $</p>
+                                  <input type="number" value={crearLineaForm.monto} min="0"
+                                    onChange={e => setCrearLineaForm(f => ({ ...f, monto: e.target.value }))}
+                                    className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                                </div>
+                                <div className="flex gap-2 pt-0.5">
+                                  <button onClick={() => setCrearLineaForTxId(null)}
+                                    className="flex-1 text-xs py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer">
+                                    Cancelar
+                                  </button>
+                                  <button onClick={() => handleCrearYAsignar(tx.id)}
+                                    disabled={saving || !crearLineaForm.descripcion || !crearLineaForm.monto}
+                                    className="flex-1 text-xs py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-1 cursor-pointer">
+                                    {saving && <Loader2 size={10} className="animate-spin" />}
+                                    Crear y asignar
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">{formatMXN(g.total)}</span>
-                  {g.categoriaTieneLineas ? (
-                    <Link
-                      href="/transacciones"
-                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                    >
-                      <Pencil size={11} />
-                      Asignar a partida existente
-                    </Link>
-                  ) : (
-                    <button
-                      onClick={() => openCreateFromUnbudgeted(g.categoriaId, g.categoriaNombre)}
-                      className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-800/60 px-2.5 py-1 rounded-lg cursor-pointer transition-colors whitespace-nowrap"
-                    >
-                      <Plus size={11} />
-                      Agregar al presupuesto
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
-          <div className="mt-3.5 pt-3 border-t border-amber-200 dark:border-amber-800/50 flex justify-between items-center">
+          <div className="mt-3 flex justify-between items-center">
             <span className="text-xs text-amber-600 dark:text-amber-500">Total fuera de plan</span>
             <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">
-              {formatMXN(gastosSinPresupuesto.reduce((s, g) => s + g.total, 0))}
+              {formatMXN(txSinPresupuesto.reduce((s, t) => s + Number(t.monto), 0))}
             </span>
           </div>
         </div>
