@@ -248,6 +248,7 @@ export default function DashboardPage() {
   const pctSinPresupuesto = metricas.ingresos > 0 ? (metricas.gastosNoCubiertos / metricas.ingresos) * 100 : 0
   const pctExcedido = metricas.ingresos > 0 ? (metricas.totalExcedido / metricas.ingresos) * 100 : 0
   const pctExcedidoBar = metricas.totalExcedido > 0 ? Math.max(pctExcedido, 1) : 0
+  const pctDisponibleReal = metricas.ingresos > 0 && disponibleReal > 0 ? (disponibleReal / metricas.ingresos) * 100 : 0
   const pctSinPresupuestoBar = Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))
   const pctExcedidoBarClamped = Math.min(pctExcedidoBar, Math.max(0, 100 - pctPresupAsignado - pctSinPresupuestoBar))
 
@@ -424,9 +425,6 @@ export default function DashboardPage() {
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Planificación del presupuesto</h3>
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${sinAsignar < 0 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950/50 dark:text-rose-300' : sinAsignar === 0 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
-                  {sinAsignar < 0 ? 'Over-budget' : sinAsignar === 0 ? 'Totalmente asignado' : 'Sin asignar'}
-                </span>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
                 <div>
@@ -477,6 +475,12 @@ export default function DashboardPage() {
                       style={{ width: `${pctExcedidoBarClamped}%` }}
                     />
                   )}
+                  {pctDisponibleReal > 0 && (
+                    <div
+                      className="h-full bg-emerald-400 dark:bg-emerald-500 transition-all"
+                      style={{ width: `${pctDisponibleReal}%` }}
+                    />
+                  )}
                 </div>
                 {/* Overlay invisible para tooltips (no afecta overflow-hidden de la barra) */}
                 <div className="absolute inset-0 flex">
@@ -511,6 +515,17 @@ export default function DashboardPage() {
                       </div>
                     </div>
                   )}
+                  {pctDisponibleReal > 0 && (
+                    <div
+                      className="relative group/free h-full cursor-default"
+                      style={{ width: `${pctDisponibleReal}%` }}
+                    >
+                      <div className="absolute bottom-full mb-2 right-0 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/free:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                        <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-emerald-400" />
+                        Saldo libre: <span className="font-semibold">{formatMXN(disponibleReal)}</span> · {pctDisponibleReal.toFixed(1)}%
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               {/* Legend */}
@@ -529,6 +544,12 @@ export default function DashboardPage() {
                   <span className="flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
                     <TrendingUp size={11} className="shrink-0" />
                     {formatMXN(metricas.totalExcedido)} excedido en partidas
+                  </span>
+                )}
+                {pctDisponibleReal > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                    <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-400" />
+                    {pctDisponibleReal.toFixed(1)}% saldo libre
                   </span>
                 )}
               </div>

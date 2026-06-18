@@ -166,18 +166,24 @@ export default function TransaccionesPage() {
     } finally { setLoading(false) }
   }, [quincenaId, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
 
-  useEffect(() => { fetchTxs() }, [fetchTxs])
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void fetchTxs() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [fetchTxs])
 
   useEffect(() => {
-    if (!modalOpen || !form.quincenaId || !form.categoriaId) {
-      setPresupuestoOpciones([])
-      return
-    }
-    const params = new URLSearchParams({ quincenaId: form.quincenaId, categoriaId: form.categoriaId })
-    fetch(`/api/presupuestos?${params}`)
-      .then(r => r.json())
-      .then((data: PresupuestoOption[]) => setPresupuestoOpciones(data))
-      .catch(() => setPresupuestoOpciones([]))
+    const timer = window.setTimeout(() => {
+      if (!modalOpen || !form.quincenaId || !form.categoriaId) {
+        setPresupuestoOpciones([])
+        return
+      }
+      const params = new URLSearchParams({ quincenaId: form.quincenaId, categoriaId: form.categoriaId })
+      fetch(`/api/presupuestos?${params}`)
+        .then(r => r.json())
+        .then((data: PresupuestoOption[]) => setPresupuestoOpciones(data))
+        .catch(() => setPresupuestoOpciones([]))
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [modalOpen, form.quincenaId, form.categoriaId])
 
   function openCreate() {
@@ -381,18 +387,18 @@ export default function TransaccionesPage() {
         <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-center">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
+        <div className="col-span-2 sm:col-span-1 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 text-center">
           <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Registros</p>
           <p className="text-2xl font-bold text-slate-800 dark:text-slate-100">{total}</p>
         </div>
-        <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4 text-center">
+        <div className="min-w-0 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl border border-emerald-100 dark:border-emerald-900/30 p-4 text-center">
           <p className="text-xs text-emerald-600 dark:text-emerald-400 mb-1">Ingresos</p>
-          <p className="text-2xl font-bold text-emerald-700 dark:text-emerald-400">{formatMXN(totalIngresos)}</p>
+          <p className="text-xl sm:text-2xl font-bold text-emerald-700 dark:text-emerald-400 tabular-nums whitespace-nowrap">{formatMXN(totalIngresos)}</p>
         </div>
-        <div className="bg-rose-50 dark:bg-rose-900/20 rounded-xl border border-rose-100 dark:border-rose-900/30 p-4 text-center">
+        <div className="min-w-0 bg-rose-50 dark:bg-rose-900/20 rounded-xl border border-rose-100 dark:border-rose-900/30 p-4 text-center">
           <p className="text-xs text-rose-600 dark:text-rose-400 mb-1">Gastos</p>
-          <p className="text-2xl font-bold text-rose-700 dark:text-rose-400">{formatMXN(totalGastos)}</p>
+          <p className="text-xl sm:text-2xl font-bold text-rose-700 dark:text-rose-400 tabular-nums whitespace-nowrap">{formatMXN(totalGastos)}</p>
         </div>
       </div>
 
@@ -418,7 +424,65 @@ export default function TransaccionesPage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <div className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
+            {txs.map(tx => {
+              const catColor = CAT_COLORS[tx.categoria?.nombre] ?? DEFAULT_CAT_COLOR
+              return (
+                <button
+                  key={tx.id}
+                  onClick={() => setDetailTx(tx)}
+                  className="w-full text-left px-4 py-4 bg-white dark:bg-slate-800 hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{tx.descripcion}</p>
+                      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{formatDate(tx.fecha)} · {tx.quincena.codigo}</p>
+                    </div>
+                    <p className={`shrink-0 text-base font-bold tabular-nums ${
+                      tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600 dark:text-rose-400'
+                    }`}>
+                      {tx.tipo === 'Ingreso' ? '+' : '-'}{formatMXN(Number(tx.monto))}
+                    </p>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
+                      {tx.categoria?.nombre}
+                    </span>
+                    {tx.tipo === 'Gasto' ? (
+                      tx.presupuestoId ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
+                          <Check size={11} /> Asignada
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                          <AlertCircle size={11} /> Sin asignar
+                        </span>
+                      )
+                    ) : (
+                      <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
+                        tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                      }`}>
+                        {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : <Wallet size={11} />}
+                        {tx.tipo}
+                      </span>
+                    )}
+                    <button
+                      onClick={e => { e.stopPropagation(); toggleEstatus(tx) }}
+                      disabled={togglingId === tx.id}
+                      className={`ml-auto text-xs font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors ${
+                        tx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
+                      } disabled:opacity-50`}
+                    >
+                      {togglingId === tx.id ? '...' : tx.estatus}
+                    </button>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
@@ -495,6 +559,7 @@ export default function TransaccionesPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
 
         {!loading && totalPages > 1 && (
