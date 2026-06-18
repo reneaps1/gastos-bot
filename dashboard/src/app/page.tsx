@@ -416,6 +416,11 @@ export default function DashboardPage() {
                     <span className="cursor-help text-slate-300 dark:text-slate-600" title="Dinero de tus ingresos que no tiene destino en ninguna partida del presupuesto">ⓘ</span>
                   </p>
                   <p className={`text-base font-bold tabular-nums ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
+                  {metricas.gastosNoCubiertos > 0 && (
+                    <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-md px-1.5 py-0.5 inline-block">
+                      ⚠ incluye {formatMXN(metricas.gastosNoCubiertos)} sin presupuestar
+                    </p>
+                  )}
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
