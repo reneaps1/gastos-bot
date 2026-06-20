@@ -7,20 +7,20 @@ import { Providers } from '@/components/Providers'
 export const metadata: Metadata = {
   title: 'Milo Gastos',
   description: 'Control de gastos familiar',
-  manifest: '/manifest.webmanifest',
+  manifest: '/manifest.json',
   icons: {
     icon: [
       { url: '/icon.png', sizes: '512x512', type: 'image/png' },
       { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
     ],
     apple: [
-      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
     ],
   },
   appleWebApp: {
     capable: true,
     title: 'Milo Gastos',
-    statusBarStyle: 'default',
+    statusBarStyle: 'black-translucent',
   },
 }
 
@@ -42,6 +42,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <main className="flex-1 p-4 pb-24 md:p-6 md:pb-6 max-w-7xl mx-auto w-full">
             {children}
           </main>
+          <footer className="text-center py-4 text-xs text-slate-400 dark:text-slate-600">
+            <a href="/privacy" className="hover:text-slate-600 dark:hover:text-slate-400 transition-colors">
+              Politica de Privacidad
+            </a>
+          </footer>
         </Providers>
       </body>
     </html>

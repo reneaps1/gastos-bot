@@ -8,7 +8,11 @@
     "build": "npm run generate && next build",
     "start": "prisma generate && (prisma migrate resolve --rolled-back 20260617000000_check_constraints || true) && prisma migrate deploy && next start",
     "lint": "eslint",
-    "postinstall": "node -e \"process.env.DATABASE_URL && require('child_process').execSync('prisma generate', {stdio:'inherit'})\" || true"
+    "postinstall": "node -e \"process.env.DATABASE_URL && require('child_process').execSync('prisma generate', {stdio:'inherit'})\" || true",
+    "cap:dev": "npx cap open ios",
+    "cap:sync": "npx cap sync",
+    "cap:build": "npm run build && npx cap copy && npx cap sync",
+    "cap:assets": "node scripts/generate-assets.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
@@ -32,10 +36,14 @@
     "typescript": "^5"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
+    "@capacitor/ios": "^8.4.1",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9"
+    "eslint-config-next": "16.2.9",
+    "sharp": "^0.35.2"
   }
 }
