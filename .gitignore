@@ -7,6 +7,11 @@ ngrok.exe
 ngrok.zip
 cloudflared.exe
 
+# Configuracion de agentes AI
+.agents/
+.claude/
+skills-lock.json
+
 # Datos financieros sensibles - NO subir a repos públicos
 data/
 *.xlsm

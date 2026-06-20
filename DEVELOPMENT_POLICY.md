@@ -574,19 +574,67 @@ Tipos iniciales de crédito:
 - `Informal`
 - `Otro`
 
-## Orden Oficial De Ejecución
+### Fase 9: iOS App Store (Capacitor)
+
+La app web de Milo Gastos se publicara en el App Store de iOS como una aplicacion nativa usando **Capacitor** (WebView nativo con plugins).
+
+#### Enfoque
+
+- Capacitor envuelve la web app existente en un WebView nativo de iOS.
+- La web app apunta a la URL de produccion (`gastos-dashboard.onrender.com`) para que las API routes de Next.js sigan funcionando sin cambios.
+- Se agregan plugins nativos (Face ID, notificaciones, hapticos) para cumplir con los requisitos de Apple y mejorar la experiencia.
+- No se modifica la arquitectura actual de la web app.
+
+#### Fases del plan iOS
+
+| Fase | Descripcion |
+|------|-------------|
+| 1 | Preparar la web app para el shell nativo (meta tags iOS, manifest, splash, iconos) |
+| 2 | Integrar Capacior (instalar CLI, inicializar, agregar iOS) |
+| 3 | Configurar proyecto nativo iOS en Xcode (bundle ID, iconos, splash, Info.plist) |
+| 4 | Agregar plugins nativos (local-auth, push-notifications, haptics) |
+| 5 | Crear scripts de build y automatizacion |
+| 6 | App Store Connect (cuenta developer, metadata, capturas, subida, review) |
+| 7 | Post-lanzamiento (deep links, widget iOS, mantenimiento) |
+
+#### Plugins nativos
+
+- `@capacitor/local-auth` — Face ID / Touch ID para proteger la app
+- `@capacitor/push-notifications` — Alertas financieras nativas (Fase 8)
+- `@capacitor/haptics` — Feedback tactil para mejor sensacion nativa
+
+#### Archivos a crear/modificar
+
+| Archivo | Accion |
+|---------|--------|
+| `dashboard/capacitor.config.ts` | Crear |
+| `dashboard/public/manifest.json` | Crear |
+| `dashboard/public/splash.png`, `splash-dark.png` | Crear |
+| `dashboard/public/icon-{192,512,1024}.png` | Crear |
+| `dashboard/src/app/layout.tsx` | Modificar (meta tags iOS) |
+| `dashboard/package.json` | Modificar (scripts + plugins) |
+| `dashboard/ios/` | Generado por `npx cap add ios` |
+
+#### Requisitos externos
+
+- Cuenta de desarrollador Apple ($99/año)
+- Xcode 16+ (macOS requerido para build y subida)
+- Politica de privacidad para la app
+
+## Orden Oficial De Ejecucion
 
 El orden recomendado es:
 
 1. Fase 0: Reglas oficiales.
 2. Fase 1: DDL final.
 3. Fase 2: Setup app + DB.
-4. Fase 3: Migración.
+4. Fase 3: Migracion.
 5. Fase 4: Bot conectado a DB.
 6. Fase 5: API.
 7. Fase 6: Dashboard MVP.
-8. Fase 7: Administración.
-9. Fase 8: Automatización.
+8. Fase 7: Administracion.
+9. Fase 8: Automatizacion.
+10. Fase 9: iOS App Store.
 
 ## Reglas De Desarrollo
 

@@ -16,19 +16,22 @@ No tomar decisiones de implementación sin consultar primero esta política.
 
 ## Fases Actuales
 
-El proyecto está en **Fase 8**. No saltar fases.
+**AL INICIAR CADA SESION:** Leer tambien `ISSUES_FASE9.md` si se trabaja en iOS.
+
+El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo cuando no comparten dependencias.
 
 | Fase | Estado |
 |------|--------|
 | 0 - Alinear Reglas Del Negocio | cerrado |
 | 1 - DDL Final Y Base De Datos | cerrado |
-| 2 - Setup Técnico De La App | cerrado |
-| 3 - Migración De Datos | cerrado |
+| 2 - Setup Tecnico De La App | cerrado |
+| 3 - Migracion De Datos | cerrado |
 | 4 - Refactor Del Bot | cerrado |
 | 5 - API Interna | cerrado |
 | 6 - Dashboard MVP | cerrado |
-| 7 - Administración | cerrado |
-| 8 - Inteligencia Y Automatización | en progreso |
+| 7 - Administracion | cerrado |
+| 8 - Inteligencia Y Automatizacion | en progreso |
+| 9 - iOS App Store (Capacitor) | en progreso |
 
 ### Fase 0 — Entregables cerrados
 
@@ -120,7 +123,19 @@ El proyecto está en **Fase 8**. No saltar fases.
 | Navegación con estado activo | cerrado | Indicador de página activa + menú hamburguesa móvil |
 | Páginas de configuración | cerrado | Categorías, usuarios, liquidez, conceptos recurrentes, audit log |
 
-## Deploy en Producción (Render)
+### Fase 9 — Issues
+
+| Issue | Estado | Titulo |
+|-------|--------|--------|
+| #28 | pendiente | Preparar web app para shell nativo |
+| #29 | pendiente | Integrar Capacitor CLI y configuracion |
+| #30 | pendiente | Configurar proyecto iOS en Xcode |
+| #31 | pendiente | Agregar plugins nativos (Face ID, notificaciones, hapticos) |
+| #32 | pendiente | Scripts de build y automatizacion |
+| #33 | pendiente | App Store Connect y subida a Review |
+| #34 | pendiente | Politica de privacidad para App Store |
+
+## Deploy en Produccion (Render)
 
 ### Servicios activos
 
@@ -162,6 +177,7 @@ El proyecto está en **Fase 8**. No saltar fases.
 - **Tailwind CSS** + **shadcn/ui** para frontend
 - **WhatsApp Cloud API** para bot
 - **Google Sheets API** solo como integración secundaria
+- **Capacitor** para iOS App Store wrapper
 
 ## Reglas De Código
 
