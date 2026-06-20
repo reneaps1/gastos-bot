@@ -12,6 +12,7 @@
     "cap:dev": "npx cap open ios",
     "cap:sync": "npx cap sync",
     "cap:build": "npm run build && npx cap copy && npx cap sync",
+    "cap:release": "npm run build && npx cap sync && cd ios/App && xcodebuild -workspace App.xcworkspace -scheme App -configuration Release archive",
     "cap:assets": "node scripts/generate-assets.js"
   },
   "dependencies": {
