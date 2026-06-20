@@ -127,13 +127,42 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 
 | Issue | Estado | Titulo |
 |-------|--------|--------|
-| #28 | pendiente | Preparar web app para shell nativo |
-| #29 | pendiente | Integrar Capacitor CLI y configuracion |
+| #28 | completado | Preparar web app para shell nativo |
+| #29 | completado | Integrar Capacitor CLI y configuracion |
 | #30 | pendiente | Configurar proyecto iOS en Xcode |
 | #31 | pendiente | Agregar plugins nativos (Face ID, notificaciones, hapticos) |
-| #32 | pendiente | Scripts de build y automatizacion |
+| #32 | completado | Scripts de build y automatizacion |
 | #33 | pendiente | App Store Connect y subida a Review |
-| #34 | pendiente | Politica de privacidad para App Store |
+| #34 | completado | Politica de privacidad para App Store |
+
+### Fase 9 — Handoff para macOS
+
+Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues restantes (#30, #31, #33) requieren macOS con Xcode.
+
+**Pasos para continuar en Mac:**
+
+1. `git clone` + `cd gastos-bot/dashboard` + `npm install`
+2. `npx cap open ios` → abre Xcode con el proyecto
+3. Ejecutar **Issue #30** (ver `ISSUES_FASE9.md`):
+   - Configurar Team/Bundle ID en Xcode
+   - Arrastrar `public/icon-1024.png` como App Icon
+   - Personalizar Launch Screen
+   - Agregar `NSFaceIDUsageDescription` en Info.plist
+   - Probar en simulador (Cmd+R)
+4. Ejecutar **Issue #31**:
+   - `npm install @capacitor/local-auth @capacitor/push-notifications @capacitor/haptics`
+   - `npx cap sync ios`
+   - Agregar Push Notifications en Xcode Capabilities
+5. Ejecutar **Issue #33**:
+   - Crear app en App Store Connect
+   - URL de privacidad: `https://gastos-dashboard.onrender.com/privacy`
+   - Product → Archive → Distribute App
+
+**Configuracion clave:**
+- `capacitor.config.ts` → `server.url` apunta a `https://gastos-dashboard.onrender.com`
+- Para desarrollo local en Mac, cambiar a `http://localhost:3000`
+- `webDir` apunta a `public/` (los assets estaticos)
+- Scripts: `npm run cap:dev`, `cap:sync`, `cap:build`, `cap:release`
 
 ## Deploy en Produccion (Render)
 

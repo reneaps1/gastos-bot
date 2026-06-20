@@ -317,22 +317,20 @@ Ninguno (puede ejecutarse en paralelo con otros issues de Fase 9).
 
 ## Resumen de Issues Fase 9
 
-| Issue | Titulo | Prioridad | Dependencias |
-|-------|--------|-----------|--------------|
-| #28 | Preparar web app para shell nativo | Alta | Ninguna |
-| #29 | Integrar Capacitor CLI y configuracion | Alta | #28 |
-| #30 | Configurar proyecto iOS en Xcode | Alta | #29 |
-| #31 | Agregar plugins nativos | Media | #29 |
-| #32 | Scripts de build y automatizacion | Baja | #29 |
-| #33 | App Store Connect y subida a Review | Alta | #28-#32, cuenta Apple |
-| #34 | Politica de privacidad para App Store | Media | Ninguna |
+| Issue | Titulo | Prioridad | Estado | Dependencias |
+|-------|--------|-----------|--------|--------------|
+| #28 | Preparar web app para shell nativo | Alta | completado | Ninguna |
+| #29 | Integrar Capacitor CLI y configuracion | Alta | completado | #28 |
+| #30 | Configurar proyecto iOS en Xcode | Alta | pendiente | #29, requiere macOS |
+| #31 | Agregar plugins nativos | Media | pendiente | #29, requiere macOS |
+| #32 | Scripts de build y automatizacion | Baja | completado | #29 |
+| #33 | App Store Connect y subida a Review | Alta | pendiente | #30, #31, requiere macOS + cuenta Apple |
+| #34 | Politica de privacidad para App Store | Media | completado | Ninguna |
 
-## Orden de ejecucion recomendado
+## Orden de ejecucion (restante en macOS)
 
-1. Issue #34 (Politica de privacidad) — puede ejecutarse en paralelo
-2. Issue #28 (Preparar web app)
-3. Issue #29 (Integrar Capacitor)
-4. Issue #30 (Configurar Xcode) — requiere macOS
-5. Issue #31 (Plugins nativos)
-6. Issue #32 (Scripts build)
-7. Issue #33 (App Store Connect y subida) — requiere macOS + cuenta Apple
+1. Issue #30 (Configurar Xcode) — requiere macOS con Xcode 16+
+2. Issue #31 (Plugins nativos) — requiere #30
+3. Issue #33 (App Store Connect y subida) — requiere #30 + #31 + cuenta Apple Developer
+
+**Nota para handoff:** Los issues #28, #29, #32 y #34 fueron completados en Windows. Ver seccion "Handoff para macOS" en AGENTS.md para los pasos exactos a seguir en Mac.
