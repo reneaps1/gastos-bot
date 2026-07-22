@@ -131,8 +131,8 @@ export async function PUT(
     }
 
     // Already part of an existing recurring series.
-    if (scope !== 'future' && scope !== 'this_forward' && scope !== 'all') {
-      // No explicit scope chosen — safest default is to only touch this row.
+    if (scope === 'single' || (scope !== 'future' && scope !== 'this_forward' && scope !== 'all')) {
+      // "Solo esta quincena" (or no scope sent) — only this row, series untouched.
       const presupuesto = await prisma.presupuesto.update({
         where: { id }, data: ownData, include: { categoria: true, quincena: true },
       })
