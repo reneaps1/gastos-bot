@@ -3,14 +3,18 @@ import { useEffect, useRef } from 'react'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 
+export const ALL_QUINCENAS = 'all'
+
 interface Props {
   quincenas: Quincena[]
   quincenaId: string
   today: string
   onSelect: (id: string) => void
+  /** Show a leading "Todas" chip that searches across every quincena at once. */
+  showAll?: boolean
 }
 
-export function QuincenaChips({ quincenas, quincenaId, today, onSelect }: Props) {
+export function QuincenaChips({ quincenas, quincenaId, today, onSelect, showAll }: Props) {
   const selectedRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => {
@@ -21,6 +25,19 @@ export function QuincenaChips({ quincenas, quincenaId, today, onSelect }: Props)
 
   return (
     <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
+      {showAll && (
+        <button
+          ref={quincenaId === ALL_QUINCENAS ? selectedRef : undefined}
+          onClick={() => onSelect(ALL_QUINCENAS)}
+          className={`flex-none px-3 py-1.5 rounded-full text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
+            quincenaId === ALL_QUINCENAS
+              ? 'bg-indigo-600 text-white shadow-sm'
+              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400'
+          }`}
+        >
+          Todas
+        </button>
+      )}
       {quincenas.map(q => {
         const ini = q.fechaInicio.split('T')[0]
         const fin = q.fechaFin.split('T')[0]
