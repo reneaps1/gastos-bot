@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     if (asignado === 'si') where.presupuestoId = { not: null }
     else if (asignado === 'no') where.presupuestoId = null
 
-    const [transacciones, total] = await Promise.all([
+    const [transacciones, total, totalesPorTipo] = await Promise.all([
       prisma.transaccion.findMany({
         where,
         orderBy: { fecha: 'desc' },
@@ -48,7 +48,22 @@ export async function GET(request: Request) {
         include: { categoria: true, user: true, quincena: true, metodoPago: true, presupuesto: true },
       }),
       prisma.transaccion.count({ where }),
+      prisma.transaccion.groupBy({
+        by: ['tipo', 'estatus'],
+        where,
+        _sum: { monto: true },
+      }),
     ])
+
+    // Suma real (no paginada) por tipo, respetando los mismos filtros que la
+    // lista — evita que las tarjetas de totales se calculen sobre solo la
+    // página de resultados devuelta.
+    const totales = { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 }
+    for (const row of totalesPorTipo) {
+      const monto = Number(row._sum.monto ?? 0)
+      if (row.tipo in totales) totales[row.tipo as 'Gasto' | 'Ingreso' | 'Ahorro'] += monto
+      if (row.tipo === 'Gasto' && row.estatus === 'Pagado') totales.GastoPagado += monto
+    }
 
     return NextResponse.json({
       data: transacciones,
@@ -58,6 +73,7 @@ export async function GET(request: Request) {
         total,
         pages: Math.ceil(total / limit),
       },
+      totales,
     })
   } catch (error) {
     console.error('Error fetching transacciones:', error)

@@ -166,11 +166,14 @@ export default function DashboardPage() {
       const tendData = await tendRes.json()
 
       const txs: Transaccion[] = txJson.data ?? []
+      const totales = txJson.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 }
 
-      const ingresos = txs.filter(t => t.tipo === 'Ingreso').reduce((s, t) => s + Number(t.monto), 0)
-      const gastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
-      const ahorros = txs.filter(t => t.tipo === 'Ahorro').reduce((s, t) => s + Number(t.monto), 0)
-      const gastosPagados = txs.filter(t => t.tipo === 'Gasto' && t.estatus === 'Pagado').reduce((s, t) => s + Number(t.monto), 0)
+      // Totales reales (agregado del servidor, no truncados por la página de
+      // transacciones que se trae para las listas/desgloses de abajo).
+      const ingresos = totales.Ingreso
+      const gastos = totales.Gasto
+      const ahorros = totales.Ahorro
+      const gastosPagados = totales.GastoPagado
       const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
 
       const gastosCat = txs.filter(t => t.tipo === 'Gasto').reduce((acc, t) => {
