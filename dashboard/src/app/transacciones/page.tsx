@@ -1,12 +1,13 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle, Download } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 import { formatQuincenaOption, formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, isDateInQuincenaGap, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
+import { toCsv, downloadCsv } from '@/lib/csv'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -91,6 +92,7 @@ export default function TransaccionesPage() {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [togglingId, setTogglingId] = useState<number | null>(null)
+  const [exporting, setExporting] = useState(false)
 
   const [quincenaId, setQuincenaId] = useState('')
   const [tipo, setTipo] = useState('')
@@ -298,6 +300,43 @@ export default function TransaccionesPage() {
     } catch { toast('Error al actualizar estatus', 'error') } finally { setTogglingId(null) }
   }
 
+  async function handleExportCsv() {
+    setExporting(true)
+    try {
+      const params = new URLSearchParams()
+      if (quincenaId) params.set('quincenaId', quincenaId)
+      if (tipo) params.set('tipo', tipo)
+      if (categoriaId) params.set('categoriaId', categoriaId)
+      if (userId) params.set('userId', userId)
+      if (estatus) params.set('estatus', estatus)
+      if (asignacion) params.set('asignado', asignacion)
+      if (debouncedSearch) params.set('busqueda', debouncedSearch)
+      params.set('page', '1')
+      params.set('limit', '9999')
+      const res = await fetch(`/api/transacciones?${params}`)
+      const json = await res.json()
+      const rows: Transaccion[] = json.data ?? []
+      const csv = toCsv(rows, [
+        { key: 'fecha', label: 'Fecha', value: r => formatDate(r.fecha) },
+        { key: 'descripcion', label: 'Descripción', value: r => r.descripcion },
+        { key: 'categoria', label: 'Categoría', value: r => r.categoria?.nombre ?? '' },
+        { key: 'tipo', label: 'Tipo', value: r => r.tipo },
+        { key: 'estatus', label: 'Estatus', value: r => r.estatus },
+        { key: 'quincena', label: 'Quincena', value: r => r.quincena?.codigo ?? '' },
+        { key: 'usuario', label: 'Usuario', value: r => r.user?.nombre ?? '' },
+        { key: 'metodoPago', label: 'Método de pago', value: r => r.metodoPago?.nombre ?? '' },
+        { key: 'presupuesto', label: 'Presupuesto asignado', value: r => r.presupuesto?.descripcion ?? '' },
+        { key: 'monto', label: 'Monto', value: r => Number(r.monto).toFixed(2) },
+      ])
+      const selectedQ = quincenas.find(q => q.id.toString() === quincenaId)
+      downloadCsv(`transacciones-${selectedQ?.codigo ?? 'todas'}-${getMexicoDateString()}.csv`, csv)
+    } catch {
+      toast('Error al exportar CSV', 'error')
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const today = getMexicoDateString()
   const totalPages = Math.ceil(total / LIMIT)
   const totalGastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
@@ -313,9 +352,15 @@ export default function TransaccionesPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Transacciones</h2>
-        <button onClick={openCreate} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
-          <Plus size={16} /> Nueva transacción
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={handleExportCsv} disabled={exporting || total === 0}
+            className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-4 py-2.5 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
+            <Download size={16} /> {exporting ? 'Exportando...' : 'Descargar CSV'}
+          </button>
+          <button onClick={openCreate} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
+            <Plus size={16} /> Nueva transacción
+          </button>
+        </div>
       </div>
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">

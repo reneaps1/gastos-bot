@@ -1,12 +1,13 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle, Loader2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle, Loader2, Download } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
+import { toCsv, downloadCsv } from '@/lib/csv'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -301,6 +302,21 @@ export default function PresupuestoPage() {
     } catch { toast('Error al copiar presupuestos', 'error') } finally { setCopying(false) }
   }
 
+  function handleExportCsv() {
+    const csv = toCsv(presupuestos, [
+      { key: 'categoria', label: 'Categoría', value: p => p.categoria?.nombre ?? '' },
+      { key: 'descripcion', label: 'Descripción', value: p => p.descripcion },
+      { key: 'presupuestado', label: 'Presupuestado', value: p => Number(p.montoPresupuestado).toFixed(2) },
+      { key: 'real', label: 'Real', value: p => Number(p.real).toFixed(2) },
+      { key: 'pct', label: '% Usado', value: p => p.pct.toFixed(0) },
+      { key: 'excedido', label: 'Excedido', value: p => Number(p.excedido).toFixed(2) },
+      { key: 'recurrente', label: 'Recurrente', value: p => p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : 'No' },
+      { key: 'vence', label: 'Vence', value: p => p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short', year: 'numeric' }) : '' },
+    ])
+    const quincenaLabel = quincenaActual?.codigo ?? quincenas.find(q => q.id.toString() === quincenaId)?.codigo ?? 'quincena'
+    downloadCsv(`presupuesto-${quincenaLabel}-${getMexicoDateString()}.csv`, csv)
+  }
+
   function toggleGroup(key: string) {
     setExpandedGroups(prev => {
       const next = new Set(prev)
@@ -341,6 +357,10 @@ export default function PresupuestoPage() {
               {copying ? 'Copiando...' : 'Copiar anterior'}
             </button>
           )}
+          <button onClick={handleExportCsv} disabled={presupuestos.length === 0}
+            className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
+            <Download size={14} /> Descargar CSV
+          </button>
           <button onClick={openCreate}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
             <Plus size={16} /> Nuevo
