@@ -86,6 +86,7 @@ export default function TransaccionesPage() {
 
   const [txs, setTxs] = useState<Transaccion[]>([])
   const [total, setTotal] = useState(0)
+  const [totales, setTotales] = useState({ Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 })
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -163,6 +164,7 @@ export default function TransaccionesPage() {
       const json = await res.json()
       setTxs(json.data ?? [])
       setTotal(json.pagination?.total ?? 0)
+      setTotales(json.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 })
     } finally { setLoading(false) }
   }, [quincenaId, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
 
@@ -300,8 +302,8 @@ export default function TransaccionesPage() {
 
   const today = getMexicoDateString()
   const totalPages = Math.ceil(total / LIMIT)
-  const totalGastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
-  const totalIngresos = txs.filter(t => t.tipo === 'Ingreso').reduce((s, t) => s + Number(t.monto), 0)
+  const totalGastos = totales.Gasto
+  const totalIngresos = totales.Ingreso
   const formQuincena = quincenas.find(q => q.id.toString() === form.quincenaId)
   const suggestedQuincenaId = form.fecha ? getQuincenaIdForDate(quincenas, form.fecha) : ''
   const suggestedQuincena = quincenas.find(q => q.id.toString() === suggestedQuincenaId)
