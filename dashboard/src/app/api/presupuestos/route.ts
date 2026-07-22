@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
+import { computeQuincenasTarget } from '@/lib/recurrencia'
 
 export async function GET(request: Request) {
   try {
@@ -101,44 +102,7 @@ export async function POST(request: Request) {
 
     const allQuincenas = await prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
 
-    let quincenesTarget: typeof allQuincenas
-
-    if (frecuencia === 'MENSUAL') {
-      // Target-date lookup: for each calendar month find the quincena that covers diaCobro
-      const targetDay = diaCobro_ ?? 1
-      const startDate = quincenaInicio.fechaInicio
-      const startYear = startDate.getUTCFullYear()
-      const startMonth = startDate.getUTCMonth()
-
-      const lastQuincena = allQuincenas.at(-1)
-      const lastDate = lastQuincena?.fechaFin ?? startDate
-      const lastYear = lastDate.getUTCFullYear()
-      const lastMonth = lastDate.getUTCMonth()
-      const maxMonths = (lastYear - startYear) * 12 + (lastMonth - startMonth) + 1
-      const monthCount = numOcurrencias ? Math.min(numOcurrencias, maxMonths) : maxMonths
-
-      const selectedIds = new Set<number>()
-      for (let i = 0; i < monthCount; i++) {
-        const y = startYear + Math.floor((startMonth + i) / 12)
-        const mo = (startMonth + i) % 12
-        const daysInMonth = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate()
-        const d = Math.min(targetDay, daysInMonth)
-        const target = `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-        const q = allQuincenas.find(q => {
-          const ini = q.fechaInicio.toISOString().split('T')[0]
-          const fin = q.fechaFin.toISOString().split('T')[0]
-          return ini <= target && target <= fin
-        })
-        if (q && q.fechaInicio >= quincenaInicio.fechaInicio) selectedIds.add(q.id)
-      }
-      quincenesTarget = allQuincenas.filter(q => selectedIds.has(q.id))
-    } else {
-      // CADA_QUINCENA: all quincenas from start, optionally limited
-      quincenesTarget = allQuincenas.filter(q => q.fechaInicio >= quincenaInicio.fechaInicio)
-      if (numOcurrencias && numOcurrencias > 0) {
-        quincenesTarget = quincenesTarget.slice(0, numOcurrencias)
-      }
-    }
+    const quincenesTarget = computeQuincenasTarget(allQuincenas, quincenaInicio, frecuencia, diaCobro_, numOcurrencias)
 
     if (quincenesTarget.length === 0) {
       return NextResponse.json({ error: 'No matching quincenas found' }, { status: 400 })

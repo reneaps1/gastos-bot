@@ -8,6 +8,7 @@ import { FormModal } from '@/components/ui/FormModal'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
+import { QuincenaChips } from '@/components/ui/QuincenaChips'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -108,6 +109,7 @@ export default function PresupuestoPage() {
   const [modalOpen, setModalOpen] = useState(false)
   const [editingP, setEditingP] = useState<Presupuesto | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; p: Presupuesto } | null>(null)
+  const [editScopeBody, setEditScopeBody] = useState<Record<string, unknown> | null>(null)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -208,8 +210,8 @@ export default function PresupuestoPage() {
       categoriaId: p.categoriaId.toString(), descripcion: p.descripcion,
       tipo: p.tipo, montoPresupuestado: p.montoPresupuestado.toString(),
       clasificacion: p.clasificacion ?? '', notas: p.notas ?? '',
-      recurrente: false, frecuencia: 'CADA_QUINCENA',
-      terminaCon: 'sin_fin', numOcurrencias: '6',
+      recurrente: p.recurrente, frecuencia: p.frecuencia ?? 'CADA_QUINCENA',
+      terminaCon: p.numOcurrencias ? 'n_ocurrencias' : 'sin_fin', numOcurrencias: p.numOcurrencias?.toString() ?? '6',
       diaCobro: p.diaCobro?.toString() ?? '',
       fechaVencimiento: p.fechaVencimiento ? p.fechaVencimiento.split('T')[0] : '',
       targetQuincenaId: '',
@@ -226,24 +228,35 @@ export default function PresupuestoPage() {
     return errors
   }
 
+  function buildSaveBody() {
+    return {
+      quincenaId: form.targetQuincenaId || quincenaId,
+      categoriaId: form.categoriaId, descripcion: form.descripcion.trim(),
+      tipo: form.tipo, montoPresupuestado: form.montoPresupuestado,
+      clasificacion: form.clasificacion || null, notas: form.notas || null,
+      recurrente: form.recurrente,
+      frecuencia: form.recurrente ? form.frecuencia : null,
+      numOcurrencias: form.recurrente && form.terminaCon === 'n_ocurrencias'
+        ? parseInt(form.numOcurrencias) || null
+        : null,
+      diaCobro: form.diaCobro ? parseInt(form.diaCobro) : null,
+      fechaVencimiento: form.fechaVencimiento || null,
+    }
+  }
+
   async function handleSave() {
     const errors = validate()
     if (Object.keys(errors).length) { setFormErrors(errors); return }
+    const body = buildSaveBody()
+    // Editing a line that's already part of a recurring series: hide the
+    // edit form and ask which quincenas to apply the change to before saving.
+    if (editingP?.recurrenciaGrupoId) { setModalOpen(false); setEditScopeBody(body); return }
+    await saveBody(body)
+  }
+
+  async function saveBody(body: Record<string, unknown>) {
     setSaving(true)
     try {
-      const body = {
-        quincenaId: form.targetQuincenaId || quincenaId,
-        categoriaId: form.categoriaId, descripcion: form.descripcion.trim(),
-        tipo: form.tipo, montoPresupuestado: form.montoPresupuestado,
-        clasificacion: form.clasificacion || null, notas: form.notas || null,
-        recurrente: form.recurrente,
-        frecuencia: form.recurrente ? form.frecuencia : null,
-        numOcurrencias: form.recurrente && form.terminaCon === 'n_ocurrencias'
-          ? parseInt(form.numOcurrencias) || null
-          : null,
-        diaCobro: form.diaCobro ? parseInt(form.diaCobro) : null,
-        fechaVencimiento: form.fechaVencimiento || null,
-      }
       const res = editingP
         ? await fetch(`/api/presupuestos/${editingP.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         : await fetch('/api/presupuestos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -255,8 +268,14 @@ export default function PresupuestoPage() {
           : 'Presupuesto creado'
       toast(msg)
       setModalOpen(false)
+      setEditScopeBody(null)
       fetchPresupuestos()
     } catch { toast('Error al guardar', 'error') } finally { setSaving(false) }
+  }
+
+  async function handleSaveWithScope(scope: 'single' | 'future' | 'this_forward' | 'all') {
+    if (!editScopeBody) return
+    await saveBody({ ...editScopeBody, scope })
   }
 
   async function handleDelete(mode: 'single' | 'all') {
@@ -369,37 +388,7 @@ export default function PresupuestoPage() {
       </div>
 
       {/* Selector de quincena */}
-      {quincenas.length > 0 && (() => {
-        const selectedIdx = quincenas.findIndex(q => quincenaId === q.id.toString())
-        const windowStart = Math.max(0, Math.min(selectedIdx < 0 ? 0 : selectedIdx - 1, quincenas.length - 8))
-        const visibleChips = quincenas.slice(windowStart, windowStart + 8)
-        return (
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
-            {visibleChips.map(q => {
-              const ini = q.fechaInicio.split('T')[0]
-              const fin = q.fechaFin.split('T')[0]
-              const isRunning = today >= ini && today <= fin
-              const isSelected = quincenaId === q.id.toString()
-              return (
-                <button
-                  key={q.id}
-                  onClick={() => selectQuincena(q.id.toString())}
-                  className={`flex-none px-3 py-1.5 rounded-full text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
-                    isSelected
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : isRunning
-                      ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400'
-                  }`}
-                >
-                  {q.codigo}
-                  {isRunning && !isSelected && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 align-middle mb-0.5" />}
-                </button>
-              )
-            })}
-          </div>
-        )
-      })()}
+      <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} />
 
       <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
@@ -827,9 +816,13 @@ export default function PresupuestoPage() {
               onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} className={`${fieldClass()} resize-none`} />
           </div>
 
-          {/* Recurrence section — hidden when editing an existing item */}
-          {!editingP && (
-            <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+          {/* Recurrence section — shown both when creating and editing */}
+          <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+              {editingP?.recurrenciaGrupoId && (
+                <p className="px-4 py-2 text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 border-b border-slate-200 dark:border-slate-700">
+                  Esta partida es parte de una serie recurrente. Al guardar te preguntaremos qué quincenas quieres actualizar.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => setForm(f => ({ ...f, recurrente: !f.recurrente }))}
@@ -942,7 +935,7 @@ export default function PresupuestoPage() {
                   {/* Summary */}
                   <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-lg px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300">
                     <Repeat size={11} className="inline mr-1.5 mb-0.5" />
-                    Se creará en{' '}
+                    {editingP ? 'Se aplicará a' : 'Se creará en'}{' '}
                     {form.terminaCon === 'n_ocurrencias'
                       ? `${form.numOcurrencias} ${form.frecuencia === 'MENSUAL' ? 'meses' : 'quincenas'}`
                       : 'todas las quincenas futuras disponibles'
@@ -951,8 +944,7 @@ export default function PresupuestoPage() {
                   </div>
                 </div>
               )}
-            </div>
-          )}
+          </div>
 
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
@@ -1024,6 +1016,76 @@ export default function PresupuestoPage() {
             <button
               onClick={() => setDeleteTarget(null)}
               disabled={deleting}
+              className="w-full py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-50 cursor-pointer transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Editing a line that's part of a recurring series — ask scope */}
+      {editScopeBody && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl p-6 w-full max-w-sm space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/30 flex items-center justify-center shrink-0">
+                <Repeat size={16} className="text-indigo-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-800 dark:text-slate-100">Actualizar partida recurrente</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5 truncate">{editingP?.descripcion}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Esta partida forma parte de una serie recurrente. ¿A qué quincenas quieres aplicar los cambios?
+            </p>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => handleSaveWithScope('single')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Solo esta quincena</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Cambia únicamente este registro; no afecta la serie</p>
+              </button>
+
+              <button
+                onClick={() => handleSaveWithScope('future')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">De aquí en adelante</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Sólo las quincenas futuras; esta no se modifica</p>
+              </button>
+
+              <button
+                onClick={() => handleSaveWithScope('this_forward')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Incluyendo esta quincena</p>
+                <p className="text-xs text-indigo-400 dark:text-indigo-500 mt-0.5">Esta quincena y todas las futuras</p>
+              </button>
+
+              <button
+                onClick={() => handleSaveWithScope('all')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={14} />
+                  <p className="text-sm font-medium">Todo, absolutamente todo</p>
+                </div>
+                <p className="text-xs text-indigo-200 mt-0.5 ml-5">Incluye quincenas ya pasadas de la serie</p>
+              </button>
+            </div>
+
+            <button
+              onClick={() => { setEditScopeBody(null); setModalOpen(true) }}
+              disabled={saving}
               className="w-full py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-50 cursor-pointer transition-colors"
             >
               Cancelar

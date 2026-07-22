@@ -8,6 +8,7 @@ import { FormModal } from '@/components/ui/FormModal'
 import { formatQuincenaOption, formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, isDateInQuincenaGap, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
+import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -87,6 +88,7 @@ export default function TransaccionesPage() {
 
   const [txs, setTxs] = useState<Transaccion[]>([])
   const [total, setTotal] = useState(0)
+  const [totales, setTotales] = useState({ Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 })
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -144,14 +146,14 @@ export default function TransaccionesPage() {
   function selectQuincena(id: string) {
     setQuincenaId(id)
     setPage(1)
-    persistQuincenaId(id)
+    if (id !== ALL_QUINCENAS) persistQuincenaId(id)
   }
 
   const fetchTxs = useCallback(async () => {
     if (!quincenaId) { setLoading(false); return }
     setLoading(true)
     const params = new URLSearchParams()
-    if (quincenaId) params.set('quincenaId', quincenaId)
+    if (quincenaId && quincenaId !== ALL_QUINCENAS) params.set('quincenaId', quincenaId)
     if (tipo) params.set('tipo', tipo)
     if (categoriaId) params.set('categoriaId', categoriaId)
     if (userId) params.set('userId', userId)
@@ -165,6 +167,7 @@ export default function TransaccionesPage() {
       const json = await res.json()
       setTxs(json.data ?? [])
       setTotal(json.pagination?.total ?? 0)
+      setTotales(json.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 })
     } finally { setLoading(false) }
   }, [quincenaId, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
 
@@ -191,7 +194,7 @@ export default function TransaccionesPage() {
   function openCreate() {
     setEditingTx(null)
     const dateQuincenaId = getQuincenaIdForDate(quincenas, EMPTY_FORM.fecha)
-    setForm({ ...EMPTY_FORM, quincenaId: dateQuincenaId || quincenaId })
+    setForm({ ...EMPTY_FORM, quincenaId: dateQuincenaId || (quincenaId !== ALL_QUINCENAS ? quincenaId : '') })
     setFormErrors({})
     setModalOpen(true)
   }
@@ -304,7 +307,7 @@ export default function TransaccionesPage() {
     setExporting(true)
     try {
       const params = new URLSearchParams()
-      if (quincenaId) params.set('quincenaId', quincenaId)
+      if (quincenaId && quincenaId !== ALL_QUINCENAS) params.set('quincenaId', quincenaId)
       if (tipo) params.set('tipo', tipo)
       if (categoriaId) params.set('categoriaId', categoriaId)
       if (userId) params.set('userId', userId)
@@ -339,8 +342,8 @@ export default function TransaccionesPage() {
 
   const today = getMexicoDateString()
   const totalPages = Math.ceil(total / LIMIT)
-  const totalGastos = txs.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0)
-  const totalIngresos = txs.filter(t => t.tipo === 'Ingreso').reduce((s, t) => s + Number(t.monto), 0)
+  const totalGastos = totales.Gasto
+  const totalIngresos = totales.Ingreso
   const formQuincena = quincenas.find(q => q.id.toString() === form.quincenaId)
   const suggestedQuincenaId = form.fecha ? getQuincenaIdForDate(quincenas, form.fecha) : ''
   const suggestedQuincena = quincenas.find(q => q.id.toString() === suggestedQuincenaId)
@@ -365,37 +368,7 @@ export default function TransaccionesPage() {
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
         {/* Chips de quincena */}
-        {quincenas.length > 0 && (() => {
-          const selectedIdx = quincenas.findIndex(q => quincenaId === q.id.toString())
-          const windowStart = Math.max(0, Math.min(selectedIdx < 0 ? 0 : selectedIdx - 1, quincenas.length - 8))
-          const visibleChips = quincenas.slice(windowStart, windowStart + 8)
-          return (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 -mx-1 px-1">
-              {visibleChips.map(q => {
-                const ini = q.fechaInicio.split('T')[0]
-                const fin = q.fechaFin.split('T')[0]
-                const isRunning = today >= ini && today <= fin
-                const isSelected = quincenaId === q.id.toString()
-                return (
-                  <button
-                    key={q.id}
-                    onClick={() => selectQuincena(q.id.toString())}
-                    className={`flex-none px-3 py-1.5 rounded-full text-sm font-medium transition-all cursor-pointer whitespace-nowrap ${
-                      isSelected
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : isRunning
-                        ? 'bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40'
-                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-indigo-50 dark:hover:bg-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400'
-                    }`}
-                  >
-                    {q.codigo}
-                    {isRunning && !isSelected && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 align-middle mb-0.5" />}
-                  </button>
-                )
-              })}
-            </div>
-          )
-        })()}
+        <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} showAll />
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-2">
           <FilterChip value={tipo} onChange={v => { setTipo(v); setPage(1) }} onClear={() => { setTipo(''); setPage(1) }} placeholder="Tipo">
@@ -429,7 +402,7 @@ export default function TransaccionesPage() {
             )}
           </div>
         </div>
-        <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
+        {quincenaId !== ALL_QUINCENAS && <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
