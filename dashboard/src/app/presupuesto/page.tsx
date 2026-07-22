@@ -271,7 +271,7 @@ export default function PresupuestoPage() {
     } catch { toast('Error al guardar', 'error') } finally { setSaving(false) }
   }
 
-  async function handleSaveWithScope(scope: 'future' | 'this_forward' | 'all') {
+  async function handleSaveWithScope(scope: 'single' | 'future' | 'this_forward' | 'all') {
     if (!editScopeBody) return
     await saveBody({ ...editScopeBody, scope })
   }
@@ -1052,6 +1052,15 @@ export default function PresupuestoPage() {
             </p>
 
             <div className="space-y-2">
+              <button
+                onClick={() => handleSaveWithScope('single')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Solo esta quincena</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Cambia únicamente este registro; no afecta la serie</p>
+              </button>
+
               <button
                 onClick={() => handleSaveWithScope('future')}
                 disabled={saving}
