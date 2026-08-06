@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle, Loader2, Download } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle, Loader2, Download, Search, X } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -57,7 +57,7 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
 }
 interface TxSinPresupuesto {
   id: number; descripcion: string; monto: string | number
-  categoria: { id: number; nombre: string }; fecha: string
+  categoria: { id: number; nombre: string }; fecha: string; estatus: 'Pagado' | 'Pendiente'
 }
 
 const EMPTY_FORM = {
@@ -79,6 +79,16 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
   return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
+function matchesBusqueda(g: PresupuestoGrupo, q: string) {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return true
+  if (g.categoria.nombre.toLowerCase().includes(needle)) return true
+  return g.items.some(i =>
+    i.descripcion.toLowerCase().includes(needle) ||
+    (i.clasificacion ?? '').toLowerCase().includes(needle)
+  )
+}
+
 function pctColor(pct: number) {
   return pct > 90 ? 'bg-rose-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
 }
@@ -98,6 +108,9 @@ export default function PresupuestoPage() {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [copying, setCopying] = useState(false)
+
+  const [busqueda, setBusqueda] = useState('')
+  const [pendientePorPagar, setPendientePorPagar] = useState({ monto: 0, count: 0 })
 
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
   const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
@@ -146,6 +159,9 @@ export default function PresupuestoPage() {
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
 
       setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
+
+      const pendientes = transacciones.filter(t => t.estatus === 'Pendiente')
+      setPendientePorPagar({ monto: pendientes.reduce((s, t) => s + Number(t.monto), 0), count: pendientes.length })
     } finally { setLoading(false) }
   }, [quincenaId, quincenas])
 
@@ -328,6 +344,7 @@ export default function PresupuestoPage() {
       { key: 'presupuestado', label: 'Presupuestado', value: p => Number(p.montoPresupuestado).toFixed(2) },
       { key: 'real', label: 'Real', value: p => Number(p.real).toFixed(2) },
       { key: 'pct', label: '% Usado', value: p => p.pct.toFixed(0) },
+      { key: 'restante', label: 'Restante', value: p => Number(Math.max(p.montoPresupuestado - p.real, 0)).toFixed(2) },
       { key: 'excedido', label: 'Excedido', value: p => Number(p.excedido).toFixed(2) },
       { key: 'recurrente', label: 'Recurrente', value: p => p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : 'No' },
       { key: 'vence', label: 'Vence', value: p => p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short', year: 'numeric' }) : '' },
@@ -345,6 +362,7 @@ export default function PresupuestoPage() {
   }
 
   const grupos = buildGrupos(presupuestos)
+  const gruposFiltrados = grupos.filter(g => matchesBusqueda(g, busqueda))
 
   // Totals: only categories of tipo Gasto — excludes Ingresos/Ahorro categories from spending progress
   const gastoGrupos = grupos.filter(g => g.categoria.tipo === 'Gasto')
@@ -394,7 +412,7 @@ export default function PresupuestoPage() {
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Progreso global</p>
             <div className="flex justify-between items-end mb-2">
@@ -416,6 +434,18 @@ export default function PresupuestoPage() {
             </p>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
               {pctGlobal > 90 ? 'Cuidado: casi agotado' : pctGlobal > 70 ? 'Va bien, pero vigilante' : 'Suficiente para la quincena'}
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Pendiente por pagar</p>
+            <p className={`text-2xl font-bold tabular-nums ${pendientePorPagar.count > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+              {formatMXN(pendientePorPagar.monto)}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+              {pendientePorPagar.count > 0
+                ? `${pendientePorPagar.count} ${pendientePorPagar.count === 1 ? 'transacción sin pagar' : 'transacciones sin pagar'}`
+                : 'Todo pagado en esta quincena'}
             </p>
           </div>
         </div>
@@ -544,6 +574,21 @@ export default function PresupuestoPage() {
         </div>
       )}
 
+      {/* Buscador */}
+      {!loading && grupos.length > 0 && (
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+          <input type="text" placeholder="Buscar por categoría o descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          {busqueda && (
+            <button type="button" onClick={() => setBusqueda('')} aria-label="Quitar búsqueda"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Per-category groups */}
       {loading ? (
         <PresupuestoSkeleton />
@@ -555,9 +600,17 @@ export default function PresupuestoPage() {
           <p className="font-medium text-slate-600 dark:text-slate-400">Sin presupuesto configurado</p>
           <p className="text-sm mt-1">Crea un presupuesto o copia el de la quincena anterior</p>
         </div>
+      ) : gruposFiltrados.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+            <Search size={28} className="text-slate-300 dark:text-slate-600" />
+          </div>
+          <p className="font-medium text-slate-600 dark:text-slate-400">Sin resultados</p>
+          <p className="text-sm mt-1">Ninguna partida coincide con &quot;{busqueda}&quot;</p>
+        </div>
       ) : (
         <div className="grid gap-3">
-          {grupos.map(grupo => {
+          {gruposFiltrados.map(grupo => {
             const isMulti = grupo.items.length > 1
             const expanded = expandedGroups.has(grupo.key)
             const singleItem = grupo.items[0]
