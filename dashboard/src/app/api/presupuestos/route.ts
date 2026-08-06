@@ -31,7 +31,7 @@ export async function GET(request: Request) {
     const gastosRows = presupuestoIds.length > 0
       ? await prisma.transaccion.groupBy({
           by: ['presupuestoId'],
-          where: { presupuestoId: { in: presupuestoIds } },
+          where: { presupuestoId: { in: presupuestoIds }, tipo: 'Gasto' },
           _sum: { monto: true },
         })
       : []

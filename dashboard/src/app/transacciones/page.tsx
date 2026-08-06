@@ -739,7 +739,7 @@ export default function TransaccionesPage() {
             </div>
             <div>
               <Label htmlFor="tx-tipo">Tipo *</Label>
-              <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} className={fieldClass(formErrors.tipo)}>
+              <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value, presupuestoId: e.target.value === 'Gasto' ? f.presupuestoId : '' }))} className={fieldClass(formErrors.tipo)}>
                 <option value="Gasto">Gasto</option>
                 <option value="Ingreso">Ingreso</option>
                 <option value="Ahorro">Ahorro</option>
