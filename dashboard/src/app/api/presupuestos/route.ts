@@ -26,28 +26,35 @@ export async function GET(request: Request) {
       groupTotals.set(key, (groupTotals.get(key) ?? 0) + Number(p.montoPresupuestado))
     }
 
-    // Gasto real por línea específica (presupuestoId) — una sola query agrupada en vez de N aggregates
+    // Gasto real por línea específica (presupuestoId) — una sola query agrupada en vez de N aggregates.
+    // Se agrupa también por estatus para poder separar cuánto de ese real sigue Pendiente de pago.
     const presupuestoIds = presupuestos.map(p => p.id)
     const gastosRows = presupuestoIds.length > 0
       ? await prisma.transaccion.groupBy({
-          by: ['presupuestoId'],
+          by: ['presupuestoId', 'estatus'],
           where: { presupuestoId: { in: presupuestoIds }, tipo: 'Gasto' },
           _sum: { monto: true },
         })
       : []
 
-    const gastoMap = new Map<number, number>(
-      gastosRows.map(g => [g.presupuestoId as number, Number(g._sum.monto ?? 0)])
-    )
+    const gastoMap = new Map<number, number>()
+    const pendienteMap = new Map<number, number>()
+    for (const g of gastosRows) {
+      const id = g.presupuestoId as number
+      const monto = Number(g._sum.monto ?? 0)
+      gastoMap.set(id, (gastoMap.get(id) ?? 0) + monto)
+      if (g.estatus === 'Pendiente') pendienteMap.set(id, (pendienteMap.get(id) ?? 0) + monto)
+    }
 
     const presupuestosConGasto = presupuestos.map(p => {
       const real = gastoMap.get(p.id) ?? 0
+      const pendiente = pendienteMap.get(p.id) ?? 0
       const presup = Number(p.montoPresupuestado)
       const pct = presup > 0 ? (real / presup) * 100 : 0
       const key = `${p.quincenaId}-${p.categoriaId}`
       const categoriaTotal = groupTotals.get(key) ?? presup
       const excedido = real > presup ? Number((real - presup).toFixed(2)) : 0
-      return { ...p, real, pct, categoriaTotal, excedido }
+      return { ...p, real, pendiente, pct, categoriaTotal, excedido }
     })
 
     return NextResponse.json(presupuestosConGasto)
