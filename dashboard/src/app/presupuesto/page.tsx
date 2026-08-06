@@ -98,6 +98,7 @@ interface TablaFiltros {
   recurrente: string // '', 'si', 'no'
   estado: string // '', 'excedido', 'dentro'
   saldo: string // '', 'pendiente', 'pagado'
+  porCubrir: string // '', '0', '50', '100' — % usado por debajo del cual se considera "por cubrir"
   busqueda: string
 }
 
@@ -111,6 +112,9 @@ function matchesFiltrosTabla(p: Presupuesto, f: TablaFiltros) {
   if (f.estado === 'dentro' && p.excedido > 0) return false
   if (f.saldo === 'pendiente' && !(p.pendiente > 0)) return false
   if (f.saldo === 'pagado' && p.pendiente > 0) return false
+  if (f.porCubrir === '0' && p.real !== 0) return false
+  if (f.porCubrir === '50' && !(p.pct < 50)) return false
+  if (f.porCubrir === '100' && !(p.pct < 100)) return false
   const needle = f.busqueda.trim().toLowerCase()
   if (needle && !p.descripcion.toLowerCase().includes(needle) && !p.categoria.nombre.toLowerCase().includes(needle)) return false
   return true
@@ -162,6 +166,7 @@ export default function PresupuestoPage() {
   const [tablaRecurrente, setTablaRecurrente] = useState('')
   const [tablaEstado, setTablaEstado] = useState('')
   const [tablaSaldo, setTablaSaldo] = useState('')
+  const [tablaPorCubrir, setTablaPorCubrir] = useState('')
   const [busquedaTabla, setBusquedaTabla] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -499,6 +504,7 @@ export default function PresupuestoPage() {
           tablaRecurrente={tablaRecurrente} setTablaRecurrente={setTablaRecurrente}
           tablaEstado={tablaEstado} setTablaEstado={setTablaEstado}
           tablaSaldo={tablaSaldo} setTablaSaldo={setTablaSaldo}
+          tablaPorCubrir={tablaPorCubrir} setTablaPorCubrir={setTablaPorCubrir}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
         />
@@ -1276,6 +1282,7 @@ interface PresupuestoTablaProps {
   tablaRecurrente: string; setTablaRecurrente: (v: string) => void
   tablaEstado: string; setTablaEstado: (v: string) => void
   tablaSaldo: string; setTablaSaldo: (v: string) => void
+  tablaPorCubrir: string; setTablaPorCubrir: (v: string) => void
   busquedaTabla: string; setBusquedaTabla: (v: string) => void
   sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
 }
@@ -1285,10 +1292,10 @@ function PresupuestoTabla({
   tablaQuincenaId, setTablaQuincenaId, presupuestosTabla, tablaLoading,
   tablaCategoriaId, setTablaCategoriaId, tablaClasificacion, setTablaClasificacion,
   tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
-  tablaSaldo, setTablaSaldo,
+  tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
 }: PresupuestoTablaProps) {
-  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, busqueda: busquedaTabla }
+  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
     .filter(p => matchesFiltrosTabla(p, filtros))
     .sort((a, b) => {
@@ -1330,6 +1337,11 @@ function PresupuestoTabla({
           <FilterChip value={tablaSaldo} onChange={setTablaSaldo} onClear={() => setTablaSaldo('')} placeholder="Saldo">
             <option value="pendiente">Con saldo pendiente</option>
             <option value="pagado">Sin saldo pendiente</option>
+          </FilterChip>
+          <FilterChip value={tablaPorCubrir} onChange={setTablaPorCubrir} onClear={() => setTablaPorCubrir('')} placeholder="Por cubrir">
+            <option value="0">Sin registrar (0%)</option>
+            <option value="50">Cubierto menos de 50%</option>
+            <option value="100">Cubierto menos de 100%</option>
           </FilterChip>
           <div className="relative flex-1 min-w-[160px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
