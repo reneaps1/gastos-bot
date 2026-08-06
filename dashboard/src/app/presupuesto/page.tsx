@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle, Loader2, Download, Search, X } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2 } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -8,7 +8,8 @@ import { FormModal } from '@/components/ui/FormModal'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
-import { QuincenaChips } from '@/components/ui/QuincenaChips'
+import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
+import { FilterChip } from '@/components/ui/FilterChip'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -89,6 +90,43 @@ function matchesBusqueda(g: PresupuestoGrupo, q: string) {
   )
 }
 
+type SortKey = 'quincena' | 'categoria' | 'descripcion' | 'presupuestado' | 'real' | 'pct' | 'restante' | 'recurrente' | 'vence'
+
+interface TablaFiltros {
+  categoriaId: string
+  clasificacion: string // '', 'Fijo', 'Variable', 'sin'
+  recurrente: string // '', 'si', 'no'
+  estado: string // '', 'excedido', 'dentro'
+  busqueda: string
+}
+
+function matchesFiltrosTabla(p: Presupuesto, f: TablaFiltros) {
+  if (f.categoriaId && p.categoriaId.toString() !== f.categoriaId) return false
+  if (f.clasificacion === 'sin' && p.clasificacion) return false
+  if ((f.clasificacion === 'Fijo' || f.clasificacion === 'Variable') && p.clasificacion !== f.clasificacion) return false
+  if (f.recurrente === 'si' && !p.recurrente) return false
+  if (f.recurrente === 'no' && p.recurrente) return false
+  if (f.estado === 'excedido' && !(p.excedido > 0)) return false
+  if (f.estado === 'dentro' && p.excedido > 0) return false
+  const needle = f.busqueda.trim().toLowerCase()
+  if (needle && !p.descripcion.toLowerCase().includes(needle) && !p.categoria.nombre.toLowerCase().includes(needle)) return false
+  return true
+}
+
+function getSortValue(p: Presupuesto, key: SortKey): string | number {
+  switch (key) {
+    case 'quincena': return p.quincena.fechaInicio
+    case 'categoria': return p.categoria.nombre
+    case 'descripcion': return p.descripcion
+    case 'presupuestado': return Number(p.montoPresupuestado)
+    case 'real': return p.real
+    case 'pct': return p.pct
+    case 'restante': return Number(p.montoPresupuestado) - p.real
+    case 'recurrente': return p.recurrente ? 1 : 0
+    case 'vence': return p.fechaVencimiento ?? ''
+  }
+}
+
 function pctColor(pct: number) {
   return pct > 90 ? 'bg-rose-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
 }
@@ -111,6 +149,18 @@ export default function PresupuestoPage() {
 
   const [busqueda, setBusqueda] = useState('')
   const [pendientePorPagar, setPendientePorPagar] = useState({ monto: 0, count: 0 })
+
+  const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tarjetas')
+  const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
+  const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
+  const [tablaLoading, setTablaLoading] = useState(false)
+  const [tablaCategoriaId, setTablaCategoriaId] = useState('')
+  const [tablaClasificacion, setTablaClasificacion] = useState('')
+  const [tablaRecurrente, setTablaRecurrente] = useState('')
+  const [tablaEstado, setTablaEstado] = useState('')
+  const [busquedaTabla, setBusquedaTabla] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('quincena')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
   const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
@@ -141,6 +191,24 @@ export default function PresupuestoPage() {
   function selectQuincena(id: string) {
     setQuincenaId(id)
     persistQuincenaId(id)
+  }
+
+  const fetchPresupuestosTabla = useCallback(async () => {
+    setTablaLoading(true)
+    try {
+      const params = tablaQuincenaId !== ALL_QUINCENAS ? `?quincenaId=${tablaQuincenaId}` : ''
+      const res = await fetch(`/api/presupuestos${params}`)
+      setPresupuestosTabla(await res.json())
+    } finally { setTablaLoading(false) }
+  }, [tablaQuincenaId])
+
+  useEffect(() => {
+    if (vista === 'tabla') fetchPresupuestosTabla()
+  }, [vista, fetchPresupuestosTabla])
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc') }
+    else { setSortKey(key); setSortDir('desc') }
   }
 
   const fetchPresupuestos = useCallback(async () => {
@@ -405,6 +473,32 @@ export default function PresupuestoPage() {
         </div>
       </div>
 
+      {/* Toggle de vista */}
+      <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+        <button onClick={() => setVista('tarjetas')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tarjetas' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <LayoutGrid size={14} /> Tarjetas
+        </button>
+        <button onClick={() => setVista('tabla')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tabla' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <Table2 size={14} /> Tabla
+        </button>
+      </div>
+
+      {vista === 'tabla' ? (
+        <PresupuestoTabla
+          quincenas={quincenas} categorias={categorias} today={today}
+          tablaQuincenaId={tablaQuincenaId} setTablaQuincenaId={setTablaQuincenaId}
+          presupuestosTabla={presupuestosTabla} tablaLoading={tablaLoading}
+          tablaCategoriaId={tablaCategoriaId} setTablaCategoriaId={setTablaCategoriaId}
+          tablaClasificacion={tablaClasificacion} setTablaClasificacion={setTablaClasificacion}
+          tablaRecurrente={tablaRecurrente} setTablaRecurrente={setTablaRecurrente}
+          tablaEstado={tablaEstado} setTablaEstado={setTablaEstado}
+          busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
+          sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
+        />
+      ) : (
+        <>
       {/* Selector de quincena */}
       <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} />
 
@@ -766,6 +860,8 @@ export default function PresupuestoPage() {
             )
           })}
         </div>
+      )}
+        </>
       )}
 
       <FormModal open={modalOpen} onOpenChange={setModalOpen} title={editingP ? 'Editar presupuesto' : 'Nuevo presupuesto'}>
@@ -1146,6 +1242,174 @@ export default function PresupuestoPage() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function SortableTh({ label, sortKeyName, align, sortKey, sortDir, onSort }: {
+  label: string; sortKeyName: SortKey; align?: 'right'
+  sortKey: SortKey; sortDir: 'asc' | 'desc'; onSort: (key: SortKey) => void
+}) {
+  const active = sortKey === sortKeyName
+  return (
+    <th className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+      <button onClick={() => onSort(sortKeyName)}
+        className={`inline-flex items-center gap-1 font-medium cursor-pointer transition-colors ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400'}`}>
+        {label}
+        {active && (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+      </button>
+    </th>
+  )
+}
+
+interface PresupuestoTablaProps {
+  quincenas: Quincena[]; categorias: Categoria[]; today: string
+  tablaQuincenaId: string; setTablaQuincenaId: (id: string) => void
+  presupuestosTabla: Presupuesto[]; tablaLoading: boolean
+  tablaCategoriaId: string; setTablaCategoriaId: (v: string) => void
+  tablaClasificacion: string; setTablaClasificacion: (v: string) => void
+  tablaRecurrente: string; setTablaRecurrente: (v: string) => void
+  tablaEstado: string; setTablaEstado: (v: string) => void
+  busquedaTabla: string; setBusquedaTabla: (v: string) => void
+  sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
+}
+
+function PresupuestoTabla({
+  quincenas, categorias, today,
+  tablaQuincenaId, setTablaQuincenaId, presupuestosTabla, tablaLoading,
+  tablaCategoriaId, setTablaCategoriaId, tablaClasificacion, setTablaClasificacion,
+  tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
+  busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
+}: PresupuestoTablaProps) {
+  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, busqueda: busquedaTabla }
+  const filasTabla = presupuestosTabla
+    .filter(p => matchesFiltrosTabla(p, filtros))
+    .sort((a, b) => {
+      const va = getSortValue(a, sortKey)
+      const vb = getSortValue(b, sortKey)
+      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb))
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+        <QuincenaChips quincenas={quincenas} quincenaId={tablaQuincenaId} today={today} onSelect={setTablaQuincenaId} showAll />
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterChip value={tablaCategoriaId} onChange={setTablaCategoriaId} onClear={() => setTablaCategoriaId('')} placeholder="Categoría">
+            {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </FilterChip>
+          <FilterChip value={tablaClasificacion} onChange={setTablaClasificacion} onClear={() => setTablaClasificacion('')} placeholder="Clasificación">
+            <option value="Fijo">Fijo</option>
+            <option value="Variable">Variable</option>
+            <option value="sin">Sin clasificar</option>
+          </FilterChip>
+          <FilterChip value={tablaRecurrente} onChange={setTablaRecurrente} onClear={() => setTablaRecurrente('')} placeholder="Recurrente">
+            <option value="si">Sí</option>
+            <option value="no">No</option>
+          </FilterChip>
+          <FilterChip value={tablaEstado} onChange={setTablaEstado} onClear={() => setTablaEstado('')} placeholder="Estado">
+            <option value="excedido">Excedido</option>
+            <option value="dentro">Dentro de presupuesto</option>
+          </FilterChip>
+          <div className="relative flex-1 min-w-[160px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+            <input type="text" placeholder="Buscar por categoría o descripción..." value={busquedaTabla} onChange={e => setBusquedaTabla(e.target.value)}
+              className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            {busquedaTabla && (
+              <button type="button" onClick={() => setBusquedaTabla('')} aria-label="Quitar búsqueda"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer">
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
+      </div>
+
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        {tablaLoading ? (
+          <div className="py-20 flex justify-center items-center text-slate-400 dark:text-slate-500 text-sm">Cargando...</div>
+        ) : presupuestosTabla.length === 0 ? (
+          <div className="text-center py-20 text-slate-400 dark:text-slate-500">
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin partidas de presupuesto</p>
+          </div>
+        ) : filasTabla.length === 0 ? (
+          <div className="text-center py-20 text-slate-400 dark:text-slate-500">
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin resultados</p>
+            <p className="text-sm mt-1">Ninguna partida coincide con estos filtros</p>
+          </div>
+        ) : (
+          <>
+            {/* Mobile cards */}
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
+              {filasTabla.map(p => (
+                <div key={p.id} className="px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
+                      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre} · {p.quincena.codigo}</p>
+                    </div>
+                    <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className="text-slate-500 dark:text-slate-400 tabular-nums">{formatMXN(p.real)} de {formatMXN(Number(p.montoPresupuestado))}</span>
+                    {p.excedido > 0
+                      ? <span className="text-rose-600 dark:text-rose-400 font-semibold tabular-nums">+{formatMXN(p.excedido)}</span>
+                      : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(Number(p.montoPresupuestado) - p.real)}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Desktop table */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                  <tr>
+                    <SortableTh label="Quincena" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Categoría" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Descripción" sortKeyName="descripcion" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Clasificación</th>
+                    <SortableTh label="Presupuestado" sortKeyName="presupuestado" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Real" sortKeyName="real" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="% usado" sortKeyName="pct" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Restante/Excedido" sortKeyName="restante" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                  {filasTabla.map(p => (
+                    <tr key={p.id} className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors">
+                      <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{p.quincena.codigo}</span></td>
+                      <td className="px-4 py-3">
+                        <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                          {p.categoria.nombre}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px] truncate">{p.descripcion}</td>
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">{formatMXN(Number(p.montoPresupuestado))}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">{formatMXN(p.real)}</td>
+                      <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</td>
+                      <td className={`px-4 py-3 text-right font-semibold tabular-nums ${p.excedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(Number(p.montoPresupuestado) - p.real)}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                        {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                        {p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short' }) : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   )
 }
