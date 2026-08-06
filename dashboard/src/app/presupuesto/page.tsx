@@ -24,7 +24,7 @@ interface Presupuesto {
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
   numOcurrencias: number | null; diaCobro: number | null; fechaVencimiento: string | null
-  categoria: Categoria; quincena: Quincena; real: number; pct: number; categoriaTotal: number; excedido: number
+  categoria: Categoria; quincena: Quincena; real: number; pendiente: number; pct: number; categoriaTotal: number; excedido: number
 }
 
 function groupKey(p: Pick<Presupuesto, 'quincenaId' | 'categoriaId'>) {
@@ -97,6 +97,7 @@ interface TablaFiltros {
   clasificacion: string // '', 'Fijo', 'Variable', 'sin'
   recurrente: string // '', 'si', 'no'
   estado: string // '', 'excedido', 'dentro'
+  saldo: string // '', 'pendiente', 'pagado'
   busqueda: string
 }
 
@@ -108,6 +109,8 @@ function matchesFiltrosTabla(p: Presupuesto, f: TablaFiltros) {
   if (f.recurrente === 'no' && p.recurrente) return false
   if (f.estado === 'excedido' && !(p.excedido > 0)) return false
   if (f.estado === 'dentro' && p.excedido > 0) return false
+  if (f.saldo === 'pendiente' && !(p.pendiente > 0)) return false
+  if (f.saldo === 'pagado' && p.pendiente > 0) return false
   const needle = f.busqueda.trim().toLowerCase()
   if (needle && !p.descripcion.toLowerCase().includes(needle) && !p.categoria.nombre.toLowerCase().includes(needle)) return false
   return true
@@ -158,6 +161,7 @@ export default function PresupuestoPage() {
   const [tablaClasificacion, setTablaClasificacion] = useState('')
   const [tablaRecurrente, setTablaRecurrente] = useState('')
   const [tablaEstado, setTablaEstado] = useState('')
+  const [tablaSaldo, setTablaSaldo] = useState('')
   const [busquedaTabla, setBusquedaTabla] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -494,6 +498,7 @@ export default function PresupuestoPage() {
           tablaClasificacion={tablaClasificacion} setTablaClasificacion={setTablaClasificacion}
           tablaRecurrente={tablaRecurrente} setTablaRecurrente={setTablaRecurrente}
           tablaEstado={tablaEstado} setTablaEstado={setTablaEstado}
+          tablaSaldo={tablaSaldo} setTablaSaldo={setTablaSaldo}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
         />
@@ -1270,6 +1275,7 @@ interface PresupuestoTablaProps {
   tablaClasificacion: string; setTablaClasificacion: (v: string) => void
   tablaRecurrente: string; setTablaRecurrente: (v: string) => void
   tablaEstado: string; setTablaEstado: (v: string) => void
+  tablaSaldo: string; setTablaSaldo: (v: string) => void
   busquedaTabla: string; setBusquedaTabla: (v: string) => void
   sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
 }
@@ -1279,9 +1285,10 @@ function PresupuestoTabla({
   tablaQuincenaId, setTablaQuincenaId, presupuestosTabla, tablaLoading,
   tablaCategoriaId, setTablaCategoriaId, tablaClasificacion, setTablaClasificacion,
   tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
+  tablaSaldo, setTablaSaldo,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
 }: PresupuestoTablaProps) {
-  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, busqueda: busquedaTabla }
+  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
     .filter(p => matchesFiltrosTabla(p, filtros))
     .sort((a, b) => {
@@ -1290,6 +1297,14 @@ function PresupuestoTabla({
       const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb))
       return sortDir === 'asc' ? cmp : -cmp
     })
+
+  // Dynamic totals over the filtered rows — recompute on every filter change
+  const totalPresupuestado = filasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalReal = filasTabla.reduce((s, p) => s + p.real, 0)
+  const totalPendiente = filasTabla.reduce((s, p) => s + p.pendiente, 0)
+  const totalPct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
+  const totalExcedido = totalReal > totalPresupuestado ? totalReal - totalPresupuestado : 0
+  const totalRestante = totalPresupuestado - totalReal
 
   return (
     <div className="space-y-4">
@@ -1311,6 +1326,10 @@ function PresupuestoTabla({
           <FilterChip value={tablaEstado} onChange={setTablaEstado} onClear={() => setTablaEstado('')} placeholder="Estado">
             <option value="excedido">Excedido</option>
             <option value="dentro">Dentro de presupuesto</option>
+          </FilterChip>
+          <FilterChip value={tablaSaldo} onChange={setTablaSaldo} onClear={() => setTablaSaldo('')} placeholder="Saldo">
+            <option value="pendiente">Con saldo pendiente</option>
+            <option value="pagado">Sin saldo pendiente</option>
           </FilterChip>
           <div className="relative flex-1 min-w-[160px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
@@ -1358,8 +1377,33 @@ function PresupuestoTabla({
                       ? <span className="text-rose-600 dark:text-rose-400 font-semibold tabular-nums">+{formatMXN(p.excedido)}</span>
                       : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(Number(p.montoPresupuestado) - p.real)}</span>}
                   </div>
+                  {p.pendiente > 0 && (
+                    <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pendiente de pago</p>
+                  )}
                 </div>
               ))}
+              <div className="bg-slate-50 dark:bg-slate-900/60 px-4 py-3 space-y-1.5">
+                <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">
+                  Total · {filasTabla.length} {filasTabla.length === 1 ? 'partida' : 'partidas'}
+                </p>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Presupuestado</span>
+                  <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">{formatMXN(totalPresupuestado)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Real</span>
+                  <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+                    {formatMXN(totalReal)}
+                    {totalPendiente > 0 && <span className="ml-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">({formatMXN(totalPendiente)} pend.)</span>}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">{totalExcedido > 0 ? 'Excedido' : 'Restante'}</span>
+                  <span className={`font-semibold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
+                  </span>
+                </div>
+              </div>
             </div>
             {/* Desktop table */}
             <div className="hidden overflow-x-auto md:block">
@@ -1391,7 +1435,12 @@ function PresupuestoTabla({
                       <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px] truncate">{p.descripcion}</td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">{formatMXN(Number(p.montoPresupuestado))}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">{formatMXN(p.real)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                        {formatMXN(p.real)}
+                        {p.pendiente > 0 && (
+                          <span className="block text-[10px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pend.</span>
+                        )}
+                      </td>
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</td>
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${p.excedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(Number(p.montoPresupuestado) - p.real)}
@@ -1405,6 +1454,25 @@ function PresupuestoTabla({
                     </tr>
                   ))}
                 </tbody>
+                <tfoot className="bg-slate-50 dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-700">
+                  <tr>
+                    <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                      Total · {filasTabla.length} {filasTabla.length === 1 ? 'partida' : 'partidas'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">{formatMXN(totalPresupuestado)}</td>
+                    <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                      {formatMXN(totalReal)}
+                      {totalPendiente > 0 && (
+                        <span className="block text-[10px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(totalPendiente)} pend.</span>
+                      )}
+                    </td>
+                    <td className={`px-4 py-3 text-right font-bold tabular-nums ${pctTextColor(totalPct)}`}>{totalPct.toFixed(0)}%</td>
+                    <td className={`px-4 py-3 text-right font-bold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
+                    </td>
+                    <td colSpan={2}></td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
           </>
