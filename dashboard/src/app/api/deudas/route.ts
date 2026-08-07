@@ -16,6 +16,7 @@ export async function GET() {
           const res = await prisma.transaccion.aggregate({
             where: {
               categoriaId: catDeudas.id,
+              tipo: 'Gasto',
               notas: { contains: d.acreedor, mode: 'insensitive' },
             },
             _sum: { monto: true },
