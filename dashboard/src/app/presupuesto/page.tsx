@@ -1312,6 +1312,11 @@ function PresupuestoTabla({
   const totalPct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
   const totalExcedido = totalReal > totalPresupuestado ? totalReal - totalPresupuestado : 0
   const totalRestante = totalPresupuestado - totalReal
+  // Lo que de verdad falta desembolsar: lo ya registrado pero no pagado, más el
+  // presupuesto que aún no se ha ni gastado. "Restante" no responde esto porque
+  // una línea 100% registrada como Pendiente muestra $0 de restante aunque se
+  // deba por completo.
+  const totalFaltaPorPagar = filasTabla.reduce((s, p) => s + p.pendiente + Math.max(Number(p.montoPresupuestado) - p.real, 0), 0)
 
   return (
     <div className="space-y-4">
@@ -1415,6 +1420,11 @@ function PresupuestoTabla({
                     {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
                   </span>
                 </div>
+                <div className="flex items-center justify-between text-sm pt-1.5 mt-0.5 border-t border-amber-200/60 dark:border-amber-900/40">
+                  <span className="text-amber-700 dark:text-amber-400 font-medium">Falta por pagar</span>
+                  <span className="font-bold tabular-nums text-amber-700 dark:text-amber-400">{formatMXN(totalFaltaPorPagar)}</span>
+                </div>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-snug">Pendiente de pago + presupuesto que aún no registras</p>
               </div>
             </div>
             {/* Desktop table */}
@@ -1481,6 +1491,15 @@ function PresupuestoTabla({
                     <td className={`px-4 py-3 text-right font-bold tabular-nums ${pctTextColor(totalPct)}`}>{totalPct.toFixed(0)}%</td>
                     <td className={`px-4 py-3 text-right font-bold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                       {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
+                    </td>
+                    <td colSpan={2}></td>
+                  </tr>
+                  <tr className="bg-amber-50/70 dark:bg-amber-950/20 border-t border-amber-200/60 dark:border-amber-900/40">
+                    <td colSpan={7} className="px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                      Falta por pagar <span className="font-normal text-amber-600/80 dark:text-amber-500/80">— pendiente de pago + presupuesto que aún no registras</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                      {formatMXN(totalFaltaPorPagar)}
                     </td>
                     <td colSpan={2}></td>
                   </tr>
