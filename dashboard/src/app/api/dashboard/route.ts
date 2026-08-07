@@ -52,6 +52,7 @@ export async function GET(request: Request) {
       }),
       prisma.transaccion.groupBy({
         by: ['categoriaId'],
+        where: { tipo: 'Gasto' },
         _sum: { monto: true },
         _count: true,
       }),

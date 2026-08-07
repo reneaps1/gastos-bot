@@ -1305,10 +1305,16 @@ function PresupuestoTabla({
       return sortDir === 'asc' ? cmp : -cmp
     })
 
-  // Dynamic totals over the filtered rows — recompute on every filter change
-  const totalPresupuestado = filasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
-  const totalReal = filasTabla.reduce((s, p) => s + p.real, 0)
-  const totalPendiente = filasTabla.reduce((s, p) => s + p.pendiente, 0)
+  // Los totales de dinero solo deben sumar partidas de Gasto — Ingreso/Ahorro (p.ej.
+  // una línea "Salario") nunca se suman a un total de gasto. Mismo criterio que la
+  // vista Tarjetas (gastoGrupos). Las filas siguen mostrándose todas; solo se excluyen
+  // de las sumas.
+  const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto')
+
+  // Dynamic totals over the filtered Gasto rows — recompute on every filter change
+  const totalPresupuestado = gastoFilasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalReal = gastoFilasTabla.reduce((s, p) => s + p.real, 0)
+  const totalPendiente = gastoFilasTabla.reduce((s, p) => s + p.pendiente, 0)
   const totalPct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
   const totalExcedido = totalReal > totalPresupuestado ? totalReal - totalPresupuestado : 0
   const totalRestante = totalPresupuestado - totalReal
@@ -1316,7 +1322,7 @@ function PresupuestoTabla({
   // presupuesto que aún no se ha ni gastado. "Restante" no responde esto porque
   // una línea 100% registrada como Pendiente muestra $0 de restante aunque se
   // deba por completo.
-  const totalFaltaPorPagar = filasTabla.reduce((s, p) => s + p.pendiente + Math.max(Number(p.montoPresupuestado) - p.real, 0), 0)
+  const totalFaltaPorPagar = gastoFilasTabla.reduce((s, p) => s + p.pendiente + Math.max(Number(p.montoPresupuestado) - p.real, 0), 0)
 
   return (
     <div className="space-y-4">
@@ -1401,7 +1407,7 @@ function PresupuestoTabla({
               ))}
               <div className="bg-slate-50 dark:bg-slate-900/60 px-4 py-3 space-y-1.5">
                 <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">
-                  Total · {filasTabla.length} {filasTabla.length === 1 ? 'partida' : 'partidas'}
+                  Total · {gastoFilasTabla.length} {gastoFilasTabla.length === 1 ? 'partida' : 'partidas'}
                 </p>
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-slate-500 dark:text-slate-400">Presupuestado</span>
@@ -1479,7 +1485,7 @@ function PresupuestoTabla({
                 <tfoot className="bg-slate-50 dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-700">
                   <tr>
                     <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
-                      Total · {filasTabla.length} {filasTabla.length === 1 ? 'partida' : 'partidas'}
+                      Total · {gastoFilasTabla.length} {gastoFilasTabla.length === 1 ? 'partida' : 'partidas'}
                     </td>
                     <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">{formatMXN(totalPresupuestado)}</td>
                     <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">
