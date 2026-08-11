@@ -99,6 +99,7 @@ interface TablaFiltros {
   estado: string // '', 'excedido', 'dentro'
   saldo: string // '', 'pendiente', 'pagado'
   porCubrir: string // '', '0', '50', '100' — % usado por debajo del cual se considera "por cubrir"
+  ocultarIngresos: boolean
   busqueda: string
 }
 
@@ -115,6 +116,7 @@ function matchesFiltrosTabla(p: Presupuesto, f: TablaFiltros) {
   if (f.porCubrir === '0' && p.real !== 0) return false
   if (f.porCubrir === '50' && !(p.pct < 50)) return false
   if (f.porCubrir === '100' && !(p.pct < 100)) return false
+  if (f.ocultarIngresos && p.categoria.tipo === 'Ingreso') return false
   const needle = f.busqueda.trim().toLowerCase()
   if (needle && !p.descripcion.toLowerCase().includes(needle) && !p.categoria.nombre.toLowerCase().includes(needle)) return false
   return true
@@ -167,6 +169,7 @@ export default function PresupuestoPage() {
   const [tablaEstado, setTablaEstado] = useState('')
   const [tablaSaldo, setTablaSaldo] = useState('')
   const [tablaPorCubrir, setTablaPorCubrir] = useState('')
+  const [tablaOcultarIngresos, setTablaOcultarIngresos] = useState(true)
   const [busquedaTabla, setBusquedaTabla] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -505,6 +508,7 @@ export default function PresupuestoPage() {
           tablaEstado={tablaEstado} setTablaEstado={setTablaEstado}
           tablaSaldo={tablaSaldo} setTablaSaldo={setTablaSaldo}
           tablaPorCubrir={tablaPorCubrir} setTablaPorCubrir={setTablaPorCubrir}
+          tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
         />
@@ -1283,6 +1287,7 @@ interface PresupuestoTablaProps {
   tablaEstado: string; setTablaEstado: (v: string) => void
   tablaSaldo: string; setTablaSaldo: (v: string) => void
   tablaPorCubrir: string; setTablaPorCubrir: (v: string) => void
+  tablaOcultarIngresos: boolean; setTablaOcultarIngresos: (v: boolean) => void
   busquedaTabla: string; setBusquedaTabla: (v: string) => void
   sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
 }
@@ -1293,9 +1298,10 @@ function PresupuestoTabla({
   tablaCategoriaId, setTablaCategoriaId, tablaClasificacion, setTablaClasificacion,
   tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
+  tablaOcultarIngresos, setTablaOcultarIngresos,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
 }: PresupuestoTablaProps) {
-  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, busqueda: busquedaTabla }
+  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
     .filter(p => matchesFiltrosTabla(p, filtros))
     .sort((a, b) => {
@@ -1365,6 +1371,11 @@ function PresupuestoTabla({
               </button>
             )}
           </div>
+          <label className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" checked={tablaOcultarIngresos} onChange={e => setTablaOcultarIngresos(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400" />
+            Ocultar ingresos
+          </label>
         </div>
         <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
       </div>
