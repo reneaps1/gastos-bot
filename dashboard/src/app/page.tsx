@@ -1,12 +1,13 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronDown, Plus, Loader2, Check } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronLeft, ChevronDown, Plus, Loader2, Check } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
+import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -59,7 +60,7 @@ export default function DashboardPage() {
   const [metricas, setMetricas] = useState({
     ingresos: 0, gastos: 0, ahorros: 0, margen: 0, balanceNeto: 0,
     presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
-    gastosNoCubiertos: 0, totalExcedido: 0,
+    gastosNoCubiertos: 0, totalExcedido: 0, ahorroComprometido: 0,
   })
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<Transaccion[]>([])
   const [expandedSinPresupuesto, setExpandedSinPresupuesto] = useState(false)
@@ -70,6 +71,8 @@ export default function DashboardPage() {
   const [creandoLinea, setCreandoLinea] = useState(false)
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<number>>(new Set())
   const [tendencia, setTendencia] = useState<TendenciaPoint[]>([])
+  const [granularidad, setGranularidad] = useState<Granularidad>('quincena')
+  const [periodoAnchor, setPeriodoAnchor] = useState(() => getMexicoDateString())
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -152,18 +155,26 @@ export default function DashboardPage() {
   }
 
   const fetchData = useCallback(async () => {
-    if (!quincenaId) { setLoading(false); return }
+    const quincenaMode = granularidad === 'quincena'
+    if (quincenaMode && !quincenaId) { setLoading(false); return }
     setLoading(true)
     try {
+      const periodo = quincenaMode ? null : getPeriodoRange(granularidad, periodoAnchor)
+      const txUrl = quincenaMode
+        ? `/api/transacciones?quincenaId=${quincenaId}&limit=200`
+        : `/api/transacciones?fechaDesde=${periodo!.desde}&fechaHasta=${periodo!.hasta}&limit=500`
+
       const [txRes, presupRes, liqRes, tendRes] = await Promise.all([
-        fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=200`),
-        fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
-        fetch(`/api/liquidez?quincenaId=${quincenaId}`),
-        fetch(`/api/tendencia?quincenaId=${quincenaId}&range=3`),
+        fetch(txUrl),
+        quincenaMode ? fetch(`/api/presupuestos?quincenaId=${quincenaId}`) : Promise.resolve(null),
+        quincenaMode ? fetch(`/api/liquidez?quincenaId=${quincenaId}`) : Promise.resolve(null),
+        quincenaMode
+          ? fetch(`/api/tendencia?quincenaId=${quincenaId}&range=3`)
+          : fetch(`/api/tendencia-periodo?granularidad=${granularidad}&anchor=${periodoAnchor}&range=3`),
       ])
       const txJson = await txRes.json()
-      const presupData: Presupuesto[] = await presupRes.json()
-      const liqData: Snapshot[] = await liqRes.json()
+      const presupData: Presupuesto[] = presupRes ? await presupRes.json() : []
+      const liqData: Snapshot[] = liqRes ? await liqRes.json() : []
       const tendData = await tendRes.json()
 
       const txs: Transaccion[] = txJson.data ?? []
@@ -176,6 +187,11 @@ export default function DashboardPage() {
       const ahorros = totales.Ahorro
       const gastosPagados = totales.GastoPagado
       const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
+
+      // El ahorro presupuestado (o registrado sin presupuesto) es dinero comprometido,
+      // no disponible — se resta aparte de "No comprometido"/"Sobrante neto" sin mezclarse
+      // con los totales "por categoría de gasto" (que deben seguir siendo solo Gasto).
+      const ahorroPresupuestado = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Ahorro').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
 
       const gastosCat = txs.filter(t => t.tipo === 'Gasto').reduce((acc, t) => {
         acc[t.categoria.nombre] = (acc[t.categoria.nombre] ?? 0) + Number(t.monto)
@@ -205,9 +221,14 @@ export default function DashboardPage() {
         })
         .sort((a, b) => b.pct - a.pct)
 
+      // Ojo: no se suma aparte el ahorro sin presupuestar — ya queda incluido en
+      // gastosNoCubiertos, que no filtra por categoría (cualquier Gasto sin
+      // presupuestoId cuenta como comprometido, sea Ahorro o no).
       const gastosNoCubiertos = txs
         .filter(t => t.tipo === 'Gasto' && t.presupuestoId == null)
         .reduce((s, t) => s + Number(t.monto), 0)
+
+      const ahorroComprometido = ahorroPresupuestado
 
       const totalExcedido = presupData
         .filter(p => p.categoria.tipo === 'Gasto')
@@ -227,10 +248,10 @@ export default function DashboardPage() {
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
         presupTotal, pendientePorPagar: gastos - gastosPagados,
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
-        gastosNoCubiertos, totalExcedido,
+        gastosNoCubiertos, totalExcedido, ahorroComprometido,
       })
     } finally { setLoading(false) }
-  }, [quincenaId])
+  }, [quincenaId, granularidad, periodoAnchor])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void fetchData() }, 0)
@@ -240,13 +261,14 @@ export default function DashboardPage() {
   const today = getMexicoDateString()
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
+  const periodoActual = granularidad !== 'quincena' ? getPeriodoRange(granularidad, periodoAnchor) : null
   const totalLiquidez = snapshot ? snapshot.bbva + snapshot.banamex + snapshot.uala + snapshot.ualaInversion + snapshot.efectivo : 0
   const liquidezNeta = snapshot ? totalLiquidez - snapshot.faltaPagar : 0
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
-  const sinAsignar = metricas.ingresos - metricas.presupTotal
-  const totalComprometido = metricas.presupTotal + metricas.gastosNoCubiertos + metricas.totalExcedido
+  const sinAsignar = metricas.ingresos - metricas.presupTotal - metricas.ahorroComprometido
+  const totalComprometido = metricas.presupTotal + metricas.gastosNoCubiertos + metricas.totalExcedido + metricas.ahorroComprometido
   const disponibleReal = metricas.ingresos - totalComprometido
   const pctPresupAsignado = metricas.ingresos > 0 ? (metricas.presupTotal / metricas.ingresos) * 100 : 0
   const pctSinPresupuesto = metricas.ingresos > 0 ? (metricas.gastosNoCubiertos / metricas.ingresos) * 100 : 0
@@ -335,14 +357,23 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100">
-            {qActual ? qActual.codigo : 'Sin quincena activa'}
+          <h1 className="text-xl font-bold text-slate-900 dark:text-slate-100 capitalize">
+            {granularidad !== 'quincena'
+              ? (periodoActual?.label ?? granularidad)
+              : (qActual ? qActual.codigo : 'Sin quincena activa')}
           </h1>
-          {qActual && (
+          {granularidad === 'quincena' && qActual && (
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
               {formatDateStr(qActual.fechaInicio, { day: '2-digit', month: 'long' })}
               {' — '}
               {formatDateStr(qActual.fechaFin, { day: '2-digit', month: 'long', year: 'numeric' })}
+            </p>
+          )}
+          {granularidad !== 'quincena' && periodoActual && (
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+              {formatDateStr(periodoActual.desde, { day: '2-digit', month: 'long' })}
+              {' — '}
+              {formatDateStr(periodoActual.hasta, { day: '2-digit', month: 'long', year: 'numeric' })}
             </p>
           )}
         </div>
@@ -352,10 +383,47 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Selector de quincena */}
-      <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} />
+      {/* Zoom: Semana / Quincena / Mes */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+          {(['semana', 'quincena', 'mes'] as const).map(g => (
+            <button key={g} onClick={() => setGranularidad(g)}
+              className={`text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors capitalize ${
+                granularidad === g
+                  ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+              }`}>
+              {g}
+            </button>
+          ))}
+        </div>
+        {granularidad !== 'quincena' && periodoActual && (
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPeriodoAnchor(shiftPeriodo(granularidad, periodoAnchor, -1))}
+              className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="Periodo anterior">
+              <ChevronLeft size={16} />
+            </button>
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-200 min-w-[120px] text-center capitalize">{periodoActual.label}</span>
+            <button onClick={() => setPeriodoAnchor(shiftPeriodo(granularidad, periodoAnchor, 1))}
+              className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" aria-label="Periodo siguiente">
+              <ChevronRight size={16} />
+            </button>
+            <button onClick={() => setPeriodoAnchor(getMexicoDateString())}
+              className="ml-1 text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+              Hoy
+            </button>
+          </div>
+        )}
+      </div>
 
-      <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
+      {granularidad === 'quincena' && (
+        <>
+          {/* Selector de quincena */}
+          <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} />
+
+          <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
+        </>
+      )}
 
       {loading ? (
         <DashboardSkeleton />
@@ -369,12 +437,12 @@ export default function DashboardPage() {
             <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} subtitle={metricas.ahorros > 0 ? `neto ${formatMXN(metricas.balanceNeto)}` : undefined} />
           </div>
 
-          {/* Tendencia quincenal */}
+          {/* Tendencia */}
           {tendencia.length > 1 && (() => {
             const current = tendencia.find(t => t.esCurrent)
             return (
               <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4">Tendencia quincenal</h3>
+                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-4 capitalize">Tendencia {granularidad === 'quincena' ? 'quincenal' : `por ${granularidad}`}</h3>
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={tendencia} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -387,15 +455,23 @@ export default function DashboardPage() {
                     )}
                     <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
                     <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
-                    <Line type="monotone" dataKey="presupuestado" name="Presupuestado" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, fill: '#8b5cf6' }} activeDot={{ r: 5 }} />
+                    {granularidad === 'quincena' && (
+                      <Line type="monotone" dataKey="presupuestado" name="Presupuestado" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, fill: '#8b5cf6' }} activeDot={{ r: 5 }} />
+                    )}
                   </LineChart>
                 </ResponsiveContainer>
               </div>
             )
           })()}
 
-          {/* Planificación del presupuesto */}
-          {metricas.ingresos > 0 && (
+          {/* Planificación del presupuesto — solo tiene sentido por quincena, ya
+              que las partidas de Presupuesto no tienen granularidad semanal/mensual */}
+          {granularidad !== 'quincena' && (
+            <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 text-center text-sm text-slate-400 dark:text-slate-500">
+              Planificación del presupuesto disponible solo en vista Quincena
+            </div>
+          )}
+          {granularidad === 'quincena' && metricas.ingresos > 0 && (
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Planificación del presupuesto</h3>
@@ -424,9 +500,14 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
                     Sobrante neto
-                    <span className="cursor-help text-slate-300 dark:text-slate-600" title="Lo que queda después de restar lo presupuestado, los gastos sin presupuesto y los excedidos">ⓘ</span>
+                    <span className="cursor-help text-slate-300 dark:text-slate-600" title="Lo que queda después de restar lo presupuestado, los gastos sin presupuesto, los excedidos y el ahorro comprometido">ⓘ</span>
                   </p>
                   <p className={`text-base font-bold tabular-nums ${disponibleReal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(disponibleReal))}{disponibleReal < 0 ? ' de más' : ''}</p>
+                  {metricas.ahorroComprometido > 0 && (
+                    <p className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-md px-1.5 py-0.5 inline-block">
+                      incluye {formatMXN(metricas.ahorroComprometido)} de ahorro comprometido
+                    </p>
+                  )}
                 </div>
               </div>
               {/* Stacked bar con tooltips */}

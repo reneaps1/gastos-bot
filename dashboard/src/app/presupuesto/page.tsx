@@ -366,6 +366,7 @@ export default function PresupuestoPage() {
       setModalOpen(false)
       setEditScopeBody(null)
       fetchPresupuestos()
+      fetchPresupuestosTabla()
     } catch { toast('Error al guardar', 'error') } finally { setSaving(false) }
   }
 
@@ -390,6 +391,7 @@ export default function PresupuestoPage() {
         : 'Presupuesto eliminado')
       setDeleteTarget(null)
       fetchPresupuestos()
+      fetchPresupuestosTabla()
     } catch { toast('Error al eliminar', 'error') } finally { setDeleting(false) }
   }
 
@@ -511,6 +513,7 @@ export default function PresupuestoPage() {
           tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
+          openEdit={openEdit} setDeleteTarget={setDeleteTarget}
         />
       ) : (
         <>
@@ -1290,6 +1293,8 @@ interface PresupuestoTablaProps {
   tablaOcultarIngresos: boolean; setTablaOcultarIngresos: (v: boolean) => void
   busquedaTabla: string; setBusquedaTabla: (v: string) => void
   sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
+  openEdit: (p: Presupuesto) => void
+  setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
 }
 
 function PresupuestoTabla({
@@ -1300,6 +1305,7 @@ function PresupuestoTabla({
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
+  openEdit, setDeleteTarget,
 }: PresupuestoTablaProps) {
   const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
@@ -1414,6 +1420,16 @@ function PresupuestoTabla({
                   {p.pendiente > 0 && (
                     <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pendiente de pago</p>
                   )}
+                  <div className="mt-2 flex items-center justify-end gap-1">
+                    <button onClick={() => openEdit(p)} aria-label="Editar"
+                      className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => setDeleteTarget({ id: p.id, p })} aria-label="Eliminar"
+                      className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
               ))}
               <div className="bg-slate-50 dark:bg-slate-900/60 px-4 py-3 space-y-1.5">
@@ -1459,6 +1475,7 @@ function PresupuestoTabla({
                     <SortableTh label="Restante/Excedido" sortKeyName="restante" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
@@ -1490,6 +1507,18 @@ function PresupuestoTabla({
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                         {p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short' }) : '—'}
                       </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => openEdit(p)}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => setDeleteTarget({ id: p.id, p })}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1509,7 +1538,7 @@ function PresupuestoTabla({
                     <td className={`px-4 py-3 text-right font-bold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                       {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
                     </td>
-                    <td colSpan={2}></td>
+                    <td colSpan={3}></td>
                   </tr>
                   <tr className="bg-amber-50/70 dark:bg-amber-950/20 border-t border-amber-200/60 dark:border-amber-900/40">
                     <td colSpan={7} className="px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
@@ -1518,7 +1547,7 @@ function PresupuestoTabla({
                     <td className="px-4 py-2.5 text-right font-bold tabular-nums text-amber-700 dark:text-amber-400">
                       {formatMXN(totalFaltaPorPagar)}
                     </td>
-                    <td colSpan={2}></td>
+                    <td colSpan={3}></td>
                   </tr>
                 </tfoot>
               </table>

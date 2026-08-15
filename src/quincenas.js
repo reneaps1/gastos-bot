@@ -16,16 +16,19 @@ const QUINCENAS = [
   { codigo: 'Q30', inicio: '2026-06-30', fin: '2026-07-14' },
   { codigo: 'Q31', inicio: '2026-07-15', fin: '2026-07-29' },
   { codigo: 'Q32', inicio: '2026-07-30', fin: '2026-08-13' },
-  { codigo: 'Q33', inicio: '2026-08-14', fin: '2026-08-27' },
-  { codigo: 'Q34', inicio: '2026-08-28', fin: '2026-09-14' },
-  { codigo: 'Q35', inicio: '2026-09-15', fin: '2026-09-29' },
-  { codigo: 'Q36', inicio: '2026-09-30', fin: '2026-10-14' },
-  { codigo: 'Q37', inicio: '2026-10-15', fin: '2026-10-29' },
-  { codigo: 'Q38', inicio: '2026-10-30', fin: '2026-11-12' },
-  { codigo: 'Q39', inicio: '2026-11-13', fin: '2026-11-29' },
-  { codigo: 'Q40', inicio: '2026-11-30', fin: '2026-12-14' },
-  { codigo: 'Q41', inicio: '2026-12-15', fin: '2026-12-30' },
-  { codigo: 'Q42', inicio: '2026-12-31', fin: '2027-01-14' },
+  // Q33+: los cierres de fin de mes usan la regla de último día hábil
+  // (ver lastBusinessDayOfMonth) en vez de una fecha fija de tabla; los
+  // cierres de mediados de mes siguen siendo fijos, sin fórmula.
+  { codigo: 'Q33', inicio: '2026-08-14', fin: '2026-08-31' },
+  { codigo: 'Q34', inicio: '2026-09-01', fin: '2026-09-14' },
+  { codigo: 'Q35', inicio: '2026-09-15', fin: '2026-09-30' },
+  { codigo: 'Q36', inicio: '2026-10-01', fin: '2026-10-14' },
+  { codigo: 'Q37', inicio: '2026-10-15', fin: '2026-10-30' },
+  { codigo: 'Q38', inicio: '2026-10-31', fin: '2026-11-12' },
+  { codigo: 'Q39', inicio: '2026-11-13', fin: '2026-11-30' },
+  { codigo: 'Q40', inicio: '2026-12-01', fin: '2026-12-14' },
+  { codigo: 'Q41', inicio: '2026-12-15', fin: '2026-12-31' },
+  { codigo: 'Q42', inicio: '2027-01-01', fin: '2027-01-14' },
 ];
 
 const SIN_QUINCENA = 'Sin quincena';
@@ -43,4 +46,14 @@ function getCurrentQuincena(date) {
   return getQuincenaForDate(date || new Date());
 }
 
-module.exports = { QUINCENAS, SIN_QUINCENA, getQuincenaForDate, getCurrentQuincena };
+// Último día hábil del mes (salta sábado/domingo, sin calendario de festivos).
+// Usado solo para los cierres de quincena de fin de mes (Q33+), ver arriba.
+function lastBusinessDayOfMonth(year, monthIndex0) {
+  const d = new Date(Date.UTC(year, monthIndex0 + 1, 0));
+  const day = d.getUTCDay();
+  if (day === 0) d.setUTCDate(d.getUTCDate() - 2); // domingo -> viernes
+  else if (day === 6) d.setUTCDate(d.getUTCDate() - 1); // sábado -> viernes
+  return d;
+}
+
+module.exports = { QUINCENAS, SIN_QUINCENA, getQuincenaForDate, getCurrentQuincena, lastBusinessDayOfMonth };

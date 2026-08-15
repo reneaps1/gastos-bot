@@ -161,20 +161,21 @@ Cada quincena tiene un rango de fechas definido. La fuente oficial es la hoja `s
 | Q30      | 2026-06-30 | 2026-07-14 | Oficial, hoja `semanas` |
 | Q31      | 2026-07-15 | 2026-07-29 | Oficial, hoja `semanas` |
 | Q32      | 2026-07-30 | 2026-08-13 | Oficial, hoja `semanas` |
-| Q33      | 2026-08-14 | 2026-08-27 | Oficial, hoja `semanas` |
-| Q34      | 2026-08-28 | 2026-09-14 | Oficial, hoja `semanas` |
-| Q35      | 2026-09-15 | 2026-09-29 | Oficial, hoja `semanas` |
-| Q36      | 2026-09-30 | 2026-10-13 | Oficial, hoja `semanas` |
-| Q37      | 2026-10-14 | 2026-10-29 | Proyectada, validar contra nómina |
-| Q38      | 2026-10-30 | 2026-11-12 | Proyectada, validar contra nómina |
-| Q39      | 2026-11-13 | 2026-11-29 | Proyectada, validar contra nómina |
-| Q40      | 2026-11-30 | 2026-12-14 | Proyectada, validar contra nómina |
-| Q41      | 2026-12-15 | 2026-12-30 | Proyectada, validar contra nómina |
-| Q42      | 2026-12-31 | 2027-01-14 | Proyectada, validar contra nómina |
+| Q33      | 2026-08-14 | 2026-08-31 | Último día hábil del mes (regla, desde Q33) |
+| Q34      | 2026-09-01 | 2026-09-14 | Oficial, hoja `semanas` |
+| Q35      | 2026-09-15 | 2026-09-30 | Último día hábil del mes (regla) |
+| Q36      | 2026-10-01 | 2026-10-13 | Oficial, hoja `semanas` |
+| Q37      | 2026-10-14 | 2026-10-30 | Último día hábil del mes (regla) |
+| Q38      | 2026-10-31 | 2026-11-12 | Proyectada, validar contra nómina |
+| Q39      | 2026-11-13 | 2026-11-30 | Último día hábil del mes (regla) |
+| Q40      | 2026-12-01 | 2026-12-14 | Proyectada, validar contra nómina |
+| Q41      | 2026-12-15 | 2026-12-31 | Último día hábil del mes (regla) |
+| Q42      | 2027-01-01 | 2027-01-14 | Proyectada, validar contra nómina |
 
 Reglas:
 
-- La quincena nunca se calcula con fórmulas de calendario. Se resuelve buscando la fecha en la tabla de rangos.
+- Los cierres de mediados de mes nunca se calculan con fórmulas de calendario: se resuelven buscando la fecha en la tabla de rangos, derivados del día de pago real.
+- **Excepción, vigente desde Q33:** los cierres que caen en fin de mes sí se calculan con fórmula — el último día hábil del mes (se salta sábado/domingo, sin calendario de festivos). Las quincenas ya cerradas antes de Q33 (Q23-Q31) no se recalculan retroactivamente.
 - Los rangos siguen días reales de pago, por lo que pueden existir fechas que no pertenecen a ninguna quincena (ejemplo: 2026-05-14, entre `Q26` y `Q27`).
 - Si una fecha no cae en ninguna quincena conocida, el sistema reporta `Sin quincena`.
 - Las quincenas proyectadas (`Q37` a `Q42`) deben confirmarse contra las fechas reales de pago antes de usarse en migración o presupuesto.

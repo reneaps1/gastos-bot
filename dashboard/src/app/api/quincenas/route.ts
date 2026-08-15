@@ -11,7 +11,7 @@ export async function GET(request: Request) {
 
     const quincenas = await prisma.quincena.findMany({
       where,
-      orderBy: { fechaInicio: 'desc' },
+      orderBy: { fechaInicio: 'asc' },
     })
 
     return NextResponse.json(quincenas)

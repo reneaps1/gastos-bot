@@ -1,12 +1,13 @@
 'use client'
 import { usePathname } from 'next/navigation'
-import { Settings, Sun, Moon, LayoutDashboard, ArrowLeftRight, Target, AlertCircle, Landmark } from 'lucide-react'
+import { Settings, Sun, Moon, LayoutDashboard, ArrowLeftRight, Target, AlertCircle, Landmark, PiggyBank } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
 
 const links = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/transacciones', label: 'Transacciones', icon: ArrowLeftRight },
   { href: '/presupuesto', label: 'Presupuesto', icon: Target },
+  { href: '/ahorro', label: 'Ahorro', icon: PiggyBank },
   { href: '/deudas', label: 'Deudas', icon: AlertCircle },
   { href: '/creditos', label: 'Créditos', icon: Landmark },
 ]

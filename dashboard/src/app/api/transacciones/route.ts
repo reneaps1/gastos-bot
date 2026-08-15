@@ -28,9 +28,16 @@ export async function GET(request: Request) {
     const estatus = searchParams.get('estatus')
     const busqueda = searchParams.get('busqueda')
     const asignado = searchParams.get('asignado')
+    const fechaDesde = searchParams.get('fechaDesde')
+    const fechaHasta = searchParams.get('fechaHasta')
 
     const where: any = {}
     if (quincenaId) where.quincenaId = parseInt(quincenaId)
+    if (fechaDesde || fechaHasta) {
+      where.fecha = {}
+      if (fechaDesde) where.fecha.gte = new Date(`${fechaDesde}T00:00:00.000Z`)
+      if (fechaHasta) where.fecha.lte = new Date(`${fechaHasta}T23:59:59.999Z`)
+    }
     if (tipo) where.tipo = tipo
     if (categoriaId) where.categoriaId = parseInt(categoriaId)
     if (userId) where.userId = parseInt(userId)
