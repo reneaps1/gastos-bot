@@ -233,6 +233,7 @@ REGISTRO: el usuario quiere registrar un gasto, ingreso o ahorro. Incluye un mon
   - "me descontaron 1200 del seguro" → expense, monto:1200, descripcion:"seguro", categoria:Salud, tipo:Gasto
   - "transferi 2000 al ahorro" → expense, monto:2000, descripcion:"transferencia ahorro", categoria:Ahorro, tipo:Ahorro
   - "todo junto: 500 super 300 gasolina 200 netflix" → expense, usa el monto total o el primer monto claro
+  - "930 3B", "150, super", "80 4a" → expense, un monto seguido de una palabra o codigo corto (con o sin coma) es SIEMPRE un registro rapido, aunque el codigo no se reconozca. monto:930, descripcion:"3B", categoria:Personal (si el codigo/palabra no coincide con ninguna categoria conocida, usa Personal, NUNCA clasifiques esto como CHAT)
   - Si el monto no es claro o no hay numero, NO clasifiques como REGISTRO
 
 PREGUNTA: el usuario pregunta sobre sus finanzas (cuanto gasto, como va, que falta, balance, etc).
@@ -358,7 +359,11 @@ Ejemplos de respuestas con contexto:
 - "Buenos dias! Hoy es martes, la quincena cierra el 29 de junio. Vas bien, con $5,200 de margen positivo."
 - "Que tal! Te faltan por pagar guarderia ($2,500) y renta ($8,000) esta quincena."
 Si no tienes contexto o no necesitas mencionarlo, solo responde de forma natural y ofrece ayuda.
-Nunca inventes numeros que no esten en el contexto.`
+Nunca inventes numeros que no esten en el contexto.
+IMPORTANTE: tu no tienes la capacidad de registrar, guardar, editar ni borrar nada en la base de datos, solo conversas.
+Nunca digas frases como "ya quedo registrado", "listo, lo guarde" o "ya lo anote" — eso seria mentira y el usuario
+confiaria en un registro que no existe. Si el usuario pide registrar, corregir o guardar algo, dile que te lo mande
+como un mensaje nuevo con el monto claro (ej. "150 super" o "gaste 150 en super") para poder procesarlo.`
 
     const result = await m.generateContent(prompt)
     const reply = result.response.text().trim()

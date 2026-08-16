@@ -120,6 +120,16 @@ function cleanDescription(desc) {
   return cleaned || 'Sin descripcion'
 }
 
+// Atajo que usa Rene a diario para registrar rapido: "<monto>, <codigo>" (ej. "930, 3B").
+// Es puramente numerico + un codigo corto sin mas texto, asi que nunca es una pregunta,
+// tarea o saludo — siempre es un registro de gasto. Se detecta aqui, antes de Gemini,
+// para no depender de que el clasificador lo adivine bien.
+const SHORTHAND_EXPENSE_RE = /^\$?\s*\d+(?:\.\d{1,2})?\s*,\s*[a-záéíóúñ0-9]{1,20}$/i
+
+function isShorthandExpense(text) {
+  return SHORTHAND_EXPENSE_RE.test(String(text || '').trim())
+}
+
 function parseMessage(text, senderName, senderPhone, messageId, geminiData = null) {
   const tipo = geminiData?.tipo || detectType(text)
   const monto = (geminiData?.monto > 0 ? geminiData.monto : null) ?? extractAmount(text)
@@ -165,4 +175,4 @@ function formatConfirmation(parsed) {
   ].join('\n')
 }
 
-module.exports = { parseMessage, formatConfirmation }
+module.exports = { parseMessage, formatConfirmation, isShorthandExpense }

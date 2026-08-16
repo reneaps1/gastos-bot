@@ -25,7 +25,7 @@ if (realDbUrl) {
 
 const express = require('express')
 const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
-const { parseMessage, formatConfirmation, cleanDescription } = require('./parser')
+const { parseMessage, formatConfirmation, cleanDescription, isShorthandExpense } = require('./parser')
 const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedia } = require('./whatsapp')
 const { handleQuestion, detectIntent, getData } = require('./analytics')
 const { getCurrentQuincena } = require('./quincenas')
@@ -288,8 +288,12 @@ app.post('/webhook', async (req, res) => {
         }
 
         // 2. Gemini: clasifica el mensaje (expense / question / chat)
+        // Excepto el atajo "<monto>, <codigo>" (ej. "930, 3B"): siempre es un registro
+        // de gasto y se procesa directo con el parser determinista, sin pasar por
+        // Gemini. Evita que el clasificador lo confunda con chat y responda que ya
+        // quedo registrado sin haber tocado la base de datos.
         let geminiData = null
-        if (gemini.isEnabled()) {
+        if (!isShorthandExpense(text) && gemini.isEnabled()) {
           try {
             const sysCtx = await gemini.getSystemContext(prisma)
             geminiData = await gemini.classify(text, sysCtx)
