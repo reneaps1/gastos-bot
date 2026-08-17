@@ -176,6 +176,7 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 
 ### Configuración crítica de Render
 
+- `main` es la rama de despliegue: `render.yaml` no declara `branch`, asi que Render usa la rama por defecto del repo con `autoDeploy: true`. Un push a `main` despliega a produccion de inmediato — no es un paso intermedio. Ver la regla de Pull Requests en "Reglas De Código".
 - El `render.yaml` define la infraestructura pero **el dashboard de Render sobreescribe** `buildCommand` y `startCommand` en servicios ya existentes. Cambios a esos campos en render.yaml no aplican a servicios ya creados — hay que actualizarlos en el dashboard o recrear el servicio.
 - `DATABASE_URL` debe configurarse **manualmente** en el Environment de cada servicio en el dashboard (el `fromDatabase` de render.yaml solo aplica en Blueprints nuevos).
 - Ambos servicios usan la URL **interna** de gastos-db (sin `.oregon-postgres.render.com`).
@@ -210,6 +211,7 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 
 ## Reglas De Código
 
+- **Nunca hacer merge ni push directo a `main`.** Todo cambio va en una rama aparte y se abre un Pull Request; el merge lo hace Rene. Aplica tambien a hotfixes urgentes y a cambios que solo tocan documentacion. Un push a `main` es un despliegue a produccion (ver "Configuración crítica de Render").
 - No usar emojis en archivos `.md` del proyecto salvo que el usuario lo pida explícitamente.
 - Seguir el DDL y modelo de datos establecido en `ddl_plan.md` y `DEVELOPMENT_POLICY.md`.
 - Validar cambios contra datos reales del Excel `milo_tracker_v6.xlsm` cuando se trabaje en migración.
