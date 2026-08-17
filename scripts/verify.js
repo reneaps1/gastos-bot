@@ -9,8 +9,8 @@ const prisma = new PrismaClient({ adapter })
 
 const EXPECTED_TABLES = [
   'users', 'categorias', 'metodos_pago', 'quincenas', 'cuentas',
-  'transacciones', 'entrada_rapida', 'presupuesto', 'deudas', 'creditos', 'credito_pagos',
-  'whatsapp_messages', 'import_batches', 'audit_log', 'liquidez_snapshots',
+  'transacciones', 'presupuesto', 'deudas', 'creditos', 'credito_pagos',
+  'whatsapp_messages', 'import_batches', 'audit_log', 'liquidez_snapshots', 'pending_expenses',
 ]
 
 const EXPECTED_VIEWS = [

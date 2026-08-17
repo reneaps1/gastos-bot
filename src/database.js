@@ -30,6 +30,14 @@ async function findQuincenaByDate(date) {
   return allQuincenas.find(q => date >= q.fechaInicio && date <= q.fechaFin) || null
 }
 
+async function findPresupuestosByQuincena(quincenaId) {
+  return prisma.presupuesto.findMany({
+    where: { quincenaId, categoria: { tipo: 'Gasto' } },
+    include: { categoria: true },
+    orderBy: { montoPresupuestado: 'desc' },
+  })
+}
+
 async function messageExists(waMessageId) {
   if (!waMessageId) return false
   const msg = await prisma.whatsappMessage.findFirst({ where: { waMessageId } })
@@ -53,7 +61,7 @@ async function saveMessage({ waMessageId, fromNumber, fromName, userId, body, ti
   })
 }
 
-async function saveTransaccion({ fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, clasificacion, tipo, monto, metodoPagoId, creditoId, fechaPagoProgramada, estatus, notas, source }) {
+async function saveTransaccion({ fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, clasificacion, tipo, monto, metodoPagoId, creditoId, presupuestoId, fechaPagoProgramada, estatus, notas, source }) {
   return prisma.transaccion.create({
     data: {
       fecha,
@@ -67,12 +75,30 @@ async function saveTransaccion({ fecha, quincenaId, quincenaConsumoId, userId, d
       monto,
       metodoPagoId,
       creditoId,
+      presupuestoId,
       fechaPagoProgramada,
       estatus: estatus || 'Pagado',
       notas,
       source: source || 'whatsapp',
     },
   })
+}
+
+async function upsertPendingExpense(data) {
+  return prisma.pendingExpense.upsert({
+    where: { phone: data.phone },
+    create: data,
+    update: { ...data, createdAt: new Date() },
+  })
+}
+
+async function findPendingExpenseByPhone(phone) {
+  if (!phone) return null
+  return prisma.pendingExpense.findUnique({ where: { phone } })
+}
+
+async function deletePendingExpense(id) {
+  return prisma.pendingExpense.delete({ where: { id } }).catch(() => null)
 }
 
 async function getTransaccionesByQuincena(quincenaId) {
@@ -103,9 +129,13 @@ module.exports = {
   findMetodoPago,
   findQuincenaByCodigo,
   findQuincenaByDate,
+  findPresupuestosByQuincena,
   messageExists,
   saveMessage,
   saveTransaccion,
+  upsertPendingExpense,
+  findPendingExpenseByPhone,
+  deletePendingExpense,
   getTransaccionesByQuincena,
   getResumenQuincena,
 }
