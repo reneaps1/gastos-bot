@@ -10,6 +10,7 @@ import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
+import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -185,6 +186,8 @@ export default function PresupuestoPage() {
   const [editingP, setEditingP] = useState<Presupuesto | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; p: Presupuesto } | null>(null)
   const [editScopeBody, setEditScopeBody] = useState<Record<string, unknown> | null>(null)
+  // Partida cuyo detalle de gasto se esta viendo en la ventana flotante
+  const [detalleP, setDetalleP] = useState<Presupuesto | null>(null)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -513,7 +516,7 @@ export default function PresupuestoPage() {
           tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
-          openEdit={openEdit} setDeleteTarget={setDeleteTarget}
+          openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP}
         />
       ) : (
         <>
@@ -838,7 +841,12 @@ export default function PresupuestoPage() {
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 tabular-nums">
-                              {formatMXN(item.real)} <span className="text-slate-400 dark:text-slate-500 font-normal">de {formatMXN(Number(item.montoPresupuestado))}</span>
+                              <button onClick={() => setDetalleP(item)}
+                                className="hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline cursor-pointer transition-colors"
+                                aria-label={`Ver movimientos de ${item.descripcion}`}>
+                                {formatMXN(item.real)}
+                              </button>
+                              <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(Number(item.montoPresupuestado))}</span>
                             </span>
                             <button onClick={() => openEdit(item)}
                               className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
@@ -1126,6 +1134,33 @@ export default function PresupuestoPage() {
         </div>
       </FormModal>
 
+      {/* Detalle: transacciones que componen el gasto real de una partida */}
+      <FormModal
+        open={detalleP != null}
+        onOpenChange={open => !open && setDetalleP(null)}
+        title={detalleP?.descripcion ?? ''}
+        maxWidthClass="max-w-2xl"
+        subtitle={detalleP && (
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            {detalleP.categoria.nombre} · {detalleP.quincena.codigo}
+          </p>
+        )}
+      >
+        {detalleP && (
+          <DetalleGastoContent
+            key={detalleP.id}
+            partida={{
+              id: detalleP.id,
+              descripcion: detalleP.descripcion,
+              montoPresupuestado: detalleP.montoPresupuestado,
+              real: detalleP.real,
+              categoriaNombre: detalleP.categoria.nombre,
+              quincenaCodigo: detalleP.quincena.codigo,
+            }}
+          />
+        )}
+      </FormModal>
+
       {/* Non-recurring delete — simple confirm */}
       <ConfirmDialog
         open={deleteTarget != null && !deleteTarget.p.recurrenciaGrupoId}
@@ -1295,6 +1330,7 @@ interface PresupuestoTablaProps {
   sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
   openEdit: (p: Presupuesto) => void
   setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
+  setDetalleP: (p: Presupuesto | null) => void
 }
 
 function PresupuestoTabla({
@@ -1305,7 +1341,7 @@ function PresupuestoTabla({
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
-  openEdit, setDeleteTarget,
+  openEdit, setDeleteTarget, setDetalleP,
 }: PresupuestoTablaProps) {
   const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
@@ -1412,7 +1448,14 @@ function PresupuestoTabla({
                     <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</span>
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400 tabular-nums">{formatMXN(p.real)} de {formatMXN(Number(p.montoPresupuestado))}</span>
+                    <span className="text-slate-500 dark:text-slate-400 tabular-nums">
+                      <button onClick={() => setDetalleP(p)}
+                        className="font-semibold text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline cursor-pointer transition-colors"
+                        aria-label={`Ver movimientos de ${p.descripcion}`}>
+                        {formatMXN(p.real)}
+                      </button>
+                      {' '}de {formatMXN(Number(p.montoPresupuestado))}
+                    </span>
                     {p.excedido > 0
                       ? <span className="text-rose-600 dark:text-rose-400 font-semibold tabular-nums">+{formatMXN(p.excedido)}</span>
                       : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(Number(p.montoPresupuestado) - p.real)}</span>}
@@ -1492,7 +1535,11 @@ function PresupuestoTabla({
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">{formatMXN(Number(p.montoPresupuestado))}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">
-                        {formatMXN(p.real)}
+                        <button onClick={() => setDetalleP(p)}
+                          className="hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline cursor-pointer transition-colors"
+                          aria-label={`Ver movimientos de ${p.descripcion}`}>
+                          {formatMXN(p.real)}
+                        </button>
                         {p.pendiente > 0 && (
                           <span className="block text-[10px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pend.</span>
                         )}

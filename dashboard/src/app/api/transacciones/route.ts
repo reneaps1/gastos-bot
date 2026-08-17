@@ -28,6 +28,7 @@ export async function GET(request: Request) {
     const estatus = searchParams.get('estatus')
     const busqueda = searchParams.get('busqueda')
     const asignado = searchParams.get('asignado')
+    const presupuestoId = searchParams.get('presupuestoId')
     const fechaDesde = searchParams.get('fechaDesde')
     const fechaHasta = searchParams.get('fechaHasta')
 
@@ -43,7 +44,11 @@ export async function GET(request: Request) {
     if (userId) where.userId = parseInt(userId)
     if (estatus) where.estatus = estatus
     if (busqueda) where.descripcion = { contains: busqueda, mode: 'insensitive' }
-    if (asignado === 'si') where.presupuestoId = { not: null }
+    // presupuestoId gana sobre `asignado`: filtra a una linea concreta, que es
+    // lo que consume el detalle de gasto en la pagina de Presupuesto. Con
+    // tipo=Gasto reproduce exactamente el `real` que calcula /api/presupuestos.
+    if (presupuestoId) where.presupuestoId = parseInt(presupuestoId)
+    else if (asignado === 'si') where.presupuestoId = { not: null }
     else if (asignado === 'no') where.presupuestoId = null
 
     const [transacciones, total, totalesPorTipo] = await Promise.all([
