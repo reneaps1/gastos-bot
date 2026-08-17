@@ -3,24 +3,27 @@ require('dotenv').config()
 
 // Render no preserva node_modules/.prisma entre build y runtime.
 // Prisma 7 necesita DATABASE_URL para generate (prisma.config.ts), aunque no conecta a la DB.
-const { execSync } = require('child_process')
-const realDbUrl = process.env.DATABASE_URL
-process.env.DATABASE_URL = realDbUrl || 'postgresql://x:x@localhost:0/x'
-try {
-  execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
-} catch (e) {
-  console.error('prisma generate failed:', e.message)
-  process.exit(1)
-}
-process.env.DATABASE_URL = realDbUrl
-if (realDbUrl) {
+// SKIP_PRISMA_BOOTSTRAP=1 lo salta (scripts/test-bot-flow.js, que no toca Postgres).
+if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
+  const { execSync } = require('child_process')
+  const realDbUrl = process.env.DATABASE_URL
+  process.env.DATABASE_URL = realDbUrl || 'postgresql://x:x@localhost:0/x'
   try {
-    execSync('node_modules/.bin/prisma migrate deploy', { stdio: 'inherit' })
+    execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
   } catch (e) {
-    console.error('prisma migrate deploy failed:', e.message)
+    console.error('prisma generate failed:', e.message)
+    process.exit(1)
   }
-} else {
-  console.warn('DATABASE_URL not set — skipping prisma migrate deploy')
+  process.env.DATABASE_URL = realDbUrl
+  if (realDbUrl) {
+    try {
+      execSync('node_modules/.bin/prisma migrate deploy', { stdio: 'inherit' })
+    } catch (e) {
+      console.error('prisma migrate deploy failed:', e.message)
+    }
+  } else {
+    console.warn('DATABASE_URL not set — skipping prisma migrate deploy')
+  }
 }
 
 const express = require('express')
@@ -145,7 +148,7 @@ async function askBudgetLine(text, parsed, quincena, metodoPago, senderPhone, me
     fromName: senderName,
     userId: user?.id || null,
     body: text,
-    tipo: 'presupuesto_pendiente',
+    tipo: 'presup_pendiente',
     procesado: false,
     fechaMensaje: new Date(),
   })
@@ -201,7 +204,7 @@ async function resolvePendingExpense(pending, text, senderPhone, message, sender
       fromName: senderName,
       userId: user?.id || pending.userId || null,
       body: text,
-      tipo: 'presupuesto_pendiente',
+      tipo: 'presup_pendiente',
       procesado: false,
       fechaMensaje: new Date(),
     })
