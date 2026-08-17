@@ -25,7 +25,7 @@ if (realDbUrl) {
 
 const express = require('express')
 const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
-const { parseMessage, formatConfirmation, cleanDescription, isShorthandExpense } = require('./parser')
+const { parseMessage, formatConfirmation, cleanDescription, isShorthandExpense, detectCategory } = require('./parser')
 const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedia } = require('./whatsapp')
 const { handleQuestion, detectIntent, getData } = require('./analytics')
 const { getCurrentQuincena } = require('./quincenas')
@@ -34,6 +34,7 @@ const todoist = require('./todoist')
 const media = require('./media')
 const db = require('./database')
 const prisma = require('./lib/prisma')
+const presupuesto = require('./presupuesto')
 
 const app = express()
 app.use(express.json())
@@ -120,6 +121,146 @@ async function registerAndConfirm(parsed, senderPhone, messageId, senderName, us
   await assuredSend(senderPhone, confirmation, 'media:success')
   await react(senderPhone, messageId, '✅')
   console.log('Media transaccion guardada:', tx.id)
+}
+
+// Manda la lista numerada de lineas de presupuesto y deja la pregunta
+// pendiente en Postgres. Devuelve false (y no manda nada) si esta quincena no
+// tiene lineas de Gasto activas, para que el caller siga el flujo normal.
+async function askBudgetLine(text, parsed, quincena, metodoPago, senderPhone, message, senderName, user) {
+  const presupuestos = await db.findPresupuestosByQuincena(quincena.id)
+  if (presupuestos.length === 0) return false
+
+  const personalCategoria = await db.findCategoria('Personal')
+  if (!personalCategoria) return false
+
+  const options = presupuesto.buildOptions(presupuestos, personalCategoria)
+  const body = presupuesto.formatOptionsMessage(options, parsed.monto, parsed.descripcion)
+
+  // Deja rastro del mensaje original YA (aunque todavia no genera transaccion)
+  // para que messageExists() lo detecte si Meta reenvia el mismo webhook
+  // mientras la pregunta sigue pendiente, y no se duplique la pregunta.
+  await db.saveMessage({
+    waMessageId: message.id,
+    fromNumber: senderPhone,
+    fromName: senderName,
+    userId: user?.id || null,
+    body: text,
+    tipo: 'presupuesto_pendiente',
+    procesado: false,
+    fechaMensaje: new Date(),
+  })
+
+  await db.upsertPendingExpense({
+    phone: senderPhone,
+    userId: user?.id || null,
+    senderName: senderName || null,
+    originalMessageId: message.id,
+    rawText: text,
+    fecha: parsed.fecha,
+    descripcion: parsed.descripcion,
+    monto: parsed.monto,
+    formaPago: parsed.formaPago,
+    metodoPagoId: metodoPago?.id || null,
+    estatus: parsed.estatus,
+    quincenaId: quincena.id,
+    quincenaCodigo: quincena.codigo,
+    source: 'whatsapp',
+    opciones: options,
+    expiresAt: presupuesto.computeExpiresAt(),
+  })
+
+  await assuredSend(senderPhone, body, 'presupuesto:ask')
+  await react(senderPhone, message.id, '❓')
+  return true
+}
+
+// Interpreta la respuesta a una pregunta de linea de presupuesto pendiente.
+// Devuelve true si el mensaje quedo resuelto aqui (guardado o re-preguntado),
+// false si el mensaje no tiene nada que ver (o la pregunta ya expiro) y debe
+// seguir el flujo normal de clasificacion.
+async function resolvePendingExpense(pending, text, senderPhone, message, senderName, user) {
+  if (presupuesto.isExpired(pending)) {
+    await db.deletePendingExpense(pending.id)
+    return false
+  }
+
+  const match = presupuesto.matchReply(text, pending.opciones)
+
+  if (match.type === 'unrelated') {
+    await db.deletePendingExpense(pending.id)
+    return false
+  }
+
+  if (match.type === 'invalid') {
+    const body = presupuesto.formatOptionsMessage(pending.opciones, Number(pending.monto), pending.descripcion, { prefix: 'No reconozco esa opción.' })
+    await assuredSend(senderPhone, body, 'presupuesto:invalid')
+    await react(senderPhone, message.id, '❓')
+    await db.saveMessage({
+      waMessageId: message.id,
+      fromNumber: senderPhone,
+      fromName: senderName,
+      userId: user?.id || pending.userId || null,
+      body: text,
+      tipo: 'presupuesto_pendiente',
+      procesado: false,
+      fechaMensaje: new Date(),
+    })
+    return true
+  }
+
+  const option = match.option
+  const tx = await db.saveTransaccion({
+    fecha: pending.fecha,
+    quincenaId: pending.quincenaId,
+    userId: user?.id || pending.userId || null,
+    descripcion: pending.descripcion,
+    categoriaId: option.categoriaId,
+    clasificacion: option.clasificacion,
+    tipo: 'Gasto',
+    monto: pending.monto,
+    metodoPagoId: pending.metodoPagoId,
+    presupuestoId: option.presupuestoId,
+    estatus: pending.estatus,
+    notas: null,
+    source: pending.source,
+  })
+
+  await db.saveMessage({
+    waMessageId: message.id,
+    fromNumber: senderPhone,
+    fromName: senderName,
+    userId: user?.id || pending.userId || null,
+    body: text,
+    tipo: 'gasto',
+    procesado: true,
+    transaccionId: tx.id,
+    fechaMensaje: new Date(),
+  })
+
+  await db.deletePendingExpense(pending.id)
+
+  const confirmation = formatConfirmation({
+    tipo: 'Gasto',
+    fecha: pending.fecha,
+    usuario: pending.senderName || senderName || 'Rene',
+    monto: Number(pending.monto),
+    descripcion: pending.descripcion,
+    categoria: option.categoriaNombre,
+    lineaPresupuesto: option.presupuestoId ? option.descripcion : null,
+    formaPago: pending.formaPago,
+    quincena: pending.quincenaCodigo,
+    clasificacion: option.clasificacion,
+    estatus: pending.estatus,
+  })
+
+  await assuredSend(senderPhone, confirmation, 'presupuesto:resolved')
+  await react(senderPhone, message.id, '✅')
+  if (pending.originalMessageId) {
+    await react(senderPhone, pending.originalMessageId, '✅')
+  }
+
+  console.log('Transaccion guardada desde respuesta de linea de presupuesto:', tx.id)
+  return true
 }
 
 app.get('/webhook', (req, res) => {
@@ -259,6 +400,16 @@ app.post('/webhook', async (req, res) => {
           console.log(`Mensaje duplicado detectado: ${message.id}. Ignorando.`)
           await react(senderPhone, message.id, '✅')
           continue
+        }
+
+        // 0. ¿Hay una pregunta de línea de presupuesto pendiente para este
+        // número? Se checa antes que cualquier clasificación para que una
+        // respuesta tipo "2" no se confunda con un mensaje nuevo.
+        const pending = await db.findPendingExpenseByPhone(senderPhone)
+        if (pending) {
+          const handled = await resolvePendingExpense(pending, text, senderPhone, message, senderName, user)
+          if (handled) continue
+          // expirada o el mensaje no es una respuesta: sigue el flujo normal
         }
 
         // 1. Analytics con regex (rápido, sin costo de API)
@@ -401,14 +552,13 @@ app.post('/webhook', async (req, res) => {
           // geminiData mejora el parseo si Gemini detectó un registro
           const parsed = parseMessage(text, senderName || 'Rene', senderPhone, message.id, geminiData?.type === 'expense' ? geminiData : null)
 
-          const categoria = await db.findCategoria(parsed.categoria)
           const metodoPago = await db.findMetodoPago(parsed.formaPago)
           const quincena = await db.findQuincenaByCodigo(parsed.quincena)
 
-          if (!categoria || !quincena) {
-            console.error(`No se encontro categoria (${parsed.categoria}) o quincena (${parsed.quincena})`)
+          if (!quincena) {
+            console.error(`No se encontro quincena (${parsed.quincena})`)
             await react(senderPhone, message.id, '❌')
-            await assuredSend(senderPhone, '❌ Error: categoria o quincena no encontrada.', 'error:categoria_quincena')
+            await assuredSend(senderPhone, '❌ Error: quincena no encontrada.', 'error:quincena')
             await db.saveMessage({
               waMessageId: message.id,
               fromNumber: senderPhone,
@@ -417,7 +567,38 @@ app.post('/webhook', async (req, res) => {
               body: text,
               tipo: 'error',
               procesado: false,
-              error: `Categoria: ${parsed.categoria}, Quincena: ${parsed.quincena}`,
+              error: `Quincena: ${parsed.quincena}`,
+              fechaMensaje: new Date(),
+            })
+            continue
+          }
+
+          // Atajo rapido ("930, 3B") sin categoria reconocible: preguntar a
+          // que linea de presupuesto pertenece en vez de registrarlo a
+          // ciegas en Personal. Si no hay lineas activas esta quincena, cae
+          // al comportamiento de siempre (Personal) con una nota explicando
+          // por que.
+          if (isShorthandExpense(text) && parsed.tipo === 'Gasto' && !detectCategory(text)) {
+            const asked = await askBudgetLine(text, parsed, quincena, metodoPago, senderPhone, message, senderName, user)
+            if (asked) continue
+            parsed.notaExtra = 'Sin líneas de presupuesto esta quincena — se guardó en Personal.'
+          }
+
+          const categoria = await db.findCategoria(parsed.categoria)
+
+          if (!categoria) {
+            console.error(`No se encontro categoria (${parsed.categoria})`)
+            await react(senderPhone, message.id, '❌')
+            await assuredSend(senderPhone, '❌ Error: categoria no encontrada.', 'error:categoria')
+            await db.saveMessage({
+              waMessageId: message.id,
+              fromNumber: senderPhone,
+              fromName: senderName,
+              userId: user?.id || null,
+              body: text,
+              tipo: 'error',
+              procesado: false,
+              error: `Categoria: ${parsed.categoria}`,
               fechaMensaje: new Date(),
             })
             continue

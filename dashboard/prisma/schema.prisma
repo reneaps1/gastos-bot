@@ -271,6 +271,35 @@ model WhatsappMessage {
   @@map("whatsapp_messages")
 }
 
+// Pregunta "a que linea de presupuesto" pendiente de respuesta del atajo rapido
+// de WhatsApp (ej. "930, 3B"). Como mucho una fila abierta por telefono; se
+// borra al responderse, reemplazarse o expirar. Sin FK de Prisma a
+// User/Quincena/MetodoPago a proposito (evita arrays inversos en esos
+// modelos) — las FKs reales se agregan a mano en la migracion, mismo patron
+// que las CHECK constraints de 20260617000000_check_constraints.
+model PendingExpense {
+  id                Int      @id @default(autoincrement())
+  phone             String   @unique @db.VarChar(20)
+  userId            Int?     @map("user_id")
+  senderName        String?  @map("sender_name") @db.VarChar(100)
+  originalMessageId String?  @map("original_message_id") @db.VarChar(100)
+  rawText           String   @map("raw_text")
+  fecha             DateTime @db.Date
+  descripcion       String   @db.VarChar(200)
+  monto             Decimal  @db.Decimal(12, 2)
+  formaPago         String   @map("forma_pago") @db.VarChar(30)
+  metodoPagoId      Int?     @map("metodo_pago_id")
+  estatus           EstatusPago
+  quincenaId        Int      @map("quincena_id")
+  quincenaCodigo    String   @map("quincena_codigo") @db.VarChar(5)
+  source            String   @db.VarChar(20)
+  opciones          Json
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz()
+  expiresAt         DateTime @map("expires_at") @db.Timestamptz()
+
+  @@map("pending_expenses")
+}
+
 model ImportBatch {
   id          Int       @id @default(autoincrement())
   fuente      String    @db.VarChar(30)
