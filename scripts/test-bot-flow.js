@@ -19,6 +19,7 @@ process.env.SKIP_PRISMA_BOOTSTRAP = '1'
 process.env.PORT = process.env.TEST_PORT || '34567'
 // GEMINI_API_KEY / TODOIST_API_TOKEN / META_* quedan sin definir a proposito:
 // esas integraciones se deshabilitan solas y nunca intentan salir a la red.
+// Sin Gemini, la categoria sale solo del keyword matching de src/parser.js.
 
 const path = require('path')
 const SRC = path.join(__dirname, '..', 'src')
@@ -48,18 +49,6 @@ const COLUMNAS = {
     estatus: { enum: 'EstatusPago' },
     source: { varchar: 20 },
   },
-  pending_expenses: {
-    phone: { varchar: 20, notNull: true },
-    senderName: { varchar: 100 },
-    originalMessageId: { varchar: 100 },
-    rawText: { text: true, notNull: true },
-    descripcion: { varchar: 200, notNull: true },
-    monto: { decimal: [12, 2], positivo: true, notNull: true },
-    formaPago: { varchar: 30, notNull: true },
-    estatus: { enum: 'EstatusPago', notNull: true },
-    quincenaCodigo: { varchar: 5, notNull: true },
-    source: { varchar: 20, notNull: true },
-  },
 }
 
 // Imita el rechazo de Postgres. Los mensajes replican los codigos reales
@@ -71,12 +60,8 @@ function validarEscritura(tabla, data) {
     const valor = data[campo]
 
     if (valor === undefined || valor === null) {
-      if (regla.notNull && !('default' in regla)) {
-        // saveTransaccion/saveMessage rellenan varios defaults; solo marcamos
-        // los que llegan explicitamente vacios y no tienen default en el codigo.
-        if (campo in data) {
-          throw new Error(`23502 null value in column "${campo}" of relation "${tabla}" violates not-null constraint`)
-        }
+      if (regla.notNull && campo in data) {
+        throw new Error(`23502 null value in column "${campo}" of relation "${tabla}" violates not-null constraint`)
       }
       continue
     }
@@ -90,8 +75,7 @@ function validarEscritura(tabla, data) {
 
     if (regla.enum && !ENUMS[regla.enum].includes(valor)) {
       throw new Error(
-        `22P02 invalid input value for enum ${regla.enum}: ${JSON.stringify(valor)} ` +
-        `-- ${tabla}.${campo}`
+        `22P02 invalid input value for enum ${regla.enum}: ${JSON.stringify(valor)} -- ${tabla}.${campo}`
       )
     }
 
@@ -134,18 +118,10 @@ const { QUINCENAS } = require(path.join(SRC, 'quincenas'))
 const quincenas = QUINCENAS.map((q, i) => ({
   id: i + 1, codigo: q.codigo, fechaInicio: new Date(q.inicio), fechaFin: new Date(q.fin),
 }))
-const quincenaActual = require(path.join(SRC, 'quincenas')).getCurrentQuincena()
-const quincenaActualId = quincenas.find(q => q.codigo === quincenaActual)?.id
-
-let presupuestos = [
-  { id: 12, quincenaId: quincenaActualId, descripcion: 'Renta', categoriaId: 1, categoria: categorias[0], clasificacion: 'Fijo', montoPresupuestado: 8000 },
-  { id: 7, quincenaId: quincenaActualId, descripcion: 'Súper', categoriaId: 3, categoria: categorias[2], clasificacion: 'Variable', montoPresupuestado: 3000 },
-]
 
 const transacciones = []
 const whatsappMessages = []
-const pendingExpenses = []
-let nextTxId = 1, nextMsgId = 1, nextPendingId = 1
+let nextTxId = 1, nextMsgId = 1
 
 const fakeDb = {
   findUserByPhone: async () => null,
@@ -158,9 +134,6 @@ const fakeDb = {
     : null,
   findQuincenaByCodigo: async (codigo) => quincenas.find(q => q.codigo === codigo) || null,
   findQuincenaByDate: async () => null,
-  findPresupuestosByQuincena: async (quincenaId) => presupuestos
-    .filter(p => p.quincenaId === quincenaId)
-    .sort((a, b) => b.montoPresupuestado - a.montoPresupuestado),
   messageExists: async (waMessageId) => whatsappMessages.some(m => m.waMessageId === waMessageId),
   saveMessage: async (data) => {
     validarEscritura('whatsapp_messages', data)
@@ -173,22 +146,6 @@ const fakeDb = {
     const row = { id: nextTxId++, ...data }
     transacciones.push(row)
     return row
-  },
-  upsertPendingExpense: async (data) => {
-    validarEscritura('pending_expenses', data)
-    const idx = pendingExpenses.findIndex(p => p.phone === data.phone)
-    if (idx >= 0) {
-      pendingExpenses[idx] = { ...pendingExpenses[idx], ...data, createdAt: new Date() }
-      return pendingExpenses[idx]
-    }
-    const row = { id: nextPendingId++, createdAt: new Date(), ...data }
-    pendingExpenses.push(row)
-    return row
-  },
-  findPendingExpenseByPhone: async (phone) => pendingExpenses.find(p => p.phone === phone) || null,
-  deletePendingExpense: async (id) => {
-    const idx = pendingExpenses.findIndex(p => p.id === id)
-    if (idx >= 0) pendingExpenses.splice(idx, 1)
   },
   getTransaccionesByQuincena: async () => [],
   getResumenQuincena: async () => ({ ingresos: 0, gastos: 0, ahorro: 0 }),
@@ -250,73 +207,53 @@ function sinErrores(etiqueta) {
   check(`${etiqueta}: el bot no respondio con error generico`, !err, err && err.message)
 }
 
+function ultimaConfirmacion() {
+  return enviados.at(-1)?.message || ''
+}
+
 async function main() {
   require(path.join(SRC, 'index.js'))
   await sleep(300)
 
-  console.log(`\n=== A: atajo "930, 3B" (codigo sin categoria) pregunta la linea ===`)
+  // El bot registra y guarda; la linea de presupuesto se asigna a mano desde
+  // el dashboard. El bot nunca debe preguntar nada ni fijar presupuestoId.
+
+  console.log('\n=== A: atajo "930, 3B" (codigo sin categoria) registra directo en Personal ===')
   await send('930, 3B')
   sinErrores('A')
-  check('no se creo transaccion todavia', transacciones.length === 0)
-  check('quedo una pregunta pendiente', !!pendingExpenses.find(p => p.phone === PHONE))
-  const preguntaA = enviados.at(-1)
-  check('mando la lista de lineas de presupuesto', preguntaA?.message.includes('línea de presupuesto'), preguntaA?.message)
-  check('lista Renta', preguntaA?.message.includes('1) Renta'))
-  check('lista Súper', preguntaA?.message.includes('2) Súper'))
-  check('ofrece Otro/Personal', preguntaA?.message.includes('0) Otro / Personal'))
+  check('creo la transaccion de inmediato', transacciones.length === 1, transacciones.length)
+  const txA = transacciones.at(-1)
+  check('categoriaId = Personal (7)', txA?.categoriaId === 7, txA?.categoriaId)
+  check('monto = 930', Number(txA?.monto) === 930, txA?.monto)
+  check('descripcion = 3B', txA?.descripcion === '3B', txA?.descripcion)
+  check('confirmo el registro', ultimaConfirmacion().includes('Gasto registrado'), ultimaConfirmacion())
+  check('NO pregunto por linea de presupuesto', !ultimaConfirmacion().includes('línea de presupuesto'), ultimaConfirmacion())
 
-  console.log(`\n=== B: responder "2" registra ligado a esa linea ===`)
-  await send('2')
+  console.log('\n=== B: atajo "150, super" (codigo que matchea keyword) usa la categoria ===')
+  await send('150, super')
   sinErrores('B')
-  check('ya no hay pregunta pendiente', !pendingExpenses.find(p => p.phone === PHONE))
   const txB = transacciones.at(-1)
   check('categoriaId = Familia (3)', txB?.categoriaId === 3, txB?.categoriaId)
-  check('presupuestoId = Súper (7)', txB?.presupuestoId === 7, txB?.presupuestoId)
-  check('monto = 930', Number(txB?.monto) === 930, txB?.monto)
-  check('confirmacion menciona la linea', enviados.at(-1)?.message.includes('Súper'))
+  check('monto = 150', Number(txB?.monto) === 150, txB?.monto)
 
-  console.log(`\n=== C: respuesta invalida "99" reintenta sin perder la pregunta ===`)
-  await send('390, 3B')
-  const antesC = transacciones.length
-  await send('99')
+  console.log('\n=== C: lenguaje natural "gaste 150 en uber" ===')
+  await send('gaste 150 en uber')
   sinErrores('C')
-  check('sigue pendiente', !!pendingExpenses.find(p => p.phone === PHONE))
-  check('no creo transaccion', transacciones.length === antesC)
-  check('reenvio la lista con aviso', enviados.at(-1)?.message.includes('No reconozco esa opción'))
+  const txC = transacciones.at(-1)
+  check('categoriaId = Transporte (4)', txC?.categoriaId === 4, txC?.categoriaId)
+  check('monto = 150', Number(txC?.monto) === 150, txC?.monto)
 
-  console.log(`\n=== D: responder "0" cae en Personal sin linea ===`)
-  await send('0')
-  sinErrores('D')
-  const txD = transacciones.at(-1)
-  check('categoriaId = Personal (7)', txD?.categoriaId === 7, txD?.categoriaId)
-  check('presupuestoId nulo', txD?.presupuestoId == null, txD?.presupuestoId)
-
-  console.log(`\n=== E: "150, super" (matchea keyword) registra directo, sin preguntar ===`)
-  const antesE = transacciones.length
-  await send('150, super')
-  sinErrores('E')
-  check('no quedo pregunta pendiente', !pendingExpenses.find(p => p.phone === PHONE))
-  check('registro de inmediato', transacciones.length === antesE + 1)
-  check('categoriaId = Familia (3)', transacciones.at(-1)?.categoriaId === 3)
-
-  console.log(`\n=== F: mensaje no relacionado abandona la pregunta pendiente ===`)
-  await send('930, 3B')
-  check('hay pregunta pendiente', !!pendingExpenses.find(p => p.phone === PHONE))
+  console.log('\n=== D: mensaje sin numero cae en el fallback, sin registrar nada ===')
+  const antesD = transacciones.length
   await send('hola como estas')
-  sinErrores('F')
-  check('la pregunta vieja se abandono', !pendingExpenses.find(p => p.phone === PHONE))
-  await send('1')
-  check('un "1" tardio no se ligo a la pregunta abandonada', transacciones.at(-1)?.presupuestoId == null)
+  sinErrores('D')
+  check('no creo transaccion', transacciones.length === antesD, transacciones.length)
+  check('respondio que no entendio', ultimaConfirmacion().includes('No entendí'), ultimaConfirmacion())
 
-  console.log(`\n=== G: quincena sin lineas de presupuesto cae a Personal con nota ===`)
-  presupuestos = []
-  const antesG = transacciones.length
-  await send('770, 9Z')
-  sinErrores('G')
-  check('no quedo pregunta pendiente', !pendingExpenses.find(p => p.phone === PHONE))
-  check('registro de inmediato', transacciones.length === antesG + 1)
-  check('categoriaId = Personal (7)', transacciones.at(-1)?.categoriaId === 7)
-  check('la confirmacion explica por que', enviados.at(-1)?.message.includes('Sin líneas de presupuesto'))
+  console.log('\n=== E: el bot nunca asigna linea de presupuesto (eso es manual) ===')
+  const conPresupuesto = transacciones.filter(t => t.presupuestoId != null)
+  check('ninguna transaccion trae presupuestoId', conPresupuesto.length === 0, JSON.stringify(conPresupuesto))
+  check('se registraron 3 gastos en total', transacciones.length === 3, transacciones.length)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

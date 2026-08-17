@@ -271,12 +271,14 @@ model WhatsappMessage {
   @@map("whatsapp_messages")
 }
 
-// Pregunta "a que linea de presupuesto" pendiente de respuesta del atajo rapido
-// de WhatsApp (ej. "930, 3B"). Como mucho una fila abierta por telefono; se
-// borra al responderse, reemplazarse o expirar. Sin FK de Prisma a
-// User/Quincena/MetodoPago a proposito (evita arrays inversos en esos
-// modelos) — las FKs reales se agregan a mano en la migracion, mismo patron
-// que las CHECK constraints de 20260617000000_check_constraints.
+// SIN USO. Quedo de la feature en que el bot preguntaba por WhatsApp a que
+// linea de presupuesto asignar un gasto; se retiro porque la asignacion se
+// hace a mano desde el dashboard. La tabla se dejo en la base a proposito (no
+// se borro con una migracion), asi que el modelo se conserva para que el
+// esquema siga reflejando la base: quitarlo dejando la tabla haria que
+// `prisma migrate dev` quisiera emitir un DROP por su cuenta. Ningun codigo
+// la lee ni la escribe. Si algun dia se retoma la feature, ver el commit
+// 83557c3.
 model PendingExpense {
   id                Int      @id @default(autoincrement())
   phone             String   @unique @db.VarChar(20)

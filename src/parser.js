@@ -161,19 +161,18 @@ function parseMessage(text, senderName, senderPhone, messageId, geminiData = nul
 }
 
 function formatConfirmation(parsed) {
-  const lines = [`✅ *${parsed.tipo} registrado*`, ``]
-  if (parsed.notaExtra) lines.push(`⚠️ ${parsed.notaExtra}`, ``)
-  lines.push(
+  return [
+    `✅ *${parsed.tipo} registrado*`,
+    ``,
     `📅 ${parsed.fecha.toLocaleDateString('es-MX')}`,
     `👤 ${parsed.usuario}`,
     `$${parsed.monto}`,
     `📝 ${parsed.descripcion}`,
-    `🏷️ ${parsed.categoria}${parsed.lineaPresupuesto ? ' — ' + parsed.lineaPresupuesto : ''}`,
+    `🏷️ ${parsed.categoria}`,
     `💳 ${parsed.formaPago}`,
     `📊 ${parsed.quincena} - ${parsed.clasificacion || ''}`,
     `✅ ${parsed.estatus}`,
-  )
-  return lines.join('\n')
+  ].join('\n')
 }
 
-module.exports = { parseMessage, formatConfirmation, isShorthandExpense, detectCategory }
+module.exports = { parseMessage, formatConfirmation, isShorthandExpense }
