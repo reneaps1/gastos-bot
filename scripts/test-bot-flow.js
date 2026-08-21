@@ -112,12 +112,15 @@ const metodosPago = [
   { id: 4, nombre: 'Vales' }, { id: 5, nombre: 'Credito' },
 ]
 
-// La quincena se resuelve con la fecha real de hoy (src/quincenas.js), asi que
-// registramos todas las del catalogo para que el test no caduque.
-const { QUINCENAS } = require(path.join(SRC, 'quincenas'))
-const quincenas = QUINCENAS.map((q, i) => ({
-  id: i + 1, codigo: q.codigo, fechaInicio: new Date(q.inicio), fechaFin: new Date(q.fin),
-}))
+// src/quincenas.js ahora resuelve la quincena consultando db.listQuincenas()
+// (con cache), no un arreglo fijo -- se arma un periodo relativo a hoy para
+// que el test nunca caduque.
+const hoy = new Date()
+const inicioRango = new Date(hoy); inicioRango.setDate(inicioRango.getDate() - 30)
+const finRango = new Date(hoy); finRango.setDate(finRango.getDate() + 30)
+const quincenas = [
+  { id: 1, codigo: 'QTEST', tipo: 'QUINCENAL', fechaInicio: inicioRango, fechaFin: finRango },
+]
 
 const transacciones = []
 const whatsappMessages = []
@@ -133,7 +136,7 @@ const fakeDb = {
     ? metodosPago.find(m => m.nombre.toLowerCase() === String(nombre).toLowerCase()) || null
     : null,
   findQuincenaByCodigo: async (codigo) => quincenas.find(q => q.codigo === codigo) || null,
-  findQuincenaByDate: async () => null,
+  listQuincenas: async () => quincenas,
   messageExists: async (waMessageId) => whatsappMessages.some(m => m.waMessageId === waMessageId),
   saveMessage: async (data) => {
     validarEscritura('whatsapp_messages', data)

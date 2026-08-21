@@ -25,9 +25,8 @@ async function findQuincenaByCodigo(codigo) {
   return prisma.quincena.findUnique({ where: { codigo } })
 }
 
-async function findQuincenaByDate(date) {
-  const allQuincenas = await prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
-  return allQuincenas.find(q => date >= q.fechaInicio && date <= q.fechaFin) || null
+async function listQuincenas() {
+  return prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
 }
 
 async function messageExists(waMessageId) {
@@ -102,7 +101,7 @@ module.exports = {
   findCategoria,
   findMetodoPago,
   findQuincenaByCodigo,
-  findQuincenaByDate,
+  listQuincenas,
   messageExists,
   saveMessage,
   saveTransaccion,

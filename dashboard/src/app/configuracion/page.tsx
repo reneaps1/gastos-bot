@@ -1,6 +1,14 @@
-import { Droplets, Tag, Users, Zap, ClipboardList } from 'lucide-react'
+import { Droplets, Tag, Users, Zap, ClipboardList, CalendarRange } from 'lucide-react'
 
 const sections = [
+  {
+    href: '/configuracion/quincenas',
+    title: 'Períodos de pago',
+    description: 'Agrega, edita o corrige las fechas de cada quincena y la frecuencia de pago predeterminada.',
+    icon: CalendarRange,
+    color: 'text-teal-600',
+    bg: 'bg-teal-50',
+  },
   {
     href: '/configuracion/liquidez',
     title: 'Liquidez',

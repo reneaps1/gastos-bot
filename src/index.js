@@ -31,7 +31,7 @@ const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
 const { parseMessage, formatConfirmation, cleanDescription, isShorthandExpense } = require('./parser')
 const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedia } = require('./whatsapp')
 const { handleQuestion, detectIntent, getData } = require('./analytics')
-const { getCurrentQuincena } = require('./quincenas')
+const { getCurrentQuincena, ensureFreshQuincenas } = require('./quincenas')
 const gemini = require('./gemini')
 const todoist = require('./todoist')
 const media = require('./media')
@@ -181,6 +181,7 @@ app.post('/webhook', async (req, res) => {
         const senderPhone = extractPhoneNumber(message.from)
         const senderName = changes.value.contacts?.[0]?.profile?.name || 'Rene'
         const user = await db.findUserByPhone(senderPhone) || await db.findUserByName(senderName)
+        await ensureFreshQuincenas()
 
         if (mediaMeta) {
           console.log(`Media from ${senderName} (${senderPhone}): ${mediaMeta.type} ${mediaMeta.id}`)

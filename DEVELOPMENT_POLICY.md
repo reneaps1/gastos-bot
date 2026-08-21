@@ -143,11 +143,13 @@ Entregables:
 - Decisión sobre Sheets.
 - Decisión sobre Excel histórico.
 
-### Reglas Oficiales De Quincenas (Fase 0 - Cerrado)
+### Reglas Oficiales De Quincenas (Fase 0 - Cerrado; gestión Fase 10 - autoservicio)
 
 Las quincenas son secuenciales y siguen la numeración del Excel: `Q23`, `Q24`, `Q25`, en adelante hasta `Q42` (y continúa). La numeración no se reinicia por mes ni por año.
 
-Cada quincena tiene un rango de fechas definido. La fuente oficial es la hoja `semanas` del Excel `milo_tracker_v6.xlsm`, reflejada en la tabla `quincenas` (ver `ddl_plan.md`) y en `src/quincenas.js`.
+Cada quincena tiene un rango de fechas definido. El origen histórico de la tabla de abajo es la hoja `semanas` del Excel `milo_tracker_v6.xlsm`, pero **la fuente de verdad operativa hoy es la tabla `quincenas` en Postgres**, editable desde el dashboard en Configuración → Períodos de pago (agregar/editar/borrar periodos, con validación de traslapes). El bot de WhatsApp lee esa tabla en vivo (con una caché de 2 minutos, ver `src/quincenas.js`) — ya no depende de un arreglo fijo en el código ni de un despliegue para reflejar correcciones. `prisma/seed.js` y este documento solo reflejan el estado inicial/histórico, no requieren estar sincronizados con la tabla en producción.
+
+Cada periodo tiene además un campo `tipo` (`QUINCENAL`/`SEMANAL`/`MENSUAL`), y existe un ajuste global `Configuracion.frecuenciaPagoDefault` (mismo módulo de Configuración) que solo controla qué cadencia se sugiere al agregar un periodo nuevo — no cambia el comportamiento de los periodos ya creados ni recalcula nada retroactivamente.
 
 | Quincena | Inicio     | Fin        | Origen |
 |----------|------------|------------|--------|
@@ -156,16 +158,16 @@ Cada quincena tiene un rango de fechas definido. La fuente oficial es la hoja `s
 | Q25      | 2026-04-15 | 2026-04-29 | Oficial, hoja `semanas` |
 | Q26      | 2026-04-30 | 2026-05-13 | Oficial, hoja `semanas` |
 | Q27      | 2026-05-15 | 2026-05-28 | Oficial, hoja `semanas` |
-| Q28      | 2026-05-29 | 2026-06-15 | Oficial, hoja `semanas` |
-| Q29      | 2026-06-16 | 2026-06-29 | Oficial, hoja `semanas` |
+| Q28      | 2026-05-29 | 2026-06-14 | Oficial, hoja `semanas` |
+| Q29      | 2026-06-15 | 2026-06-29 | Oficial, hoja `semanas` |
 | Q30      | 2026-06-30 | 2026-07-14 | Oficial, hoja `semanas` |
 | Q31      | 2026-07-15 | 2026-07-29 | Oficial, hoja `semanas` |
 | Q32      | 2026-07-30 | 2026-08-13 | Oficial, hoja `semanas` |
 | Q33      | 2026-08-14 | 2026-08-31 | Último día hábil del mes (regla, desde Q33) |
 | Q34      | 2026-09-01 | 2026-09-14 | Oficial, hoja `semanas` |
 | Q35      | 2026-09-15 | 2026-09-30 | Último día hábil del mes (regla) |
-| Q36      | 2026-10-01 | 2026-10-13 | Oficial, hoja `semanas` |
-| Q37      | 2026-10-14 | 2026-10-30 | Último día hábil del mes (regla) |
+| Q36      | 2026-10-01 | 2026-10-14 | Oficial, hoja `semanas` |
+| Q37      | 2026-10-15 | 2026-10-30 | Último día hábil del mes (regla) |
 | Q38      | 2026-10-31 | 2026-11-12 | Proyectada, validar contra nómina |
 | Q39      | 2026-11-13 | 2026-11-30 | Último día hábil del mes (regla) |
 | Q40      | 2026-12-01 | 2026-12-14 | Proyectada, validar contra nómina |
@@ -177,8 +179,9 @@ Reglas:
 - Los cierres de mediados de mes nunca se calculan con fórmulas de calendario: se resuelven buscando la fecha en la tabla de rangos, derivados del día de pago real.
 - **Excepción, vigente desde Q33:** los cierres que caen en fin de mes sí se calculan con fórmula — el último día hábil del mes (se salta sábado/domingo, sin calendario de festivos). Las quincenas ya cerradas antes de Q33 (Q23-Q31) no se recalculan retroactivamente.
 - Los rangos siguen días reales de pago, por lo que pueden existir fechas que no pertenecen a ninguna quincena (ejemplo: 2026-05-14, entre `Q26` y `Q27`).
-- Si una fecha no cae en ninguna quincena conocida, el sistema reporta `Sin quincena`.
+- Si una fecha no cae en ninguna quincena conocida, el sistema reporta `Sin quincena`. Antes esto requería agregar filas por código/migración; ahora se corrige agregando el periodo faltante desde Configuración → Períodos de pago, sin despliegue.
 - Las quincenas proyectadas (`Q37` a `Q42`) deben confirmarse contra las fechas reales de pago antes de usarse en migración o presupuesto.
+- La tabla `quincenas` no tiene fin fijo: hay que seguir agregando periodos conforme se acerque la última fecha cargada (antes esto vivía solo en `src/quincenas.js`, ahora se hace desde la UI).
 
 ### Catálogo Oficial de Categorías (Fase 0 - Cerrado)
 
@@ -700,7 +703,7 @@ Cambios importantes deben guardar auditoría:
 
 ## Riesgos Conocidos
 
-- Quincenas mal calculadas.
+- Quincenas mal calculadas. Mitigado: la tabla vive en Postgres y es editable desde Configuración → Períodos de pago sin despliegue; sigue existiendo el riesgo de que nadie agregue periodos nuevos a tiempo.
 - Categorías inconsistentes entre Excel, bot y Sheets.
 - Descripciones duplicadas o ambiguas.
 - Deudas registradas solo por texto en notas.
