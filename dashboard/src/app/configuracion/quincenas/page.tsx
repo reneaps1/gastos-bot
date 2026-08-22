@@ -246,10 +246,10 @@ export default function QuincenasConfigPage() {
               <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
                   <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Código</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>
+                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Tipo</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Inicio</th>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fin</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estado</th>
+                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Estado</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
@@ -260,16 +260,19 @@ export default function QuincenasConfigPage() {
                   const isRunning = today >= ini && today <= fin
                   return (
                     <tr key={q.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                      <td className="px-5 py-3.5 font-medium text-slate-800 dark:text-slate-100">{q.codigo}</td>
-                      <td className="px-4 py-3.5">
+                      <td className="px-5 py-3.5 font-medium text-slate-800 dark:text-slate-100">
+                        {q.codigo}
+                        {isRunning && <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 align-middle md:hidden" title="Activa ahora" />}
+                      </td>
+                      <td className="px-4 py-3.5 hidden md:table-cell">
                         <span className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
                           <span className={`w-2 h-2 rounded-full shrink-0 ${TIPO_DOT[q.tipo] ?? 'bg-slate-400'}`} />
                           {TIPO_LABEL[q.tipo] ?? q.tipo}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 text-slate-600 dark:text-slate-400">{ini}</td>
-                      <td className="px-4 py-3.5 text-slate-600 dark:text-slate-400">{fin}</td>
-                      <td className="px-4 py-3.5 text-center">
+                      <td className="px-4 py-3.5 text-slate-600 dark:text-slate-400 whitespace-nowrap">{ini}</td>
+                      <td className="px-4 py-3.5 text-slate-600 dark:text-slate-400 whitespace-nowrap">{fin}</td>
+                      <td className="px-4 py-3.5 text-center hidden md:table-cell">
                         {isRunning
                           ? <span className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">Activa ahora</span>
                           : <span className="text-slate-400 dark:text-slate-500 text-xs">—</span>
