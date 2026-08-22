@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { findOverlap, findGapWarnings } from '@/lib/quincena-validation'
 
 export async function GET(request: Request) {
   try {
@@ -24,10 +25,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { codigo, fechaInicio, fechaFin } = body
+    const { codigo, fechaInicio, fechaFin, tipo } = body
 
     if (!codigo || !fechaInicio || !fechaFin) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    }
+    if (fechaFin < fechaInicio) {
+      return NextResponse.json({ error: 'fechaFin debe ser posterior a fechaInicio' }, { status: 400 })
     }
 
     const existing = await prisma.quincena.findFirst({ where: { codigo } })
@@ -35,15 +39,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Quincena already exists' }, { status: 409 })
     }
 
+    const others = await prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
+    const overlap = findOverlap(others, fechaInicio, fechaFin)
+    if (overlap) {
+      return NextResponse.json({ error: `Se traslapa con ${overlap.codigo}` }, { status: 409 })
+    }
+
     const quincena = await prisma.quincena.create({
       data: {
         codigo,
         fechaInicio: new Date(fechaInicio),
         fechaFin: new Date(fechaFin),
+        ...(tipo !== undefined && { tipo }),
       },
     })
 
-    return NextResponse.json(quincena, { status: 201 })
+    const warnings = findGapWarnings(others, fechaInicio, fechaFin)
+
+    return NextResponse.json({ ...quincena, warnings }, { status: 201 })
   } catch (error) {
     console.error('Error creating quincena:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

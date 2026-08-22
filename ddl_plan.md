@@ -93,12 +93,24 @@ CREATE TABLE metodos_pago (
     nombre VARCHAR(30) NOT NULL UNIQUE   -- 'SPEI', 'Efectivo', 'Debito', 'Vales'
 );
 
+CREATE TYPE tipo_periodo AS ENUM ('QUINCENAL', 'SEMANAL', 'MENSUAL');
+
 CREATE TABLE quincenas (
     id           SERIAL PRIMARY KEY,
     codigo       VARCHAR(5)  NOT NULL UNIQUE,   -- 'Q23', 'Q24', ..., 'Q42'
     fecha_inicio DATE        NOT NULL,
     fecha_fin    DATE        NOT NULL,
+    tipo         tipo_periodo NOT NULL DEFAULT 'QUINCENAL',
     CONSTRAINT chk_rango CHECK (fecha_fin > fecha_inicio)
+);
+
+-- Ajustes globales, fila unica (id=1). frecuencia_pago_default solo controla
+-- que cadencia se sugiere al agregar un periodo nuevo desde el dashboard
+-- (Configuracion > Periodos de pago); no afecta periodos ya creados.
+CREATE TABLE configuracion (
+    id                       SERIAL PRIMARY KEY,
+    frecuencia_pago_default  tipo_periodo NOT NULL DEFAULT 'QUINCENAL',
+    fecha_actualizacion      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE cuentas (
@@ -574,6 +586,14 @@ INSERT INTO cuentas (nombre, tipo) VALUES
 --          (Q39-Q42 aparecen en "semanas" solo como codigo, sin fechas; Q37-Q38 no aparecen)
 -- Nota: los rangos siguen dias reales de pago, por lo que existen fechas sin quincena
 --       (ej. 2026-05-14 entre Q26 y Q27). Una fecha fuera de todo rango = "Sin quincena".
+--
+-- NOTA (post Fase 10): este INSERT es la foto de planeacion original y ya no
+-- coincide con las fechas reales (Q28/Q29/Q36/Q37 se corrigieron por
+-- migracion, y Q33+ sigue la regla de "ultimo dia habil del mes" que no
+-- estaba definida cuando se escribio esta lista). La fuente de verdad actual
+-- es la tabla `quincenas` en Postgres, editable desde el dashboard en
+-- Configuracion > Periodos de pago -- no se reescriben estas 20 filas a mano
+-- para no perder el registro historico de la planeacion inicial.
 INSERT INTO quincenas (codigo, fecha_inicio, fecha_fin) VALUES
   ('Q23', '2026-03-01', '2026-03-29'),
   ('Q24', '2026-03-30', '2026-04-14'),

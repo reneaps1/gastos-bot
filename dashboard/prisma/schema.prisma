@@ -39,6 +39,12 @@ enum EstatusCreditoPago {
   Cancelado
 }
 
+enum TipoPeriodo {
+  QUINCENAL
+  SEMANAL
+  MENSUAL
+}
+
 model User {
   id            Int      @id @default(autoincrement())
   nombre        String   @unique @db.VarChar(50)
@@ -80,10 +86,11 @@ model MetodoPago {
 }
 
 model Quincena {
-  id          Int      @id @default(autoincrement())
-  codigo      String   @unique @db.VarChar(5)
-  fechaInicio DateTime @map("fecha_inicio") @db.Date
-  fechaFin    DateTime @map("fecha_fin") @db.Date
+  id          Int         @id @default(autoincrement())
+  codigo      String      @unique @db.VarChar(5)
+  fechaInicio DateTime    @map("fecha_inicio") @db.Date
+  fechaFin    DateTime    @map("fecha_fin") @db.Date
+  tipo        TipoPeriodo @default(QUINCENAL)
 
   transacciones        Transaccion[]      @relation("TransaccionImpacto")
   transaccionesConsumo Transaccion[]      @relation("TransaccionConsumo")
@@ -92,6 +99,18 @@ model Quincena {
   creditoPagos         CreditoPago[]
 
   @@map("quincenas")
+}
+
+// Ajustes globales de la aplicacion, fila unica (id=1). Ver frecuenciaPagoDefault:
+// controla que cadencia se sugiere al agregar un nuevo periodo de pago desde
+// Configuracion > Periodos de pago, no cambia el comportamiento de periodos ya
+// creados (cada Quincena.tipo es independiente).
+model Configuracion {
+  id                    Int         @id @default(autoincrement())
+  frecuenciaPagoDefault TipoPeriodo @default(QUINCENAL) @map("frecuencia_pago_default")
+  fechaActualizacion    DateTime    @default(now()) @updatedAt @map("fecha_actualizacion") @db.Timestamptz()
+
+  @@map("configuracion")
 }
 
 model Cuenta {

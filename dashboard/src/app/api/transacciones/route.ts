@@ -1,10 +1,9 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { shiftMonth } from '@/lib/periodo'
 
 function addMonths(dateString: string, months: number) {
-  const date = new Date(`${dateString}T00:00:00.000Z`)
-  date.setUTCMonth(date.getUTCMonth() + months)
-  return date
+  return new Date(`${shiftMonth(dateString, months)}T00:00:00.000Z`)
 }
 
 async function findQuincenaIdForDate(date: Date): Promise<number | null> {
