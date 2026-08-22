@@ -12,6 +12,7 @@ interface Categoria {
   clasificacion: string | null
   ejemplos: string | null
   activo: boolean
+  cuentaParaLimite: boolean
   transaccionesCount: number
 }
 
@@ -36,7 +37,7 @@ const AVAILABLE_COLORS = [
   { name: 'Teal', class: 'bg-teal-500' },
 ]
 
-const EMPTY_FORM = { nombre: '', tipo: 'Gasto', clasificacion: '', ejemplos: '', activo: true, color: 'bg-slate-500' }
+const EMPTY_FORM = { nombre: '', tipo: 'Gasto', clasificacion: '', ejemplos: '', activo: true, cuentaParaLimite: true, color: 'bg-slate-500' }
 
 function fieldClass(err?: string) {
   return `w-full border rounded-lg px-3 py-2.5 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
@@ -125,6 +126,7 @@ export default function AdminCategoriasPage() {
       clasificacion: c.clasificacion ?? '',
       ejemplos: c.ejemplos ?? '',
       activo: c.activo,
+      cuentaParaLimite: c.cuentaParaLimite,
       color: CAT_COLORS[c.nombre] ?? 'bg-slate-500',
     })
     setFormErrors({})
@@ -149,6 +151,7 @@ export default function AdminCategoriasPage() {
         clasificacion: form.clasificacion || null,
         ejemplos: form.ejemplos || null,
         activo: form.activo,
+        cuentaParaLimite: form.cuentaParaLimite,
       }
       const res = editing
         ? await fetch(`/api/categorias/${editing.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -581,6 +584,19 @@ export default function AdminCategoriasPage() {
               className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400 cursor-pointer" />
             <Label htmlFor="cat-activo">Activo</Label>
           </div>
+
+          {form.tipo === 'Gasto' && (
+            <div>
+              <div className="flex items-center gap-2">
+                <input id="cat-cuenta-limite" type="checkbox" checked={form.cuentaParaLimite} onChange={e => set('cuentaParaLimite', e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400 cursor-pointer" />
+                <Label htmlFor="cat-cuenta-limite">Cuenta para el límite de gasto de referencia</Label>
+              </div>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 ml-6">
+                Si lo desmarcas, los gastos de esta categoría no suman contra tu límite de referencia (Configuración → Períodos de pago).
+              </p>
+            </div>
+          )}
 
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setModalOpen(false)} disabled={saving}

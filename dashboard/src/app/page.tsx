@@ -61,7 +61,10 @@ export default function DashboardPage() {
     ingresos: 0, gastos: 0, ahorros: 0, margen: 0, balanceNeto: 0,
     presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
     gastosNoCubiertos: 0, totalExcedido: 0, ahorroComprometido: 0,
+    gastoParaLimite: 0,
   })
+  const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
+  const [limiteGastoReferencia, setLimiteGastoReferencia] = useState<number | null>(null)
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<Transaccion[]>([])
   const [expandedSinPresupuesto, setExpandedSinPresupuesto] = useState(false)
   const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
@@ -78,6 +81,10 @@ export default function DashboardPage() {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
       setQuincenas(data)
       setQuincenaId(getInitialQuincenaId(data))
+    })
+    fetch('/api/configuracion').then(r => r.json()).then(cfg => {
+      setIngresoReferencia(cfg.ingresoReferencia != null ? Number(cfg.ingresoReferencia) : null)
+      setLimiteGastoReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
     })
   }, [])
 
@@ -178,7 +185,7 @@ export default function DashboardPage() {
       const tendData = await tendRes.json()
 
       const txs: Transaccion[] = txJson.data ?? []
-      const totales = txJson.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 }
+      const totales = txJson.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, GastoParaLimite: 0 }
 
       // Totales reales (agregado del servidor, no truncados por la página de
       // transacciones que se trae para las listas/desgloses de abajo).
@@ -249,6 +256,7 @@ export default function DashboardPage() {
         presupTotal, pendientePorPagar: gastos - gastosPagados,
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
         gastosNoCubiertos, totalExcedido, ahorroComprometido,
+        gastoParaLimite: Number(totales.GastoParaLimite ?? 0),
       })
     } finally { setLoading(false) }
   }, [quincenaId, granularidad, periodoAnchor])
@@ -431,7 +439,7 @@ export default function DashboardPage() {
         <>
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
+            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} subtitle={ingresoReferencia != null ? `meta ${formatMXN(ingresoReferencia)}` : undefined} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
             <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} subtitle={metricas.presupTotal > 0 ? `${metricas.pctPresup.toFixed(0)}% del presupuesto` : undefined} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" subtitleColor={metricas.pctPresup > 90 ? 'text-rose-500 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'} />
             <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
             <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} subtitle={metricas.ahorros > 0 ? `neto ${formatMXN(metricas.balanceNeto)}` : undefined} />
@@ -447,11 +455,28 @@ export default function DashboardPage() {
                   <LineChart data={tendencia} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
-                    <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
+                    <YAxis
+                      tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`}
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      width={44}
+                      tickLine={false}
+                      axisLine={false}
+                      domain={granularidad === 'quincena'
+                        ? [0, (dataMax: number) => Math.max(dataMax, ingresoReferencia ?? 0, limiteGastoReferencia ?? 0) * 1.05]
+                        : [0, 'auto']}
+                    />
                     <Tooltip formatter={(value) => [formatMXN(Number(value ?? 0))]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                     {current && (
                       <ReferenceLine x={current.codigo} stroke="#6366f1" strokeDasharray="4 2" label={{ value: 'actual', fontSize: 10, fill: '#6366f1', position: 'insideTopLeft' }} />
+                    )}
+                    {/* Metas de referencia — solo en vista Quincena, ya que el monto se
+                        define por quincena y no corresponde a la misma escala en Semana/Mes */}
+                    {granularidad === 'quincena' && ingresoReferencia != null && (
+                      <ReferenceLine y={ingresoReferencia} stroke="#10b981" strokeDasharray="4 2" label={{ value: 'meta ingreso', fontSize: 10, fill: '#10b981', position: 'insideBottomLeft' }} />
+                    )}
+                    {granularidad === 'quincena' && limiteGastoReferencia != null && (
+                      <ReferenceLine y={limiteGastoReferencia} stroke="#f43f5e" strokeDasharray="4 2" label={{ value: 'límite', fontSize: 10, fill: '#f43f5e', position: 'insideTopLeft' }} />
                     )}
                     <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
                     <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
@@ -778,6 +803,33 @@ export default function DashboardPage() {
               )}
             </div>
           )}
+
+          {/* Límite de gasto de referencia — solo informativo, nunca bloquea. Vive
+              fuera de "Planificación del presupuesto" (arriba) a propósito: esa
+              tarjeta exige ingresos > 0, pero la referencia tiene sentido incluso
+              antes de registrar el ingreso de la quincena. */}
+          {granularidad === 'quincena' && limiteGastoReferencia != null && (() => {
+            const pctLimite = limiteGastoReferencia > 0 ? (metricas.gastoParaLimite / limiteGastoReferencia) * 100 : 0
+            const barColor = pctLimite > 90 ? 'bg-rose-500' : pctLimite > 70 ? 'bg-amber-500' : 'bg-emerald-500'
+            const textColor = pctLimite > 90 ? 'text-rose-600 dark:text-rose-400' : pctLimite > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+            return (
+              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+                <div className="flex items-center justify-between gap-3 mb-2">
+                  <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1">
+                    Límite de gasto de referencia
+                    <span className="cursor-help text-slate-300 dark:text-slate-600 font-normal" title="Tu límite de referencia (Configuración → Períodos de pago). Es solo informativo, no bloquea nada.">ⓘ</span>
+                  </p>
+                  <p className="text-sm font-semibold tabular-nums text-slate-600 dark:text-slate-300">
+                    {formatMXN(metricas.gastoParaLimite)} <span className="text-slate-400 dark:text-slate-500 font-normal">/ {formatMXN(limiteGastoReferencia)}</span>
+                    <span className={`ml-1.5 font-bold ${textColor}`}>{pctLimite.toFixed(0)}%</span>
+                  </p>
+                </div>
+                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5">
+                  <div className={`h-2.5 rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(pctLimite, 100)}%` }} />
+                </div>
+              </div>
+            )
+          })()}
 
           {/* Presupuesto por partida */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">

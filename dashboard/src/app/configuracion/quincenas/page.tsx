@@ -20,7 +20,11 @@ interface Quincena {
 interface Configuracion {
   id: number
   frecuenciaPagoDefault: TipoPeriodo
+  ingresoReferencia: number | null
+  limiteGastoReferencia: number | null
 }
+
+const FREQ_LABEL_PERIODO: Record<TipoPeriodo, string> = { QUINCENAL: 'quincena', SEMANAL: 'semana', MENSUAL: 'mes' }
 
 const TIPOS: TipoPeriodo[] = ['QUINCENAL', 'SEMANAL', 'MENSUAL']
 const TIPO_LABEL: Record<string, string> = { QUINCENAL: 'Quincenal', SEMANAL: 'Semanal', MENSUAL: 'Mensual' }
@@ -63,10 +67,13 @@ export default function QuincenasConfigPage() {
   const today = getMexicoDateString()
 
   const [periodos, setPeriodos] = useState<Quincena[]>([])
-  const [config, setConfig] = useState<Configuracion>({ id: 1, frecuenciaPagoDefault: 'QUINCENAL' })
+  const [config, setConfig] = useState<Configuracion>({ id: 1, frecuenciaPagoDefault: 'QUINCENAL', ingresoReferencia: null, limiteGastoReferencia: null })
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [savingConfig, setSavingConfig] = useState(false)
+  const [refForm, setRefForm] = useState({ ingreso: '', limite: '' })
+  const [refFormErrors, setRefFormErrors] = useState<Record<string, string>>({})
+  const [savingRef, setSavingRef] = useState(false)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Quincena | null>(null)
@@ -82,7 +89,16 @@ export default function QuincenasConfigPage() {
     try {
       const [pRes, cRes] = await Promise.all([fetch('/api/quincenas'), fetch('/api/configuracion')])
       setPeriodos(await pRes.json())
-      setConfig(await cRes.json())
+      const cData = await cRes.json()
+      setConfig({
+        ...cData,
+        ingresoReferencia: cData.ingresoReferencia != null ? Number(cData.ingresoReferencia) : null,
+        limiteGastoReferencia: cData.limiteGastoReferencia != null ? Number(cData.limiteGastoReferencia) : null,
+      })
+      setRefForm({
+        ingreso: cData.ingresoReferencia != null ? String(cData.ingresoReferencia) : '',
+        limite: cData.limiteGastoReferencia != null ? String(cData.limiteGastoReferencia) : '',
+      })
     } finally {
       setLoading(false)
     }
@@ -178,6 +194,45 @@ export default function QuincenasConfigPage() {
     }
   }
 
+  function validateRefForm() {
+    const errors: Record<string, string> = {}
+    for (const [key, val] of [['ingreso', refForm.ingreso], ['limite', refForm.limite]] as const) {
+      if (val.trim() === '') continue
+      const n = Number(val)
+      if (!Number.isFinite(n) || n < 0) errors[key] = 'Debe ser un número mayor o igual a 0'
+    }
+    return errors
+  }
+
+  async function handleSaveReferencia() {
+    const errors = validateRefForm()
+    if (Object.keys(errors).length) { setRefFormErrors(errors); return }
+    setRefFormErrors({})
+    setSavingRef(true)
+    try {
+      const res = await fetch('/api/configuracion', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ingresoReferencia: refForm.ingreso.trim() === '' ? null : Number(refForm.ingreso),
+          limiteGastoReferencia: refForm.limite.trim() === '' ? null : Number(refForm.limite),
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error ?? 'Error al guardar')
+      setConfig(c => ({
+        ...c,
+        ingresoReferencia: data.ingresoReferencia != null ? Number(data.ingresoReferencia) : null,
+        limiteGastoReferencia: data.limiteGastoReferencia != null ? Number(data.limiteGastoReferencia) : null,
+      }))
+      toast('Referencia actualizada')
+    } catch (e: unknown) {
+      toast(e instanceof Error ? e.message : 'Error al guardar', 'error')
+    } finally {
+      setSavingRef(false)
+    }
+  }
+
   const set = (key: string, val: string) => setForm(f => ({ ...f, [key]: val }))
   const sorted = [...periodos].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
 
@@ -210,6 +265,57 @@ export default function QuincenasConfigPage() {
         >
           {TIPOS.map(t => <option key={t} value={t}>{TIPO_LABEL[t]}</option>)}
         </select>
+      </div>
+
+      {/* Ingreso y límite de referencia */}
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+        <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Ingreso y límite de referencia</p>
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 mb-4">
+          Son solo una referencia tuya — nunca bloquean nada. Se muestran en el Dashboard y en Presupuesto, por {FREQ_LABEL_PERIODO[config.frecuenciaPagoDefault]} (tu frecuencia predeterminada actual).
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
+          <div>
+            <Label htmlFor="ref-ingreso">Ingreso de referencia</Label>
+            <input
+              id="ref-ingreso"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Ej: 20000"
+              value={refForm.ingreso}
+              onChange={e => setRefForm(f => ({ ...f, ingreso: e.target.value }))}
+              className={fieldClass(refFormErrors.ingreso)}
+            />
+            {refFormErrors.ingreso && <p className="text-xs text-rose-500 mt-1">{refFormErrors.ingreso}</p>}
+          </div>
+          <div>
+            <Label htmlFor="ref-limite">Límite de gasto de referencia</Label>
+            <input
+              id="ref-limite"
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder="Ej: 15000"
+              value={refForm.limite}
+              onChange={e => setRefForm(f => ({ ...f, limite: e.target.value }))}
+              className={fieldClass(refFormErrors.limite)}
+            />
+            {refFormErrors.limite && <p className="text-xs text-rose-500 mt-1">{refFormErrors.limite}</p>}
+          </div>
+        </div>
+        <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
+          El gasto se cuenta contra el límite según lo que marques en cada categoría (Configuración → Categorías).
+        </p>
+        <div className="flex justify-end mt-3">
+          <button
+            type="button"
+            onClick={handleSaveReferencia}
+            disabled={savingRef}
+            className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]"
+          >
+            {savingRef ? 'Guardando...' : 'Guardar'}
+          </button>
+        </div>
       </div>
 
       {/* Avisos */}

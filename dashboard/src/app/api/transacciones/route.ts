@@ -50,7 +50,7 @@ export async function GET(request: Request) {
     else if (asignado === 'si') where.presupuestoId = { not: null }
     else if (asignado === 'no') where.presupuestoId = null
 
-    const [transacciones, total, totalesPorTipo] = await Promise.all([
+    const [transacciones, total, totalesPorTipo, gastoParaLimiteAgg] = await Promise.all([
       prisma.transaccion.findMany({
         where,
         orderBy: { fecha: 'desc' },
@@ -64,12 +64,20 @@ export async function GET(request: Request) {
         where,
         _sum: { monto: true },
       }),
+      // Agregado aparte (no paginado) del gasto que cuenta para el limite de
+      // referencia (Categoria.cuentaParaLimite) — respeta los mismos filtros
+      // que la lista, pero siempre fuerza tipo=Gasto sin importar el filtro
+      // `tipo` que haya llegado en la query.
+      prisma.transaccion.aggregate({
+        where: { ...where, tipo: 'Gasto', categoria: { cuentaParaLimite: true } },
+        _sum: { monto: true },
+      }),
     ])
 
     // Suma real (no paginada) por tipo, respetando los mismos filtros que la
     // lista — evita que las tarjetas de totales se calculen sobre solo la
     // página de resultados devuelta.
-    const totales = { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 }
+    const totales = { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, GastoParaLimite: Number(gastoParaLimiteAgg._sum.monto ?? 0) }
     for (const row of totalesPorTipo) {
       const monto = Number(row._sum.monto ?? 0)
       if (row.tipo in totales) totales[row.tipo as 'Gasto' | 'Ingreso' | 'Ahorro'] += monto

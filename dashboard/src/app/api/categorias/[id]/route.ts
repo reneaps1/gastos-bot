@@ -30,7 +30,7 @@ export async function PUT(
     if (isNaN(id)) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 
     const body = await request.json()
-    const { nombre, tipo, clasificacion, ejemplos, activo } = body
+    const { nombre, tipo, clasificacion, ejemplos, activo, cuentaParaLimite } = body
 
     const categoria = await prisma.categoria.update({
       where: { id },
@@ -40,6 +40,7 @@ export async function PUT(
         ...(clasificacion !== undefined && { clasificacion }),
         ...(ejemplos !== undefined && { ejemplos }),
         ...(activo !== undefined && { activo }),
+        ...(cuentaParaLimite !== undefined && { cuentaParaLimite }),
       },
     })
 

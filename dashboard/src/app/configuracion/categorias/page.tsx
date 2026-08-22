@@ -11,6 +11,7 @@ interface Categoria {
   clasificacion: string | null
   ejemplos: string | null
   activo: boolean
+  cuentaParaLimite: boolean
 }
 
 const CAT_DOT: Record<string, string> = {
@@ -36,7 +37,7 @@ export default function CategoriasConfigPage() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Categoria | null>(null)
-  const [form, setForm] = useState({ clasificacion: '', ejemplos: '', activo: true })
+  const [form, setForm] = useState({ clasificacion: '', ejemplos: '', activo: true, cuentaParaLimite: true })
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const fetchData = useCallback(async () => {
@@ -57,6 +58,7 @@ export default function CategoriasConfigPage() {
       clasificacion: c.clasificacion ?? '',
       ejemplos: c.ejemplos ?? '',
       activo: c.activo,
+      cuentaParaLimite: c.cuentaParaLimite,
     })
     setFormErrors({})
     setModalOpen(true)
@@ -81,6 +83,7 @@ export default function CategoriasConfigPage() {
           clasificacion: form.clasificacion || null,
           ejemplos: form.ejemplos || null,
           activo: form.activo,
+          cuentaParaLimite: form.cuentaParaLimite,
         }),
       })
       if (!res.ok) throw new Error()
@@ -216,6 +219,24 @@ export default function CategoriasConfigPage() {
             />
             <Label htmlFor="cat-activo">Activo</Label>
           </div>
+
+          {editing?.tipo === 'Gasto' && (
+            <div>
+              <div className="flex items-center gap-2">
+                <input
+                  id="cat-cuenta-limite"
+                  type="checkbox"
+                  checked={form.cuentaParaLimite}
+                  onChange={e => set('cuentaParaLimite', e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400"
+                />
+                <Label htmlFor="cat-cuenta-limite">Cuenta para el límite de gasto de referencia</Label>
+              </div>
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 ml-6">
+                Si lo desmarcas, los gastos de esta categoría no suman contra tu límite de referencia (Configuración → Períodos de pago).
+              </p>
+            </div>
+          )}
 
           <div className="flex gap-3 justify-end pt-2">
             <button type="button" onClick={() => setModalOpen(false)} disabled={saving} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
