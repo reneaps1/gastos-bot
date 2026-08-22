@@ -7,7 +7,9 @@ import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
+import { KpiCard } from '@/components/ui/KpiCard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
+import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -18,7 +20,7 @@ interface Transaccion {
 }
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
-  efectivo: number; valesDespensa: number; valesGasolina: number; faltaPagar: number
+  efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; faltaPagar: number
   teorico: number | null; quincena: Quincena
 }
 interface Presupuesto {
@@ -249,7 +251,12 @@ export default function DashboardPage() {
       setGastosPorCategoria(gastosCatArr)
       setPresupuestoPorCategoria(presupuestoCatArr)
       setPresupuestosDisplay([...presupData].filter(p => p.categoria.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
-      setSnapshot(liqData.length > 0 ? liqData[0] : null)
+      const rawSnapshot = liqData.length > 0 ? liqData[0] : null
+      setSnapshot(rawSnapshot ? {
+        ...rawSnapshot,
+        ...normalizeMontos(rawSnapshot),
+        faltaPagar: Number(rawSnapshot.faltaPagar) || 0,
+      } : null)
       setTendencia(Array.isArray(tendData) ? tendData : [])
       setMetricas({
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
@@ -270,7 +277,7 @@ export default function DashboardPage() {
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
   const periodoActual = granularidad !== 'quincena' ? getPeriodoRange(granularidad, periodoAnchor) : null
-  const totalLiquidez = snapshot ? snapshot.bbva + snapshot.banamex + snapshot.uala + snapshot.ualaInversion + snapshot.efectivo : 0
+  const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
   const liquidezNeta = snapshot ? totalLiquidez - snapshot.faltaPagar : 0
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
@@ -1039,6 +1046,7 @@ export default function DashboardPage() {
                   { label: 'Banamex', value: snapshot.banamex },
                   { label: 'Ualá', value: snapshot.uala },
                   { label: 'Efectivo', value: snapshot.efectivo },
+                  ...(snapshot.otros > 0 ? [{ label: 'Otros', value: snapshot.otros }] : []),
                 ].map(c => (
                   <div key={c.label} className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">
                     <p className="text-xs text-slate-500 dark:text-slate-400">{c.label}</p>
@@ -1051,24 +1059,6 @@ export default function DashboardPage() {
 
         </>
       )}
-    </div>
-  )
-}
-
-function KpiCard({ label, value, icon, color, bg, subtitle, subtitleColor }: {
-  label: string; value: string; icon: React.ReactNode; color: string; bg: string
-  subtitle?: string; subtitleColor?: string
-}) {
-  return (
-    <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3 hover:border-indigo-200 hover:shadow-sm transition-all">
-      <div className={`w-10 h-10 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{label}</p>
-        <p className={`text-lg font-bold ${color} truncate tabular-nums`}>{value}</p>
-        {subtitle && <p className={`text-xs truncate tabular-nums mt-0.5 ${subtitleColor ?? 'text-slate-400 dark:text-slate-500'}`}>{subtitle}</p>}
-      </div>
     </div>
   )
 }

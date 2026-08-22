@@ -27,7 +27,8 @@ export async function POST(request: Request) {
     const body = await request.json()
     const {
       fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
-      efectivo, valesDespensa, valesGasolina, faltaPagar, teorico, notas
+      efectivo, valesDespensa, valesGasolina, otros, otrosNota,
+      faltaPagar, teorico, notas, validado
     } = body
 
     if (!fechaCorte || !quincenaId) {
@@ -45,9 +46,12 @@ export async function POST(request: Request) {
         efectivo: efectivo ? parseFloat(efectivo) : 0,
         valesDespensa: valesDespensa ? parseFloat(valesDespensa) : 0,
         valesGasolina: valesGasolina ? parseFloat(valesGasolina) : 0,
+        otros: otros ? parseFloat(otros) : 0,
+        otrosNota: otrosNota ?? null,
         faltaPagar: faltaPagar ? parseFloat(faltaPagar) : 0,
         teorico: teorico ? parseFloat(teorico) : null,
         notas,
+        validado: validado ?? false,
       },
       include: { quincena: true },
     })

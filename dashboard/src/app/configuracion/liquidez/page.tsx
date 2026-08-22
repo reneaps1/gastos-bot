@@ -1,11 +1,13 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Plus, Pencil, Trash2, Droplets } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
+import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Snapshot {
@@ -18,6 +20,8 @@ interface Snapshot {
   efectivo: number
   valesDespensa: number
   valesGasolina: number
+  otros: number
+  otrosNota: string | null
   faltaPagar: number
   teorico: number | null
   notas: string | null
@@ -36,6 +40,8 @@ const EMPTY_FORM = {
   efectivo: '',
   valesDespensa: '',
   valesGasolina: '',
+  otros: '',
+  otrosNota: '',
   faltaPagar: '',
   notas: '',
   validado: false,
@@ -50,14 +56,16 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
 }
 
 function calcTeorico(f: typeof EMPTY_FORM) {
-  const sum = ['bbva', 'banamex', 'uala', 'ualaInversion', 'efectivo', 'valesDespensa', 'valesGasolina']
+  const sum = ['bbva', 'banamex', 'uala', 'ualaInversion', 'efectivo', 'valesDespensa', 'valesGasolina', 'otros']
     .reduce((s, k) => s + (parseFloat(f[k as keyof typeof f] as string) || 0), 0)
   const falta = parseFloat(f.faltaPagar) || 0
   return sum - falta
 }
 
-export default function LiquidezConfigPage() {
+function LiquidezConfigContent() {
   const { toast } = useToast()
+  const searchParams = useSearchParams()
+  const quincenaIdParam = searchParams.get('quincenaId')
 
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [quincenas, setQuincenas] = useState<Quincena[]>([])
@@ -75,8 +83,11 @@ export default function LiquidezConfigPage() {
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
       setQuincenas(data)
-      setQuincenaId(getInitialQuincenaId(data))
+      const fromUrl = quincenaIdParam && data.some(q => q.id.toString() === quincenaIdParam) ? quincenaIdParam : null
+      setQuincenaId(fromUrl ?? getInitialQuincenaId(data))
     })
+    // Solo al montar: la seleccion via URL define el estado inicial, no debe reaplicarse en cada cambio de quincenaIdParam.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function selectQuincena(id: string) {
@@ -91,7 +102,13 @@ export default function LiquidezConfigPage() {
       const params = new URLSearchParams()
       if (quincenaId) params.set('quincenaId', quincenaId)
       const res = await fetch(`/api/liquidez?${params}`)
-      setSnapshots(await res.json())
+      const data: Snapshot[] = await res.json()
+      setSnapshots(data.map(s => ({
+        ...s,
+        ...normalizeMontos(s),
+        faltaPagar: Number(s.faltaPagar) || 0,
+        teorico: s.teorico != null ? Number(s.teorico) : null,
+      })))
     } finally {
       setLoading(false)
     }
@@ -118,6 +135,8 @@ export default function LiquidezConfigPage() {
       efectivo: s.efectivo.toString(),
       valesDespensa: s.valesDespensa.toString(),
       valesGasolina: s.valesGasolina.toString(),
+      otros: s.otros.toString(),
+      otrosNota: s.otrosNota ?? '',
       faltaPagar: s.faltaPagar.toString(),
       notas: s.notas ?? '',
       validado: s.validado,
@@ -148,6 +167,8 @@ export default function LiquidezConfigPage() {
         efectivo: form.efectivo || '0',
         valesDespensa: form.valesDespensa || '0',
         valesGasolina: form.valesGasolina || '0',
+        otros: form.otros || '0',
+        otrosNota: form.otrosNota || null,
         faltaPagar: form.faltaPagar || '0',
         teorico: calcTeorico(form).toString(),
         notas: form.notas || null,
@@ -247,7 +268,7 @@ export default function LiquidezConfigPage() {
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                 {snapshots.map(s => {
-                  const total = s.bbva + s.banamex + s.uala + s.ualaInversion + s.efectivo + s.valesDespensa + s.valesGasolina
+                  const total = sumLiquidez(s)
                   const teorico = s.teorico ?? (total - s.faltaPagar)
                   return (
                     <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
@@ -260,7 +281,17 @@ export default function LiquidezConfigPage() {
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden md:table-cell">{formatMXN(s.banamex)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">{formatMXN(s.uala)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.efectivo)}</td>
-                      <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">{formatMXN(teorico)}</td>
+                      <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">
+                        {formatMXN(teorico)}
+                        {s.otros > 0 && (
+                          <span
+                            className="ml-1 text-[10px] text-slate-400 dark:text-slate-500 cursor-help"
+                            title={`Incluye Otros: ${formatMXN(s.otros)}${s.otrosNota ? ` — ${s.otrosNota}` : ''}`}
+                          >
+                            ⓘ
+                          </span>
+                        )}
+                      </td>
                       <td className="px-3 py-3.5 text-center">
                         {s.validado
                           ? <span className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">✓</span>
@@ -336,6 +367,14 @@ export default function LiquidezConfigPage() {
               <input id="lq-vg" type="number" min="0" step="0.01" placeholder="0.00" value={form.valesGasolina} onChange={e => set('valesGasolina', e.target.value)} className={fieldClass()} />
             </div>
             <div>
+              <Label htmlFor="lq-otros">Otros</Label>
+              <input id="lq-otros" type="number" min="0" step="0.01" placeholder="0.00" value={form.otros} onChange={e => set('otros', e.target.value)} className={fieldClass()} />
+            </div>
+            <div>
+              <Label htmlFor="lq-otros-nota">¿Qué es &quot;Otros&quot;?</Label>
+              <input id="lq-otros-nota" type="text" placeholder="Ej. Efectivo en caja chica" value={form.otrosNota} onChange={e => set('otrosNota', e.target.value)} className={fieldClass()} />
+            </div>
+            <div>
               <Label htmlFor="lq-fp">Falta por pagar</Label>
               <input id="lq-fp" type="number" min="0" step="0.01" placeholder="0.00" value={form.faltaPagar} onChange={e => set('faltaPagar', e.target.value)} className={fieldClass()} />
             </div>
@@ -383,5 +422,13 @@ export default function LiquidezConfigPage() {
         loading={deleting}
       />
     </div>
+  )
+}
+
+export default function LiquidezConfigPage() {
+  return (
+    <Suspense fallback={null}>
+      <LiquidezConfigContent />
+    </Suspense>
   )
 }

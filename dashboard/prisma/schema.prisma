@@ -377,6 +377,8 @@ model LiquidezSnapshot {
   efectivo      Decimal  @default(0) @db.Decimal(12, 2)
   valesDespensa Decimal  @default(0) @map("vales_despensa") @db.Decimal(12, 2)
   valesGasolina Decimal  @default(0) @map("vales_gasolina") @db.Decimal(12, 2)
+  otros         Decimal  @default(0) @db.Decimal(12, 2)
+  otrosNota     String?  @map("otros_nota")
   faltaPagar    Decimal  @default(0) @map("falta_pagar") @db.Decimal(12, 2)
   teorico       Decimal? @db.Decimal(12, 2)
   notas         String?
