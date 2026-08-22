@@ -455,11 +455,28 @@ export default function DashboardPage() {
                   <LineChart data={tendencia} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
-                    <YAxis tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
+                    <YAxis
+                      tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`}
+                      tick={{ fontSize: 11, fill: '#64748b' }}
+                      width={44}
+                      tickLine={false}
+                      axisLine={false}
+                      domain={granularidad === 'quincena'
+                        ? [0, (dataMax: number) => Math.max(dataMax, ingresoReferencia ?? 0, limiteGastoReferencia ?? 0) * 1.05]
+                        : [0, 'auto']}
+                    />
                     <Tooltip formatter={(value) => [formatMXN(Number(value ?? 0))]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                     {current && (
                       <ReferenceLine x={current.codigo} stroke="#6366f1" strokeDasharray="4 2" label={{ value: 'actual', fontSize: 10, fill: '#6366f1', position: 'insideTopLeft' }} />
+                    )}
+                    {/* Metas de referencia — solo en vista Quincena, ya que el monto se
+                        define por quincena y no corresponde a la misma escala en Semana/Mes */}
+                    {granularidad === 'quincena' && ingresoReferencia != null && (
+                      <ReferenceLine y={ingresoReferencia} stroke="#10b981" strokeDasharray="4 2" label={{ value: 'meta ingreso', fontSize: 10, fill: '#10b981', position: 'insideBottomLeft' }} />
+                    )}
+                    {granularidad === 'quincena' && limiteGastoReferencia != null && (
+                      <ReferenceLine y={limiteGastoReferencia} stroke="#f43f5e" strokeDasharray="4 2" label={{ value: 'límite', fontSize: 10, fill: '#f43f5e', position: 'insideTopLeft' }} />
                     )}
                     <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
                     <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
