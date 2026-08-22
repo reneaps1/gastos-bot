@@ -159,6 +159,8 @@ export default function PresupuestoPage() {
 
   const [busqueda, setBusqueda] = useState('')
   const [pendientePorPagar, setPendientePorPagar] = useState({ monto: 0, count: 0 })
+  const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
+  const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
   const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tarjetas')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
@@ -196,10 +198,12 @@ export default function PresupuestoPage() {
     Promise.all([
       fetch('/api/quincenas').then(r => r.json()),
       fetch('/api/categorias').then(r => r.json()),
-    ]).then(([q, c]) => {
+      fetch('/api/configuracion').then(r => r.json()),
+    ]).then(([q, c, cfg]) => {
       setQuincenas(q)
       setCategorias(c)
       setQuincenaId(getInitialQuincenaId(q))
+      setLimiteReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
     })
   }, [])
 
@@ -242,6 +246,7 @@ export default function PresupuestoPage() {
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
 
       setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
+      setGastoParaLimite(Number(txData.totales?.GastoParaLimite ?? 0))
 
       const pendientes = transacciones.filter(t => t.estatus === 'Pendiente')
       setPendientePorPagar({ monto: pendientes.reduce((s, t) => s + Number(t.monto), 0), count: pendientes.length })
@@ -527,7 +532,7 @@ export default function PresupuestoPage() {
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className={`grid grid-cols-1 gap-4 ${limiteReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3'}`}>
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Progreso global</p>
             <div className="flex justify-between items-end mb-2">
@@ -563,6 +568,28 @@ export default function PresupuestoPage() {
                 : 'Todo pagado en esta quincena'}
             </p>
           </div>
+
+          {limiteReferencia != null && (() => {
+            const pctLimite = limiteReferencia > 0 ? (gastoParaLimite / limiteReferencia) * 100 : 0
+            return (
+              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1">
+                  Límite de referencia
+                  <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago). Es solo informativo, no bloquea nada.">ⓘ</span>
+                </p>
+                <div className="flex justify-between items-end mb-2">
+                  <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">
+                    {formatMXN(gastoParaLimite)}
+                    <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(limiteReferencia)}</span>
+                  </p>
+                  <span className={`text-lg font-bold ${pctTextColor(pctLimite)}`}>{pctLimite.toFixed(0)}%</span>
+                </div>
+                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-3">
+                  <div className={`h-3 rounded-full transition-all ${pctColor(pctLimite)}`} style={{ width: `${Math.min(pctLimite, 100)}%` }} />
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
 

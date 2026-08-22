@@ -19,6 +19,7 @@ export async function GET() {
       clasificacion: c.clasificacion,
       ejemplos: c.ejemplos,
       activo: c.activo,
+      cuentaParaLimite: c.cuentaParaLimite,
       transaccionesCount: c._count.transacciones,
     }))
 

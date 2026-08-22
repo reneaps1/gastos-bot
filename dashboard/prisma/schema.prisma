@@ -62,12 +62,13 @@ model User {
 }
 
 model Categoria {
-  id            Int                 @id @default(autoincrement())
-  nombre        String              @unique @db.VarChar(50)
-  tipo          TipoMovimiento
-  clasificacion ClasificacionGasto?
-  ejemplos      String?
-  activo        Boolean             @default(true)
+  id               Int                 @id @default(autoincrement())
+  nombre           String              @unique @db.VarChar(50)
+  tipo             TipoMovimiento
+  clasificacion    ClasificacionGasto?
+  ejemplos         String?
+  activo           Boolean             @default(true)
+  cuentaParaLimite Boolean             @default(true) @map("cuenta_para_limite")
 
   transacciones Transaccion[]
   presupuestos  Presupuesto[]
@@ -105,10 +106,17 @@ model Quincena {
 // controla que cadencia se sugiere al agregar un nuevo periodo de pago desde
 // Configuracion > Periodos de pago, no cambia el comportamiento de periodos ya
 // creados (cada Quincena.tipo es independiente).
+//
+// ingresoReferencia / limiteGastoReferencia: valores de referencia (nunca una
+// restriccion dura) para "cuanto espero ganar" y "cuanto quiero limitar mi
+// gasto" en un periodo. Se comparan contra el gasto real que cuenta para el
+// limite (ver Categoria.cuentaParaLimite) en Dashboard y Presupuesto.
 model Configuracion {
-  id                    Int         @id @default(autoincrement())
-  frecuenciaPagoDefault TipoPeriodo @default(QUINCENAL) @map("frecuencia_pago_default")
-  fechaActualizacion    DateTime    @default(now()) @updatedAt @map("fecha_actualizacion") @db.Timestamptz()
+  id                     Int         @id @default(autoincrement())
+  frecuenciaPagoDefault  TipoPeriodo @default(QUINCENAL) @map("frecuencia_pago_default")
+  ingresoReferencia      Decimal?    @map("ingreso_referencia") @db.Decimal(12, 2)
+  limiteGastoReferencia  Decimal?    @map("limite_gasto_referencia") @db.Decimal(12, 2)
+  fechaActualizacion     DateTime    @default(now()) @updatedAt @map("fecha_actualizacion") @db.Timestamptz()
 
   @@map("configuracion")
 }
