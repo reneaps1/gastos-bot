@@ -11,6 +11,7 @@ import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
+import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
 
 const CAT_DOT: Record<string, string> = {
@@ -159,7 +160,7 @@ export default function PresupuestoPage() {
   const [copying, setCopying] = useState(false)
 
   const [busqueda, setBusqueda] = useState('')
-  const [pendientePorPagar, setPendientePorPagar] = useState({ monto: 0, count: 0 })
+  const [pendientePorPagar, setPendientePorPagar] = useState(0)
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
@@ -249,8 +250,7 @@ export default function PresupuestoPage() {
       setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
       setGastoParaLimite(Number(txData.totales?.GastoParaLimite ?? 0))
 
-      const pendientes = transacciones.filter(t => t.estatus === 'Pendiente')
-      setPendientePorPagar({ monto: pendientes.reduce((s, t) => s + Number(t.monto), 0), count: pendientes.length })
+      setPendientePorPagar(calcularFaltaPorPagar(data))
     } finally { setLoading(false) }
   }, [quincenaId, quincenas])
 
@@ -565,14 +565,12 @@ export default function PresupuestoPage() {
           </div>
 
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Pendiente por pagar</p>
-            <p className={`text-2xl font-bold tabular-nums ${pendientePorPagar.count > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-              {formatMXN(pendientePorPagar.monto)}
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Falta por pagar</p>
+            <p className={`text-2xl font-bold tabular-nums ${pendientePorPagar > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+              {formatMXN(pendientePorPagar)}
             </p>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
-              {pendientePorPagar.count > 0
-                ? `${pendientePorPagar.count} ${pendientePorPagar.count === 1 ? 'transacción sin pagar' : 'transacciones sin pagar'}`
-                : 'Todo pagado en esta quincena'}
+              {pendientePorPagar > 0 ? 'Pendiente de pago + presupuesto que aún no registras' : 'Todo pagado y registrado en esta quincena'}
             </p>
           </div>
 
@@ -1400,11 +1398,7 @@ function PresupuestoTabla({
   const totalPct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
   const totalExcedido = totalReal > totalPresupuestado ? totalReal - totalPresupuestado : 0
   const totalRestante = totalPresupuestado - totalReal
-  // Lo que de verdad falta desembolsar: lo ya registrado pero no pagado, más el
-  // presupuesto que aún no se ha ni gastado. "Restante" no responde esto porque
-  // una línea 100% registrada como Pendiente muestra $0 de restante aunque se
-  // deba por completo.
-  const totalFaltaPorPagar = gastoFilasTabla.reduce((s, p) => s + p.pendiente + Math.max(Number(p.montoPresupuestado) - p.real, 0), 0)
+  const totalFaltaPorPagar = calcularFaltaPorPagar(gastoFilasTabla)
 
   return (
     <div className="space-y-4">

@@ -10,6 +10,7 @@ import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
+import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -26,7 +27,7 @@ interface Snapshot {
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; tipo: string
   diaCobro?: number | null; fechaVencimiento?: string | null
-  categoria: Categoria; real: number; pct: number; excedido?: number
+  categoria: Categoria; real: number; pendiente: number; pct: number; excedido?: number
 }
 interface PresupuestoCategoria {
   nombre: string; presupuestado: number; gastado: number; restante: number; pct: number
@@ -194,7 +195,6 @@ export default function DashboardPage() {
       const ingresos = totales.Ingreso
       const gastos = totales.Gasto
       const ahorros = totales.Ahorro
-      const gastosPagados = totales.GastoPagado
       const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
 
       // El ahorro presupuestado (o registrado sin presupuesto) es dinero comprometido,
@@ -260,7 +260,7 @@ export default function DashboardPage() {
       setTendencia(Array.isArray(tendData) ? tendData : [])
       setMetricas({
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
-        presupTotal, pendientePorPagar: gastos - gastosPagados,
+        presupTotal, pendientePorPagar: calcularFaltaPorPagar(presupData),
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
         gastosNoCubiertos, totalExcedido, ahorroComprometido,
         gastoParaLimite: Number(totales.GastoParaLimite ?? 0),
