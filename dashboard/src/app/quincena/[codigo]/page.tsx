@@ -8,8 +8,10 @@ import { getMexicoDateString, formatQuincenaRange } from '@/lib/quincena-selecti
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
+import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
+interface Presupuesto { montoPresupuestado: number; real: number; pendiente: number; categoria: { tipo: string } }
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
   efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; otrosNota: string | null
@@ -24,6 +26,7 @@ export default function QuincenaResumenPage() {
   const [quincenas, setQuincenas] = useState<Quincena[]>([])
   const [target, setTarget] = useState<Quincena | null>(null)
   const [totales, setTotales] = useState<Totales | null>(null)
+  const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
   const [limiteGastoReferencia, setLimiteGastoReferencia] = useState<number | null>(null)
@@ -38,16 +41,19 @@ export default function QuincenaResumenPage() {
         setTarget(found)
         if (!found) return
 
-        const [txRes, liqRes, cfgRes] = await Promise.all([
+        const [txRes, presupRes, liqRes, cfgRes] = await Promise.all([
           fetch(`/api/transacciones?quincenaId=${found.id}&limit=1`),
+          fetch(`/api/presupuestos?quincenaId=${found.id}`),
           fetch(`/api/liquidez?quincenaId=${found.id}`),
           fetch('/api/configuracion'),
         ])
         const txJson = await txRes.json()
+        const presupData: Presupuesto[] = await presupRes.json()
         const liqData = await liqRes.json()
         const cfg = await cfgRes.json()
 
         setTotales(txJson.totales ?? null)
+        setPresupuestos(presupData)
         const raw = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
         setSnapshot(raw ? {
           ...raw,
@@ -93,7 +99,7 @@ export default function QuincenaResumenPage() {
 
   const gastoPagado = totales?.GastoPagado ?? 0
   const gastoTotal = totales?.Gasto ?? 0
-  const pendientePorPagar = gastoTotal - gastoPagado
+  const pendientePorPagar = calcularFaltaPorPagar(presupuestos)
   const gastoParaLimite = totales?.GastoParaLimite ?? 0
   const pctLimite = limiteGastoReferencia != null && limiteGastoReferencia > 0 ? (gastoParaLimite / limiteGastoReferencia) * 100 : null
   const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
