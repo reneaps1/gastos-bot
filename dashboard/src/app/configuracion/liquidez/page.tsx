@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown } from 'lucide-react'
+import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -135,13 +135,21 @@ function LiquidezConfigContent() {
     }
   }
 
-  async function applyQuincena(qId: string) {
-    setForm(f => ({ ...f, quincenaId: qId }))
+  async function recalcularFalta(qId: string) {
     if (!qId) return
     setFaltaLoading(true)
     const falta = await fetchFaltaPorPagar(qId)
     setFaltaLoading(false)
     if (falta != null) setForm(f => ({ ...f, faltaPagar: falta.toString() }))
+  }
+
+  // Recalcula al elegir quincena: se usa al crear un snapshot nuevo (foto
+  // fresca) y al reasignar la quincena de uno existente. NO se llama al solo
+  // reabrir un snapshot para editar — ahi se respeta el valor guardado como
+  // fotografia del momento en que se hizo ese corte.
+  async function applyQuincena(qId: string) {
+    setForm(f => ({ ...f, quincenaId: qId }))
+    await recalcularFalta(qId)
   }
 
   function openCreate() {
@@ -172,7 +180,6 @@ function LiquidezConfigContent() {
     })
     setFormErrors({})
     setModalOpen(true)
-    applyQuincena(s.quincenaId.toString())
   }
 
   function validate() {
@@ -285,11 +292,19 @@ function LiquidezConfigContent() {
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
           <KpiCard
-            label="Delta (líquido neto)" value={formatMXN(deltaLiquido)}
-            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : 'te queda libre'}
-            icon={deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" /> : <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
-            color={deltaLiquido < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
-            bg={deltaLiquido < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'}
+            label="Delta (líquido vs falta por pagar)" value={formatMXN(deltaLiquido)}
+            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : deltaLiquido > 0 ? 'te sobra' : 'alcanza justo'}
+            icon={
+              deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
+              : deltaLiquido > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
+              : <Equal size={20} className="text-slate-500 dark:text-slate-300" />
+            }
+            color={deltaLiquido < 0 ? 'text-rose-600 dark:text-rose-400' : deltaLiquido > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}
+            bg={
+              deltaLiquido < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
+              : deltaLiquido > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
+              : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
+            }
           />
         </div>
       )}
@@ -322,6 +337,8 @@ function LiquidezConfigContent() {
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Banamex</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Ualá</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Efectivo</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Total</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Falta por pagar</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Teórico</th>
                   <th className="text-center px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Validado</th>
                   <th className="px-4 py-3" />
@@ -342,6 +359,13 @@ function LiquidezConfigContent() {
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden md:table-cell">{formatMXN(s.banamex)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">{formatMXN(s.uala)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.efectivo)}</td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden sm:table-cell">{formatMXN(total)}</td>
+                      <td className="px-3 py-3.5 text-right hidden sm:table-cell">
+                        {s.faltaPagar > 0
+                          ? <span className="text-amber-600 dark:text-amber-400">{formatMXN(s.faltaPagar)}</span>
+                          : <span className="text-slate-400 dark:text-slate-500">{formatMXN(0)}</span>
+                        }
+                      </td>
                       <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">
                         {formatMXN(teorico)}
                         {s.otros > 0 && (
@@ -436,12 +460,26 @@ function LiquidezConfigContent() {
               <input id="lq-otros-nota" type="text" placeholder="Ej. Efectivo en caja chica" value={form.otrosNota} onChange={e => set('otrosNota', e.target.value)} className={fieldClass()} />
             </div>
             <div>
-              <Label htmlFor="lq-fp">
-                Falta por pagar
-                {faltaLoading && <span className="ml-1 text-slate-400 dark:text-slate-500 normal-case font-normal">(calculando...)</span>}
-              </Label>
+              <div className="flex items-center justify-between mb-1">
+                <Label htmlFor="lq-fp">
+                  Falta por pagar
+                  {faltaLoading && <span className="ml-1 text-slate-400 dark:text-slate-500 normal-case font-normal">(calculando...)</span>}
+                </Label>
+                {editing && form.quincenaId && (
+                  <button
+                    type="button"
+                    onClick={() => recalcularFalta(form.quincenaId)}
+                    disabled={faltaLoading}
+                    className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50 cursor-pointer flex items-center gap-1 mb-1"
+                  >
+                    <RefreshCw size={11} className={faltaLoading ? 'animate-spin' : ''} /> Recalcular
+                  </button>
+                )}
+              </div>
               <input id="lq-fp" type="number" min="0" step="0.01" placeholder="0.00" value={form.faltaPagar} onChange={e => set('faltaPagar', e.target.value)} className={fieldClass()} />
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Auto-calculado del presupuesto de la quincena; puedes ajustarlo si hace falta.</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                {editing ? 'Guardado al momento de este corte; usa "Recalcular" para refrescarlo.' : 'Auto-calculado del presupuesto de la quincena; puedes ajustarlo si hace falta.'}
+              </p>
             </div>
           </div>
 
