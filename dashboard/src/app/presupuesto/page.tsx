@@ -182,7 +182,7 @@ export default function PresupuestoPage() {
   const [tablaEstado, setTablaEstado] = useState('')
   const [tablaSaldo, setTablaSaldo] = useState('')
   const [tablaPorCubrir, setTablaPorCubrir] = useState('')
-  const [tablaOcultarIngresos, setTablaOcultarIngresos] = useState(true)
+  const [tablaOcultarIngresos, setTablaOcultarIngresos] = useState(false)
   const [busquedaTabla, setBusquedaTabla] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
