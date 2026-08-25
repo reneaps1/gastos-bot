@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft } from 'lucide-react'
+import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft, AlertTriangle } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -14,6 +14,7 @@ import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
+interface Categoria { id: number; nombre: string; tipo: string }
 interface Snapshot {
   id: number
   quincenaId: number
@@ -51,6 +52,8 @@ const EMPTY_FORM = {
   validado: false,
 }
 
+const AJUSTE_EMPTY = { descripcion: '', categoriaId: '' }
+
 function fieldClass(err?: string) {
   return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
 }
@@ -72,7 +75,9 @@ function LiquidezConfigContent() {
   const quincenaIdParam = searchParams.get('quincenaId')
 
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
+  const [allSnapshots, setAllSnapshots] = useState<Snapshot[]>([])
   const [quincenas, setQuincenas] = useState<Quincena[]>([])
+  const [categorias, setCategorias] = useState<Categoria[]>([])
   const [quincenaId, setQuincenaId] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -85,15 +90,45 @@ function LiquidezConfigContent() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [faltaLoading, setFaltaLoading] = useState(false)
 
+  // Arqueo real: compara el corte mas reciente contra lo que "deberia" haber
+  // segun el corte anterior (cualquier quincena) mas los movimientos ya
+  // registrados entre ambas fechas. Distinto del Delta de arriba, que compara
+  // contra "falta por pagar" (cobertura hacia adelante).
+  const [arqueoData, setArqueoData] = useState<{ arqueo: number; previousSnapshot: Snapshot } | null>(null)
+  const [arqueoLoading, setArqueoLoading] = useState(false)
+  const [ajusteModalOpen, setAjusteModalOpen] = useState(false)
+  const [ajusteTipo, setAjusteTipo] = useState<'Gasto' | 'Ingreso'>('Gasto')
+  const [ajusteMonto, setAjusteMonto] = useState(0)
+  const [ajusteForm, setAjusteForm] = useState(AJUSTE_EMPTY)
+  const [ajusteErrors, setAjusteErrors] = useState<Record<string, string>>({})
+  const [ajusteSaving, setAjusteSaving] = useState(false)
+
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
       setQuincenas(data)
       const fromUrl = quincenaIdParam && data.some(q => q.id.toString() === quincenaIdParam) ? quincenaIdParam : null
       setQuincenaId(fromUrl ?? getInitialQuincenaId(data))
     })
+    fetch('/api/categorias').then(r => r.json()).then(setCategorias)
     // Solo al montar: la seleccion via URL define el estado inicial, no debe reaplicarse en cada cambio de quincenaIdParam.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Historial completo (todas las quincenas) para poder ubicar el corte
+  // inmediatamente anterior por fecha al que se esta viendo, sin importar si
+  // cae en otra quincena — no siempre se captura un corte por quincena.
+  const fetchAllSnapshots = useCallback(async () => {
+    const res = await fetch('/api/liquidez')
+    const data: Snapshot[] = await res.json()
+    setAllSnapshots(data.map(s => ({
+      ...s,
+      ...normalizeMontos(s),
+      faltaPagar: Number(s.faltaPagar) || 0,
+      teorico: s.teorico != null ? Number(s.teorico) : null,
+    })))
+  }, [])
+
+  useEffect(() => { fetchAllSnapshots() }, [fetchAllSnapshots])
 
   function selectQuincena(id: string) {
     setQuincenaId(id)
@@ -220,6 +255,7 @@ function LiquidezConfigContent() {
       toast(editing ? 'Snapshot actualizado' : 'Snapshot creado')
       setModalOpen(false)
       fetchData()
+      fetchAllSnapshots()
     } catch {
       toast('Error al guardar', 'error')
     } finally {
@@ -236,10 +272,76 @@ function LiquidezConfigContent() {
       toast('Snapshot eliminado')
       setConfirmId(null)
       fetchData()
+      fetchAllSnapshots()
     } catch {
       toast('Error al eliminar', 'error')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  // Arqueo real: lo que hay ahora vs. lo que "deberia" haber segun el corte
+  // anterior (cualquier quincena) mas ingresos y gastos ya pagados
+  // registrados entre las dos fechas de corte. Se usa GastoPagado (no Gasto)
+  // porque un gasto Pendiente todavia no ha salido del bolsillo. No se
+  // restan movimientos de Ahorro: si el destino tipico es Uala Inversion,
+  // que ya es una de las cuentas contadas, restarlo tambien lo restaria dos
+  // veces.
+  async function fetchArqueo(previous: Snapshot, latest: Snapshot) {
+    setArqueoLoading(true)
+    try {
+      const desde = previous.fechaCorte.split('T')[0]
+      const hasta = latest.fechaCorte.split('T')[0]
+      const res = await fetch(`/api/transacciones?fechaDesde=${desde}&fechaHasta=${hasta}&limit=1`)
+      const data = await res.json()
+      const ingresos = Number(data.totales?.Ingreso ?? 0)
+      const gastoPagado = Number(data.totales?.GastoPagado ?? 0)
+      const teoricoEsperado = sumLiquidez(previous) + ingresos - gastoPagado
+      setArqueoData({ arqueo: sumLiquidez(latest) - teoricoEsperado, previousSnapshot: previous })
+    } catch {
+      setArqueoData(null)
+    } finally {
+      setArqueoLoading(false)
+    }
+  }
+
+  function openAjusteModal(arqueo: number) {
+    if (!latestSnapshot) return
+    const tipo = arqueo < 0 ? 'Gasto' : 'Ingreso'
+    setAjusteTipo(tipo)
+    setAjusteMonto(Math.abs(arqueo))
+    setAjusteForm({ ...AJUSTE_EMPTY, descripcion: `Ajuste de arqueo — corte ${formatDate(latestSnapshot.fechaCorte)}` })
+    setAjusteErrors({})
+    setAjusteModalOpen(true)
+  }
+
+  async function handleSaveAjuste() {
+    if (!ajusteForm.categoriaId) { setAjusteErrors({ categoriaId: 'Requerido' }); return }
+    if (!latestSnapshot || !previousSnapshot) return
+    setAjusteSaving(true)
+    try {
+      const res = await fetch('/api/transacciones', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fecha: latestSnapshot.fechaCorte.split('T')[0],
+          quincenaId: latestSnapshot.quincenaId,
+          descripcion: ajusteForm.descripcion.trim() || `Ajuste de arqueo — corte ${formatDate(latestSnapshot.fechaCorte)}`,
+          categoriaId: ajusteForm.categoriaId,
+          tipo: ajusteTipo,
+          monto: ajusteMonto,
+          estatus: 'Pagado',
+          source: 'ajuste-liquidez',
+        }),
+      })
+      if (!res.ok) throw new Error()
+      toast('Ajuste registrado')
+      setAjusteModalOpen(false)
+      fetchArqueo(previousSnapshot, latestSnapshot)
+    } catch {
+      toast('Error al registrar el ajuste', 'error')
+    } finally {
+      setAjusteSaving(false)
     }
   }
 
@@ -252,6 +354,24 @@ function LiquidezConfigContent() {
   const faltaPagarLatest = latestSnapshot?.faltaPagar ?? 0
   const deltaLiquido = totalLiquido - faltaPagarLatest
   const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
+
+  // Corte inmediatamente anterior por fecha (no por quincena) al mas
+  // reciente de la seleccion actual — base para el arqueo real.
+  const previousSnapshot = latestSnapshot
+    ? allSnapshots.find(s => new Date(s.fechaCorte).getTime() < new Date(latestSnapshot.fechaCorte).getTime()) ?? null
+    : null
+
+  useEffect(() => {
+    if (!latestSnapshot || !previousSnapshot) { setArqueoData(null); return }
+    fetchArqueo(previousSnapshot, latestSnapshot)
+    // Solo debe recalcular cuando cambian los snapshots (filtro de quincena,
+    // guardar/editar/borrar) — fetchArqueo se redefine cada render pero no
+    // debe disparar el efecto por si solo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshots, allSnapshots])
+
+  const ARQUEO_TOLERANCIA = 1
+  const arqueoCuadra = arqueoData != null && Math.abs(arqueoData.arqueo) < ARQUEO_TOLERANCIA
 
   return (
     <div className="space-y-6">
@@ -290,7 +410,7 @@ function LiquidezConfigContent() {
 
       {/* Analítica: líquido vs falta por pagar del corte más reciente */}
       {!loading && latestSnapshot && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard
             label="Total líquido" value={formatMXN(totalLiquido)}
             subtitle={`corte ${formatDate(latestSnapshot.fechaCorte)}`}
@@ -317,6 +437,31 @@ function LiquidezConfigContent() {
               : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
             }
           />
+          {previousSnapshot && arqueoData && (
+            <KpiCard
+              label="Arqueo vs. corte anterior" value={formatMXN(arqueoData.arqueo)}
+              subtitle={arqueoCuadra ? 'cuadra' : arqueoData.arqueo < 0 ? 'gasto sin registrar' : 'ingreso sin registrar'}
+              icon={
+                arqueoCuadra ? <Equal size={20} className="text-slate-500 dark:text-slate-300" />
+                : arqueoData.arqueo < 0 ? <AlertTriangle size={20} className="text-rose-600 dark:text-rose-300" />
+                : <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
+              }
+              color={arqueoCuadra ? 'text-slate-600 dark:text-slate-300' : arqueoData.arqueo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
+              bg={
+                arqueoCuadra ? 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
+                : arqueoData.arqueo < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
+                : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
+              }
+              action={!arqueoCuadra && !arqueoLoading && (
+                <button
+                  onClick={() => openAjusteModal(arqueoData.arqueo)}
+                  className="mt-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                >
+                  {arqueoData.arqueo < 0 ? 'Registrar gasto faltante' : 'Registrar ingreso no explicado'}
+                </button>
+              )}
+            />
+          )}
         </div>
       )}
 
@@ -522,6 +667,36 @@ function LiquidezConfigContent() {
             </button>
             <button type="button" onClick={handleSave} disabled={saving} className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]">
               {saving ? 'Guardando...' : editing ? 'Guardar cambios' : 'Crear'}
+            </button>
+          </div>
+        </div>
+      </FormModal>
+
+      {/* Modal de ajuste de arqueo */}
+      <FormModal open={ajusteModalOpen} onOpenChange={setAjusteModalOpen} title={ajusteTipo === 'Gasto' ? 'Registrar gasto faltante' : 'Registrar ingreso no explicado'}>
+        <div className="space-y-4">
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Se registrará como una transacción real de tipo {ajusteTipo} por {formatMXN(ajusteMonto)}
+            {latestSnapshot && ` con fecha ${formatDate(latestSnapshot.fechaCorte)}`}, para que el arqueo de este corte cuadre.
+          </p>
+          <div>
+            <Label htmlFor="aj-desc">Descripción</Label>
+            <input id="aj-desc" type="text" value={ajusteForm.descripcion} onChange={e => setAjusteForm(f => ({ ...f, descripcion: e.target.value }))} className={fieldClass()} />
+          </div>
+          <div>
+            <Label htmlFor="aj-cat">Categoría *</Label>
+            <select id="aj-cat" value={ajusteForm.categoriaId} onChange={e => setAjusteForm(f => ({ ...f, categoriaId: e.target.value }))} className={fieldClass(ajusteErrors.categoriaId)}>
+              <option value="">Seleccionar...</option>
+              {categorias.filter(c => c.tipo === ajusteTipo).map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            {ajusteErrors.categoriaId && <p className="text-xs text-rose-500 mt-1">{ajusteErrors.categoriaId}</p>}
+          </div>
+          <div className="flex gap-3 justify-end pt-2">
+            <button type="button" onClick={() => setAjusteModalOpen(false)} disabled={ajusteSaving} className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
+              Cancelar
+            </button>
+            <button type="button" onClick={handleSaveAjuste} disabled={ajusteSaving} className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px]">
+              {ajusteSaving ? 'Guardando...' : 'Registrar'}
             </button>
           </div>
         </div>
