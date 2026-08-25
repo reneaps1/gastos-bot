@@ -281,12 +281,12 @@ function LiquidezConfigContent() {
   }
 
   // Arqueo real: lo que hay ahora vs. lo que "deberia" haber segun el corte
-  // anterior (cualquier quincena) mas ingresos y gastos ya pagados
+  // anterior (cualquier quincena) mas ingresos cobrados y gastos ya pagados
   // registrados entre las dos fechas de corte. Se usa GastoPagado (no Gasto)
-  // porque un gasto Pendiente todavia no ha salido del bolsillo. No se
-  // restan movimientos de Ahorro: si el destino tipico es Uala Inversion,
-  // que ya es una de las cuentas contadas, restarlo tambien lo restaria dos
-  // veces.
+  // e IngresoPagado (no Ingreso) porque un movimiento Pendiente todavia no
+  // ha entrado ni salido del bolsillo. No se restan movimientos de Ahorro:
+  // si el destino tipico es Uala Inversion, que ya es una de las cuentas
+  // contadas, restarlo tambien lo restaria dos veces.
   async function fetchArqueo(previous: Snapshot, latest: Snapshot) {
     setArqueoLoading(true)
     try {
@@ -294,7 +294,7 @@ function LiquidezConfigContent() {
       const hasta = latest.fechaCorte.split('T')[0]
       const res = await fetch(`/api/transacciones?fechaDesde=${desde}&fechaHasta=${hasta}&limit=1`)
       const data = await res.json()
-      const ingresos = Number(data.totales?.Ingreso ?? 0)
+      const ingresos = Number(data.totales?.IngresoPagado ?? 0)
       const gastoPagado = Number(data.totales?.GastoPagado ?? 0)
       const teoricoEsperado = sumLiquidez(previous) + ingresos - gastoPagado
       setArqueoData({ arqueo: sumLiquidez(latest) - teoricoEsperado, previousSnapshot: previous })

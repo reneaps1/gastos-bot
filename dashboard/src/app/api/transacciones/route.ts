@@ -77,11 +77,12 @@ export async function GET(request: Request) {
     // Suma real (no paginada) por tipo, respetando los mismos filtros que la
     // lista — evita que las tarjetas de totales se calculen sobre solo la
     // página de resultados devuelta.
-    const totales = { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, GastoParaLimite: Number(gastoParaLimiteAgg._sum.monto ?? 0) }
+    const totales = { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, IngresoPagado: 0, GastoParaLimite: Number(gastoParaLimiteAgg._sum.monto ?? 0) }
     for (const row of totalesPorTipo) {
       const monto = Number(row._sum.monto ?? 0)
       if (row.tipo in totales) totales[row.tipo as 'Gasto' | 'Ingreso' | 'Ahorro'] += monto
       if (row.tipo === 'Gasto' && row.estatus === 'Pagado') totales.GastoPagado += monto
+      if (row.tipo === 'Ingreso' && row.estatus === 'Pagado') totales.IngresoPagado += monto
     }
 
     return NextResponse.json({
