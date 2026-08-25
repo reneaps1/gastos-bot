@@ -284,8 +284,8 @@ export default function CreditosPage() {
                 <tr>
                   <th className="text-left px-4 py-3">Fecha</th>
                   <th className="text-left px-4 py-3">Crédito</th>
-                  <th className="text-left px-4 py-3">Q</th>
-                  <th className="text-left px-4 py-3">Categoría</th>
+                  <th className="text-left px-4 py-3 hidden md:table-cell">Q</th>
+                  <th className="text-left px-4 py-3 hidden md:table-cell">Categoría</th>
                   <th className="text-right px-4 py-3">Monto</th>
                 </tr>
               </thead>
@@ -294,8 +294,8 @@ export default function CreditosPage() {
                   <tr key={p.id} className="text-slate-700 dark:text-slate-200">
                     <td className="px-4 py-3 whitespace-nowrap">{formatDate(p.fechaPagoProgramada)}</td>
                     <td className="px-4 py-3">{p.credito.nombre}</td>
-                    <td className="px-4 py-3">{p.quincena.codigo}</td>
-                    <td className="px-4 py-3">{p.categoria.nombre}</td>
+                    <td className="px-4 py-3 hidden md:table-cell">{p.quincena.codigo}</td>
+                    <td className="px-4 py-3 hidden md:table-cell">{p.categoria.nombre}</td>
                     <td className="px-4 py-3 text-right font-semibold">{formatMXN(p.montoTotal)}</td>
                   </tr>
                 ))}

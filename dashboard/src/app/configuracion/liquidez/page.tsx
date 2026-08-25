@@ -2,12 +2,13 @@
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft, FileText } from 'lucide-react'
+import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 import { KpiCard } from '@/components/ui/KpiCard'
+import { ReporteButton } from '@/components/ReporteButton'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
@@ -264,15 +265,8 @@ function LiquidezConfigContent() {
           <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Liquidez</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Snapshots de caja por quincena</p>
         </div>
-        <div className="flex items-center gap-2">
-          {currentQuincena && (
-            <Link
-              href={`/quincena/${currentQuincena.codigo}/reporte`}
-              className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg transition-colors"
-            >
-              <FileText size={14} /> Reporte
-            </Link>
-          )}
+        <div className="flex items-center flex-wrap gap-2">
+          {currentQuincena && <ReporteButton quincenaId={currentQuincena.id} quincenaCodigo={currentQuincena.codigo} />}
           <button
             onClick={openCreate}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors"
