@@ -1433,19 +1433,22 @@ function PresupuestoTabla({
   const totalRestante = totalPresupuestado - totalReal
   const totalFaltaPorPagar = calcularFaltaPorPagar(gastoFilasTabla)
 
-  const ingresoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Ingreso')
-  const totalIngresoPresupuestado = ingresoFilasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
-  const totalIngresoReal = ingresoFilasTabla.reduce((s, p) => s + p.real, 0)
-  const balancePresupuestado = totalIngresoPresupuestado - totalPresupuestado
-  const balanceReal = totalIngresoReal - totalReal
-
-  // La card de Ingresos es fija: muestra el total de la quincena seleccionada,
-  // sin importar los filtros de la tabla (categoria, ocultar ingresos, etc).
-  // Distinto de ingresoFilasTabla de arriba, que si respeta los filtros y
-  // alimenta el calculo de Balance.
+  // Las cards de Ingresos y Balance son fijas: muestran el total de la
+  // quincena seleccionada, sin importar los filtros de la tabla (categoria,
+  // clasificacion, "cubierto menos de 100%", etc). Los filtros son conceptos
+  // de partidas de Gasto -- filtrar por Categoria o Clasificacion no tiene
+  // sentido para una linea de Ingreso, asi que dejarlas filtrar Ingresos/
+  // Balance los hacia caer a $0 o a un subtotal parcial sin que el usuario
+  // lo notara, y ese numero dejaba de ser comparable con el "Sobrante neto"
+  // del Dashboard (que siempre es de la quincena completa).
   const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso')
   const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
   const totalIngresoRealFijo = ingresoFilasFijo.reduce((s, p) => s + p.real, 0)
+  const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto')
+  const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalRealFijo = gastoFilasFijo.reduce((s, p) => s + p.real, 0)
+  const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
+  const balanceReal = totalIngresoRealFijo - totalRealFijo
 
   const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
   useEffect(() => {
