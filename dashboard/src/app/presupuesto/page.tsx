@@ -1526,7 +1526,7 @@ function PresupuestoTabla({
           color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
         />
         <KpiCard
-          label="Balance" value={formatMXN(balancePresupuestado)}
+          label="Balance (plan)" value={formatMXN(balancePresupuestado)}
           subtitle={`real ${formatMXN(balanceReal)}`}
           subtitleColor={balanceReal < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
           icon={<Scale size={20} className={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
