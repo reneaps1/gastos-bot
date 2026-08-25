@@ -116,6 +116,8 @@ model Configuracion {
   frecuenciaPagoDefault  TipoPeriodo @default(QUINCENAL) @map("frecuencia_pago_default")
   ingresoReferencia      Decimal?    @map("ingreso_referencia") @db.Decimal(12, 2)
   limiteGastoReferencia  Decimal?    @map("limite_gasto_referencia") @db.Decimal(12, 2)
+  authUsername           String?     @map("auth_username") @db.VarChar(50)
+  authPasswordHash       String?     @map("auth_password_hash") @db.VarChar(100)
   fechaActualizacion     DateTime    @default(now()) @updatedAt @map("fecha_actualizacion") @db.Timestamptz()
 
   @@map("configuracion")

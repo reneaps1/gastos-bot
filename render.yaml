@@ -24,8 +24,6 @@ services:
         value: "false"
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false
-      - key: ADMIN_PASSWORD
-        sync: false
       - key: TODOIST_API_TOKEN
         sync: false
     healthCheckPath: /health
@@ -44,7 +42,9 @@ services:
           property: connectionString
       - key: NODE_ENV
         value: production
-    healthCheckPath: /
+      - key: SESSION_SECRET
+        sync: false
+    healthCheckPath: /api/health
     autoDeploy: true
 
 databases:
