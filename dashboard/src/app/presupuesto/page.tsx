@@ -170,7 +170,6 @@ export default function PresupuestoPage() {
   const [busqueda, setBusqueda] = useState('')
   const [pendientePorPagar, setPendientePorPagar] = useState(0)
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
-  const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
   const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tarjetas')
@@ -216,7 +215,6 @@ export default function PresupuestoPage() {
       setQuincenaId(getInitialQuincenaId(q))
       setTablaQuincenaId(getDefaultQuincenaId(q))
       setLimiteReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
-      setIngresoReferencia(cfg.ingresoReferencia != null ? Number(cfg.ingresoReferencia) : null)
     })
   }, [])
 
@@ -542,7 +540,6 @@ export default function PresupuestoPage() {
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
           openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP}
-          ingresoReferencia={ingresoReferencia}
         />
       ) : (
         <>
@@ -1377,7 +1374,6 @@ interface PresupuestoTablaProps {
   openEdit: (p: Presupuesto) => void
   setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
   setDetalleP: (p: Presupuesto | null) => void
-  ingresoReferencia: number | null
 }
 
 function PresupuestoTabla({
@@ -1388,7 +1384,7 @@ function PresupuestoTabla({
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
-  openEdit, setDeleteTarget, setDetalleP, ingresoReferencia,
+  openEdit, setDeleteTarget, setDetalleP,
 }: PresupuestoTablaProps) {
   const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
@@ -1417,7 +1413,9 @@ function PresupuestoTabla({
 
   const ingresoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Ingreso')
   const totalIngresoPresupuestado = ingresoFilasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalIngresoReal = ingresoFilasTabla.reduce((s, p) => s + p.real, 0)
   const balancePresupuestado = totalIngresoPresupuestado - totalPresupuestado
+  const balanceReal = totalIngresoReal - totalReal
 
   const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
   useEffect(() => {
@@ -1430,7 +1428,6 @@ function PresupuestoTabla({
       })
   }, [tablaQuincenaId])
   const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
-  const liquidezNeta = liquidezSnapshot ? totalLiquidez - liquidezSnapshot.faltaPagar : 0
 
   return (
     <div className="space-y-4">
@@ -1485,17 +1482,20 @@ function PresupuestoTabla({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
-          subtitle={ingresoReferencia != null ? `meta ${formatMXN(ingresoReferencia)}` : undefined}
+          subtitle={`real ${formatMXN(totalIngresoReal)}`}
           icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
           color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
         />
         <KpiCard
           label="Gastos" value={formatMXN(totalPresupuestado)}
+          subtitle={`real ${formatMXN(totalReal)}`}
           icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
           color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
         />
         <KpiCard
           label="Balance" value={formatMXN(balancePresupuestado)}
+          subtitle={`real ${formatMXN(balanceReal)}`}
+          subtitleColor={balanceReal < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
           icon={<Scale size={20} className={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
           color={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
           bg={balancePresupuestado >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
@@ -1504,8 +1504,8 @@ function PresupuestoTabla({
           liquidezSnapshot ? (
             <KpiCard
               label="Liquidez" value={formatMXN(totalLiquidez)}
-              subtitle={liquidezSnapshot.faltaPagar > 0 ? `neta ${formatMXN(liquidezNeta)}` : undefined}
-              subtitleColor={liquidezNeta < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
+              subtitle={`falta por cubrir ${formatMXN(totalFaltaPorPagar)}`}
+              subtitleColor={totalFaltaPorPagar > totalLiquidez ? 'text-rose-500 dark:text-rose-400' : undefined}
               icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
               color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
             />
