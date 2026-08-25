@@ -1,0 +1,338 @@
+'use client'
+import { useEffect, useState } from 'react'
+import { useParams } from 'next/navigation'
+import Link from 'next/link'
+import { ArrowLeft, Printer, FileSpreadsheet, SearchX } from 'lucide-react'
+import { formatMXN, formatDate } from '@/lib/utils'
+import { formatQuincenaRange } from '@/lib/quincena-selection'
+import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
+import { downloadReporteExcel } from '@/lib/reporte-excel'
+
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
+interface PresupuestoRow {
+  id: number
+  descripcion: string
+  tipo: string
+  montoPresupuestado: number | string
+  real: number
+  pendiente: number
+  categoria: { nombre: string }
+}
+interface TransaccionRow {
+  id: number
+  fecha: string
+  tipo: string
+  descripcion: string
+  monto: number | string
+  estatus: string
+  categoria: { nombre: string } | null
+  metodoPago: { nombre: string } | null
+  user: { nombre: string } | null
+  presupuesto: { descripcion: string } | null
+}
+interface Snapshot extends LiquidezMontos {
+  otrosNota: string | null
+  faltaPagar: number
+  validado: boolean
+  fechaCorte: string
+}
+
+const TIPOS = ['Gasto', 'Ingreso', 'Ahorro'] as const
+
+function groupByCategoria(rows: PresupuestoRow[]) {
+  const map = new Map<string, PresupuestoRow[]>()
+  for (const r of rows) {
+    const key = r.categoria?.nombre ?? 'Sin categoría'
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(r)
+  }
+  return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+}
+
+export default function ReporteQuincenaPage() {
+  const { codigo } = useParams<{ codigo: string }>()
+
+  const [loading, setLoading] = useState(true)
+  const [target, setTarget] = useState<Quincena | null>(null)
+  const [presupuestos, setPresupuestos] = useState<PresupuestoRow[]>([])
+  const [transacciones, setTransacciones] = useState<TransaccionRow[]>([])
+  const [totales, setTotales] = useState({ Ingreso: 0, Gasto: 0, GastoPagado: 0 })
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
+  const [exporting, setExporting] = useState(false)
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      try {
+        const quincenas: Quincena[] = await fetch('/api/quincenas').then(r => r.json())
+        const found = quincenas.find(q => q.codigo.toLowerCase() === codigo.toLowerCase()) ?? null
+        setTarget(found)
+        if (!found) return
+
+        const [presupRes, txRes, liqRes] = await Promise.all([
+          fetch(`/api/presupuestos?quincenaId=${found.id}`),
+          fetch(`/api/transacciones?quincenaId=${found.id}&limit=1000`),
+          fetch(`/api/liquidez?quincenaId=${found.id}`),
+        ])
+        const presupData: PresupuestoRow[] = await presupRes.json()
+        const txJson = await txRes.json()
+        const liqData = await liqRes.json()
+
+        setPresupuestos(presupData)
+        setTransacciones(txJson.data ?? [])
+        setTotales({
+          Ingreso: Number(txJson.totales?.Ingreso ?? 0),
+          Gasto: Number(txJson.totales?.Gasto ?? 0),
+          GastoPagado: Number(txJson.totales?.GastoPagado ?? 0),
+        })
+        const raw = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
+        setSnapshot(raw ? { ...raw, ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0 } : null)
+      } finally {
+        setLoading(false)
+      }
+    }
+    void load()
+  }, [codigo])
+
+  if (loading) {
+    return (
+      <div className="py-24 flex justify-center text-slate-400 text-sm gap-2 print:hidden">
+        <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+        </svg>
+        Cargando...
+      </div>
+    )
+  }
+
+  if (!target) {
+    return (
+      <div className="text-center py-24 text-slate-400 print:hidden">
+        <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 flex items-center justify-center">
+          <SearchX size={28} className="text-slate-400" />
+        </div>
+        <p className="font-medium text-slate-600">Quincena &quot;{codigo}&quot; no encontrada</p>
+        <Link href="/" className="inline-flex items-center gap-1.5 mt-4 text-sm text-indigo-600 hover:underline">
+          <ArrowLeft size={14} /> Volver al inicio
+        </Link>
+      </div>
+    )
+  }
+
+  const pendiente = totales.Gasto - totales.GastoPagado
+  const totalLiquido = snapshot ? sumLiquidez(snapshot) : 0
+  const faltaPagar = snapshot?.faltaPagar ?? 0
+  const delta = totalLiquido - faltaPagar
+
+  async function handleExportExcel() {
+    if (!target) return
+    setExporting(true)
+    try {
+      await downloadReporteExcel({
+        quincena: target,
+        totales: { ingreso: totales.Ingreso, gasto: totales.Gasto, pagado: totales.GastoPagado, pendiente },
+        presupuesto: presupuestos.map(p => ({
+          tipo: p.tipo,
+          categoria: p.categoria?.nombre ?? 'Sin categoría',
+          descripcion: p.descripcion,
+          montoPresupuestado: Number(p.montoPresupuestado),
+          real: p.real,
+          pendiente: p.pendiente,
+        })),
+        transacciones: transacciones.map(t => ({
+          fecha: t.fecha,
+          tipo: t.tipo,
+          categoria: t.categoria?.nombre ?? '—',
+          partida: t.presupuesto?.descripcion ?? '—',
+          descripcion: t.descripcion,
+          monto: Number(t.monto),
+          estatus: t.estatus,
+          metodoPago: t.metodoPago?.nombre ?? '—',
+          usuario: t.user?.nombre ?? '—',
+        })),
+        liquidez: snapshot ? {
+          fechaCorte: snapshot.fechaCorte,
+          validado: snapshot.validado,
+          bbva: snapshot.bbva, banamex: snapshot.banamex, uala: snapshot.uala, ualaInversion: snapshot.ualaInversion,
+          efectivo: snapshot.efectivo, valesDespensa: snapshot.valesDespensa, valesGasolina: snapshot.valesGasolina,
+          otros: snapshot.otros, otrosNota: snapshot.otrosNota,
+          totalLiquido, faltaPagar, delta,
+        } : null,
+      })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6 bg-white text-slate-800">
+      {/* Barra de acciones — no se imprime */}
+      <div className="flex items-center justify-between print:hidden">
+        <Link href={`/quincena/${target.codigo}`} className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-indigo-600 transition-colors">
+          <ArrowLeft size={14} /> Volver a {target.codigo}
+        </Link>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportExcel}
+            disabled={exporting}
+            className="flex items-center gap-2 text-sm text-slate-600 border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors"
+          >
+            <FileSpreadsheet size={14} /> {exporting ? 'Generando...' : 'Exportar Excel'}
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg cursor-pointer transition-colors"
+          >
+            <Printer size={14} /> Imprimir / Guardar PDF
+          </button>
+        </div>
+      </div>
+
+      {/* Encabezado del reporte */}
+      <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
+        <img src="/icon-192.png" alt="Milo" className="h-10 w-10 rounded-lg" />
+        <div>
+          <p className="text-lg font-bold text-slate-800">Milo Gastos — Reporte de quincena</p>
+          <p className="text-sm text-slate-500">
+            {target.codigo} · {formatQuincenaRange(target)} · generado el {formatDate(new Date())}
+          </p>
+        </div>
+      </div>
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 break-inside-avoid">
+        {[
+          { label: 'Ingresos', value: totales.Ingreso },
+          { label: 'Gastos', value: totales.Gasto },
+          { label: 'Pagado', value: totales.GastoPagado },
+          { label: 'Pendiente', value: pendiente },
+        ].map(k => (
+          <div key={k.label} className="border border-slate-200 rounded-xl p-3 text-center">
+            <p className="text-xs text-slate-500">{k.label}</p>
+            <p className="text-base font-bold text-slate-800 tabular-nums">{formatMXN(k.value)}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Presupuesto detallado */}
+      <section className="space-y-4">
+        <h2 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-1">Presupuesto</h2>
+        {TIPOS.map(tipo => {
+          const rows = presupuestos.filter(p => p.tipo === tipo)
+          if (rows.length === 0) return null
+          const totalPresup = rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+          const totalRealTipo = rows.reduce((s, p) => s + p.real, 0)
+          return (
+            <div key={tipo} className="break-inside-avoid">
+              <p className="text-sm font-semibold text-slate-700 mb-1.5">
+                {tipo} <span className="font-normal text-slate-400">— presupuestado {formatMXN(totalPresup)} · real {formatMXN(totalRealTipo)}</span>
+              </p>
+              {groupByCategoria(rows).map(([catNombre, catRows]) => (
+                <div key={catNombre} className="mb-2 break-inside-avoid">
+                  <p className="text-xs font-medium text-slate-500 mt-2">{catNombre}</p>
+                  <table className="w-full text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500">
+                        <th className="text-left py-1 pr-2 font-medium">Descripción</th>
+                        <th className="text-right py-1 px-2 font-medium">Presupuestado</th>
+                        <th className="text-right py-1 px-2 font-medium">Real</th>
+                        <th className="text-right py-1 px-2 font-medium">Pendiente</th>
+                        <th className="text-right py-1 pl-2 font-medium">Restante</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {catRows.map(p => (
+                        <tr key={p.id} className="border-b border-slate-100 break-inside-avoid">
+                          <td className="py-1 pr-2 text-slate-700">{p.descripcion}</td>
+                          <td className="py-1 px-2 text-right tabular-nums text-slate-700">{formatMXN(p.montoPresupuestado)}</td>
+                          <td className="py-1 px-2 text-right tabular-nums text-slate-700">{formatMXN(p.real)}</td>
+                          <td className="py-1 px-2 text-right tabular-nums text-amber-600">{formatMXN(p.pendiente)}</td>
+                          <td className="py-1 pl-2 text-right tabular-nums text-slate-700">{formatMXN(Number(p.montoPresupuestado) - p.real)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ))}
+            </div>
+          )
+        })}
+        {presupuestos.length === 0 && <p className="text-sm text-slate-400">Sin presupuesto capturado para esta quincena.</p>}
+      </section>
+
+      {/* Detalle de transacciones */}
+      <section className="space-y-2">
+        <h2 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-1">Detalle de transacciones</h2>
+        {transacciones.length === 0 ? (
+          <p className="text-sm text-slate-400">Sin transacciones registradas.</p>
+        ) : (
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b border-slate-200 text-slate-500">
+                <th className="text-left py-1 pr-2 font-medium">Fecha</th>
+                <th className="text-left py-1 px-2 font-medium">Tipo</th>
+                <th className="text-left py-1 px-2 font-medium">Categoría</th>
+                <th className="text-left py-1 px-2 font-medium">Descripción</th>
+                <th className="text-right py-1 px-2 font-medium">Monto</th>
+                <th className="text-left py-1 pl-2 font-medium">Estatus</th>
+              </tr>
+            </thead>
+            <tbody>
+              {transacciones.map(t => (
+                <tr key={t.id} className="border-b border-slate-100 break-inside-avoid">
+                  <td className="py-1 pr-2 text-slate-700">{formatDate(t.fecha)}</td>
+                  <td className="py-1 px-2 text-slate-700">{t.tipo}</td>
+                  <td className="py-1 px-2 text-slate-700">{t.categoria?.nombre ?? '—'}</td>
+                  <td className="py-1 px-2 text-slate-700">{t.descripcion}</td>
+                  <td className="py-1 px-2 text-right tabular-nums text-slate-700">{formatMXN(t.monto)}</td>
+                  <td className="py-1 pl-2 text-slate-700">{t.estatus}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {/* Liquidez */}
+      <section className="space-y-3 break-inside-avoid">
+        <h2 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-1">Liquidez</h2>
+        {snapshot ? (
+          <>
+            <p className="text-xs text-slate-500">
+              Corte del {formatDate(snapshot.fechaCorte)}{snapshot.validado && <span className="ml-1.5 text-emerald-600 font-medium">· Validado</span>}
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { label: 'Total líquido', value: totalLiquido },
+                { label: 'Falta por pagar', value: faltaPagar },
+                { label: 'Delta', value: delta },
+              ].map(k => (
+                <div key={k.label} className="border border-slate-200 rounded-xl p-3 text-center">
+                  <p className="text-xs text-slate-500">{k.label}</p>
+                  <p className="text-base font-bold text-slate-800 tabular-nums">{formatMXN(k.value)}</p>
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
+              {[
+                { label: 'BBVA', value: snapshot.bbva },
+                { label: 'Banamex', value: snapshot.banamex },
+                { label: 'Ualá', value: snapshot.uala },
+                { label: 'Efectivo', value: snapshot.efectivo },
+                ...(snapshot.otros > 0 ? [{ label: snapshot.otrosNota ?? 'Otros', value: snapshot.otros }] : []),
+              ].map(c => (
+                <div key={c.label} className="bg-slate-50 rounded-lg p-2 text-center">
+                  <p className="text-[10px] text-slate-500">{c.label}</p>
+                  <p className="text-xs font-bold text-slate-800 tabular-nums">{formatMXN(c.value)}</p>
+                </div>
+              ))}
+            </div>
+          </>
+        ) : (
+          <p className="text-sm text-slate-400">Sin corte de liquidez capturado para esta quincena.</p>
+        )}
+      </section>
+    </div>
+  )
+}
