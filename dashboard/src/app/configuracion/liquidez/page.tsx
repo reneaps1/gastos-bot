@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft, ArrowRight, AlertTriangle } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -425,7 +425,7 @@ function LiquidezConfigContent() {
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
           <KpiCard
-            label="Delta (líquido vs falta por pagar)" value={formatMXN(deltaLiquido)}
+            label="¿Me alcanza?" value={formatMXN(deltaLiquido)}
             subtitle={deltaLiquido < 0 ? 'te falta cubrir' : deltaLiquido > 0 ? 'te sobra' : 'alcanza justo'}
             icon={
               deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
@@ -438,14 +438,21 @@ function LiquidezConfigContent() {
               : deltaLiquido > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
               : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
             }
-            action={deltaLiquido < 0 && currentQuincena && (
-              <button
-                onClick={() => setTriageOpen(true)}
-                className="mt-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
-              >
-                Resolver déficit
-              </button>
-            )}
+            action={
+              <div className="mt-1.5 flex flex-col items-start gap-1">
+                {deltaLiquido < 0 && currentQuincena && (
+                  <button
+                    onClick={() => setTriageOpen(true)}
+                    className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                  >
+                    Resolver déficit
+                  </button>
+                )}
+                <Link href="/" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+                  ver disponible real del presupuesto <ArrowRight size={10} />
+                </Link>
+              </div>
+            }
           />
           {previousSnapshot && descuadreData && (
             <KpiCard

@@ -518,11 +518,9 @@ export default function DashboardPage() {
                   <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.presupTotal)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                    No comprometido
-                    <span className="cursor-help text-slate-300 dark:text-slate-600" title="Dinero de tus ingresos que no tiene destino en ninguna partida del presupuesto">ⓘ</span>
-                  </p>
-                  <p className={`text-base font-bold tabular-nums ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Sin destino en el presupuesto</p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">de tus ingresos, esto no tiene partida asignada</p>
+                  <p className={`text-base font-bold tabular-nums mt-0.5 ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
                   {metricas.gastosNoCubiertos > 0 && (
                     <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-md px-1.5 py-0.5 inline-block">
                       ⚠ incluye {formatMXN(metricas.gastosNoCubiertos)} sin presupuestar
@@ -530,15 +528,21 @@ export default function DashboardPage() {
                   )}
                 </div>
                 <div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                    Sobrante neto
-                    <span className="cursor-help text-slate-300 dark:text-slate-600" title="Lo que queda después de restar lo presupuestado, los gastos sin presupuesto, los excedidos y el ahorro comprometido">ⓘ</span>
-                  </p>
-                  <p className={`text-base font-bold tabular-nums ${disponibleReal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(disponibleReal))}{disponibleReal < 0 ? ' de más' : ''}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Disponible real</p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">lo que de verdad te queda hoy</p>
+                  <p className={`text-base font-bold tabular-nums mt-0.5 ${disponibleReal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(disponibleReal))}{disponibleReal < 0 ? ' de más' : ''}</p>
                   {metricas.ahorroComprometido > 0 && (
                     <p className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-md px-1.5 py-0.5 inline-block">
                       incluye {formatMXN(metricas.ahorroComprometido)} de ahorro comprometido
                     </p>
+                  )}
+                  {snapshot && (
+                    <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+                      className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+                      tu efectivo real:
+                      <span className={`font-semibold tabular-nums ${liquidezNeta < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>{formatMXN(liquidezNeta)}</span>
+                      <ArrowRight size={10} />
+                    </Link>
                   )}
                 </div>
               </div>
@@ -1030,7 +1034,9 @@ export default function DashboardPage() {
           {snapshot && (
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Liquidez</h3>
+                <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`} className="text-sm font-semibold text-slate-700 dark:text-slate-200 hover:text-indigo-600 dark:hover:text-indigo-400 flex items-center gap-1 transition-colors">
+                  Liquidez <ArrowRight size={12} />
+                </Link>
                 <div className="text-right">
                   <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</p>
                   {snapshot && snapshot.faltaPagar > 0 && (
