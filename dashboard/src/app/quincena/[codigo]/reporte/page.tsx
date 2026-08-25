@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, Printer, FileSpreadsheet, SearchX } from 'lucide-react'
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { formatQuincenaRange } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
@@ -16,7 +17,7 @@ interface PresupuestoRow {
   montoPresupuestado: number | string
   real: number
   pendiente: number
-  categoria: { nombre: string }
+  categoria: { nombre: string; tipo: string }
 }
 interface TransaccionRow {
   id: number
@@ -39,6 +40,14 @@ interface Snapshot extends LiquidezMontos {
 
 const TIPOS = ['Gasto', 'Ingreso', 'Ahorro'] as const
 
+// Presupuesto.tipo es un campo casi sin uso real -- la clasificacion que ya
+// usa el resto del dashboard (ver presupuesto/page.tsx) es categoria.tipo.
+// Sin este fallback, categorias como "Ahorro" o "Ingresos" quedaban
+// agrupadas (y sumadas) dentro de "Gasto".
+function tipoDe(p: PresupuestoRow) {
+  return p.categoria?.tipo ?? p.tipo
+}
+
 function groupByCategoria(rows: PresupuestoRow[]) {
   const map = new Map<string, PresupuestoRow[]>()
   for (const r of rows) {
@@ -47,6 +56,17 @@ function groupByCategoria(rows: PresupuestoRow[]) {
     map.get(key)!.push(r)
   }
   return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]))
+}
+
+const CAT_COLOR: Record<string, string> = {
+  Hogar: '#f97316', Salud: '#f43f5e', Familia: '#ec4899', Transporte: '#0ea5e9',
+  Suscripciones: '#8b5cf6', Deudas: '#ef4444', Personal: '#f59e0b', Ingresos: '#10b981',
+  Ahorro: '#3b82f6', Diversión: '#14b8a6', Super: '#84cc16', Telefonia: '#6366f1',
+}
+const FALLBACK_COLORS = ['#64748b', '#a855f7', '#0891b2', '#ca8a04', '#be185d']
+
+function colorForCategoria(nombre: string, index: number) {
+  return CAT_COLOR[nombre] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length]
 }
 
 export default function ReporteQuincenaPage() {
@@ -129,6 +149,29 @@ export default function ReporteQuincenaPage() {
     weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }).format(new Date())
 
+  // Datos para las graficas del resumen
+  const gastoRows = presupuestos.filter(p => tipoDe(p) === 'Gasto')
+  const gastoPorCategoriaRaw = groupByCategoria(gastoRows)
+    .map(([nombre, rows]) => ({ nombre, real: rows.reduce((s, p) => s + p.real, 0) }))
+    .filter(c => c.real > 0)
+    .sort((a, b) => b.real - a.real)
+  const TOP_CATS = 6
+  const gastoPorCategoria = gastoPorCategoriaRaw.length > TOP_CATS + 1
+    ? [
+        ...gastoPorCategoriaRaw.slice(0, TOP_CATS),
+        { nombre: 'Otros', real: gastoPorCategoriaRaw.slice(TOP_CATS).reduce((s, c) => s + c.real, 0) },
+      ]
+    : gastoPorCategoriaRaw
+
+  const tipoComparativo = TIPOS.map(tipo => {
+    const rows = presupuestos.filter(p => tipoDe(p) === tipo)
+    return {
+      tipo,
+      Presupuestado: rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0),
+      Real: rows.reduce((s, p) => s + p.real, 0),
+    }
+  }).filter(t => t.Presupuestado > 0 || t.Real > 0)
+
   async function handleExportExcel() {
     if (!target) return
     setExporting(true)
@@ -137,7 +180,7 @@ export default function ReporteQuincenaPage() {
         quincena: target,
         totales: { ingreso: totales.Ingreso, gasto: totales.Gasto, pagado: totales.GastoPagado, pendiente },
         presupuesto: presupuestos.map(p => ({
-          tipo: p.tipo,
+          tipo: tipoDe(p),
           categoria: p.categoria?.nombre ?? 'Sin categoría',
           descripcion: p.descripcion,
           montoPresupuestado: Number(p.montoPresupuestado),
@@ -270,6 +313,47 @@ export default function ReporteQuincenaPage() {
             ))}
           </div>
         </section>
+
+        {/* Graficas */}
+        {(gastoPorCategoria.length > 0 || tipoComparativo.length > 0) && (
+          <section className="space-y-3 break-inside-avoid">
+            <h3 className="text-sm font-bold text-slate-800">Graficas</h3>
+            <div className="grid grid-cols-2 gap-4">
+              {gastoPorCategoria.length > 0 && (
+                <div className="border border-slate-300 rounded-lg p-3">
+                  <p className="text-xs font-medium text-slate-500 text-center mb-1">Gasto real por categoría</p>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <PieChart>
+                      <Pie data={gastoPorCategoria} dataKey="real" nameKey="nombre" cx="50%" cy="50%" outerRadius={75} label={{ fontSize: 10 }} isAnimationActive={false}>
+                        {gastoPorCategoria.map((c, i) => (
+                          <Cell key={c.nombre} fill={colorForCategoria(c.nombre, i)} />
+                        ))}
+                      </Pie>
+                      <Tooltip formatter={(v) => formatMXN(Number(v))} />
+                      <Legend wrapperStyle={{ fontSize: 10 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+              {tipoComparativo.length > 0 && (
+                <div className="border border-slate-300 rounded-lg p-3">
+                  <p className="text-xs font-medium text-slate-500 text-center mb-1">Presupuestado vs. real</p>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <BarChart data={tipoComparativo} margin={{ top: 8, right: 32, left: 8, bottom: 8 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="tipo" tick={{ fontSize: 11 }} />
+                      <YAxis tick={{ fontSize: 10 }} width={45} />
+                      <Tooltip formatter={(v) => formatMXN(Number(v))} />
+                      <Legend wrapperStyle={{ fontSize: 10 }} />
+                      <Bar dataKey="Presupuestado" fill="#94a3b8" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                      <Bar dataKey="Real" fill="#4f46e5" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </div>
 
       {/* ── Página 2+: Detalle ── */}
@@ -280,7 +364,7 @@ export default function ReporteQuincenaPage() {
         <section className="space-y-4">
           <h3 className="text-sm font-bold text-slate-800">Presupuesto por categoría</h3>
           {TIPOS.map(tipo => {
-            const rows = presupuestos.filter(p => p.tipo === tipo)
+            const rows = presupuestos.filter(p => tipoDe(p) === tipo)
             if (rows.length === 0) return null
             const totalPresup = rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
             const totalRealTipo = rows.reduce((s, p) => s + p.real, 0)
