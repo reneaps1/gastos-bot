@@ -172,7 +172,7 @@ export default function PresupuestoPage() {
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
-  const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tarjetas')
+  const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tabla')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
   const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
   const [tablaLoading, setTablaLoading] = useState(false)

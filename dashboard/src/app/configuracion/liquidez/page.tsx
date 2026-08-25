@@ -12,6 +12,7 @@ import { ReporteButton } from '@/components/ReporteButton'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { DeficitTriagePanel } from '@/components/ui/DeficitTriagePanel'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -102,6 +103,7 @@ function LiquidezConfigContent() {
   const [ajusteForm, setAjusteForm] = useState(AJUSTE_EMPTY)
   const [ajusteErrors, setAjusteErrors] = useState<Record<string, string>>({})
   const [ajusteSaving, setAjusteSaving] = useState(false)
+  const [triageOpen, setTriageOpen] = useState(false)
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -436,6 +438,14 @@ function LiquidezConfigContent() {
               : deltaLiquido > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
               : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
             }
+            action={deltaLiquido < 0 && currentQuincena && (
+              <button
+                onClick={() => setTriageOpen(true)}
+                className="mt-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+              >
+                Resolver déficit
+              </button>
+            )}
           />
           {previousSnapshot && descuadreData && (
             <KpiCard
@@ -710,6 +720,18 @@ function LiquidezConfigContent() {
         onConfirm={handleDelete}
         loading={deleting}
       />
+
+      {currentQuincena && (
+        <DeficitTriagePanel
+          open={triageOpen}
+          onOpenChange={setTriageOpen}
+          quincenaId={currentQuincena.id}
+          quincenaCodigo={currentQuincena.codigo}
+          quincenas={quincenas}
+          snapshotId={latestSnapshot?.id ?? null}
+          onChanged={() => { fetchData(); fetchAllSnapshots() }}
+        />
+      )}
     </div>
   )
 }
