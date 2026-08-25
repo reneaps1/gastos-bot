@@ -285,8 +285,8 @@ export default function ReporteQuincenaPage() {
             const totalPresup = rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
             const totalRealTipo = rows.reduce((s, p) => s + p.real, 0)
             return (
-              <div key={tipo} className="break-inside-avoid">
-                <p className="text-sm font-semibold text-slate-700 mb-2">
+              <div key={tipo}>
+                <p className="text-sm font-semibold text-slate-700 mb-2 break-after-avoid-page">
                   {tipo} <span className="font-normal text-slate-400">— presupuestado {formatMXN(totalPresup)} · real {formatMXN(totalRealTipo)}</span>
                 </p>
                 {groupByCategoria(rows).map(([catNombre, catRows]) => (
