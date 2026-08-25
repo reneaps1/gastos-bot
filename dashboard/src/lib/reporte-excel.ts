@@ -73,16 +73,15 @@ export async function downloadReporteExcel(data: ReporteData) {
   resumen.addRow(['Periodo', `${data.quincena.fechaInicio.split('T')[0]} a ${data.quincena.fechaFin.split('T')[0]}`])
   resumen.addRow(['Generado', new Date().toLocaleString('es-MX')])
   resumen.addRow([])
-  resumen.addRow(['Ingresos', money(data.totales.ingreso)]).getCell(2).numFmt = moneyFmt
-  resumen.addRow(['Gastos', money(data.totales.gasto)]).getCell(2).numFmt = moneyFmt
-  resumen.addRow(['Pagado', money(data.totales.pagado)]).getCell(2).numFmt = moneyFmt
-  resumen.addRow(['Pendiente', money(data.totales.pendiente)]).getCell(2).numFmt = moneyFmt
 
   if (data.liquidez) {
     const l = data.liquidez
-    resumen.addRow([])
     resumen.addRow(['Liquidez — corte', l.fechaCorte.split('T')[0]])
     resumen.addRow(['Validado', l.validado ? 'Si' : 'No'])
+    resumen.addRow(['Total liquido', money(l.totalLiquido)]).getCell(2).numFmt = moneyFmt
+    resumen.addRow(['Falta por pagar', money(l.faltaPagar)]).getCell(2).numFmt = moneyFmt
+    resumen.addRow(['Delta (liquido neto)', money(l.delta)]).getCell(2).numFmt = moneyFmt
+    resumen.addRow([])
     resumen.addRow(['BBVA', money(l.bbva)]).getCell(2).numFmt = moneyFmt
     resumen.addRow(['Banamex', money(l.banamex)]).getCell(2).numFmt = moneyFmt
     resumen.addRow(['Uala', money(l.uala)]).getCell(2).numFmt = moneyFmt
@@ -92,10 +91,12 @@ export async function downloadReporteExcel(data: ReporteData) {
     resumen.addRow(['Vales gasolina', money(l.valesGasolina)]).getCell(2).numFmt = moneyFmt
     resumen.addRow([l.otrosNota ? `Otros (${l.otrosNota})` : 'Otros', money(l.otros)]).getCell(2).numFmt = moneyFmt
     resumen.addRow([])
-    resumen.addRow(['Total liquido', money(l.totalLiquido)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Falta por pagar', money(l.faltaPagar)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Delta (liquido neto)', money(l.delta)]).getCell(2).numFmt = moneyFmt
   }
+
+  resumen.addRow(['Ingresos', money(data.totales.ingreso)]).getCell(2).numFmt = moneyFmt
+  resumen.addRow(['Gastos', money(data.totales.gasto)]).getCell(2).numFmt = moneyFmt
+  resumen.addRow(['Pagado', money(data.totales.pagado)]).getCell(2).numFmt = moneyFmt
+  resumen.addRow(['Pendiente', money(data.totales.pendiente)]).getCell(2).numFmt = moneyFmt
   resumen.getColumn(1).font = { bold: true }
 
   // ---- Presupuesto ----
