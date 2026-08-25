@@ -26,13 +26,15 @@ export async function GET(request: Request) {
       groupTotals.set(key, (groupTotals.get(key) ?? 0) + Number(p.montoPresupuestado))
     }
 
-    // Gasto real por línea específica (presupuestoId) — una sola query agrupada en vez de N aggregates.
-    // Se agrupa también por estatus para poder separar cuánto de ese real sigue Pendiente de pago.
+    // Monto real por línea específica (presupuestoId) — una sola query agrupada en vez de N aggregates.
+    // Se agrupa también por estatus para poder separar cuánto de ese real sigue Pendiente.
+    // Sin filtro de tipo: una línea de Ingreso/Ahorro tiene sus propias transacciones
+    // (tipo Ingreso/Ahorro) asignadas por presupuestoId, igual que una de Gasto.
     const presupuestoIds = presupuestos.map(p => p.id)
     const gastosRows = presupuestoIds.length > 0
       ? await prisma.transaccion.groupBy({
           by: ['presupuestoId', 'estatus'],
-          where: { presupuestoId: { in: presupuestoIds }, tipo: 'Gasto' },
+          where: { presupuestoId: { in: presupuestoIds } },
           _sum: { monto: true },
         })
       : []
