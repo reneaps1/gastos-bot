@@ -1439,6 +1439,14 @@ function PresupuestoTabla({
   const balancePresupuestado = totalIngresoPresupuestado - totalPresupuestado
   const balanceReal = totalIngresoReal - totalReal
 
+  // La card de Ingresos es fija: muestra el total de la quincena seleccionada,
+  // sin importar los filtros de la tabla (categoria, ocultar ingresos, etc).
+  // Distinto de ingresoFilasTabla de arriba, que si respeta los filtros y
+  // alimenta el calculo de Balance.
+  const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso')
+  const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalIngresoRealFijo = ingresoFilasFijo.reduce((s, p) => s + p.real, 0)
+
   const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
   useEffect(() => {
     if (tablaQuincenaId === ALL_QUINCENAS) { setLiquidezSnapshot(null); return }
@@ -1503,8 +1511,8 @@ function PresupuestoTabla({
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
-          label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
-          subtitle={`real ${formatMXN(totalIngresoReal)}`}
+          label="Ingresos" value={formatMXN(totalIngresoPresupuestadoFijo)}
+          subtitle={`real ${formatMXN(totalIngresoRealFijo)}`}
           icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
           color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
         />
