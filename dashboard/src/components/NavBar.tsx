@@ -1,6 +1,6 @@
 'use client'
-import { usePathname } from 'next/navigation'
-import { Settings, Sun, Moon, LayoutDashboard, ArrowLeftRight, Target, AlertCircle, Landmark, PiggyBank } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { Settings, Sun, Moon, LayoutDashboard, ArrowLeftRight, Target, AlertCircle, Landmark, PiggyBank, LogOut } from 'lucide-react'
 import { useTheme } from './ThemeProvider'
 
 const links = [
@@ -19,15 +19,25 @@ const configLinks = [
   { href: '/configuracion/usuarios', label: 'Usuarios' },
   { href: '/configuracion/audit-log', label: 'Audit Log' },
   { href: '/admin/categorias', label: 'Admin Categorías' },
+  { href: '/configuracion/cuenta', label: 'Mi cuenta' },
 ]
 
 export function NavBar() {
   const pathname = usePathname()
+  const router = useRouter()
   const { theme, toggleTheme } = useTheme()
+
+  if (pathname === '/login') return null
 
   function isActive(href: string) {
     if (href === '/') return pathname === '/'
     return pathname.startsWith(href)
+  }
+
+  async function handleLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    router.replace('/login')
+    router.refresh()
   }
 
   const isConfigActive = pathname.startsWith('/configuracion')
@@ -77,6 +87,11 @@ export function NavBar() {
           aria-label={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}>
           {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
         </button>
+        <button onClick={handleLogout}
+          className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400 cursor-pointer transition-colors"
+          aria-label="Cerrar sesión" title="Cerrar sesión">
+          <LogOut size={16} />
+        </button>
       </nav>
 
       {/* ── Mobile header actions ── */}
@@ -85,6 +100,11 @@ export function NavBar() {
           className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
           aria-label={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}>
           {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+        </button>
+        <button onClick={handleLogout}
+          className="p-2 rounded-lg text-slate-500 dark:text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/50 dark:hover:text-rose-400 cursor-pointer transition-colors"
+          aria-label="Cerrar sesión" title="Cerrar sesión">
+          <LogOut size={18} />
         </button>
         <a href="/configuracion"
           className={`p-2 rounded-lg transition-colors ${

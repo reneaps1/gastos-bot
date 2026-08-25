@@ -1,4 +1,4 @@
-import { Droplets, Tag, Users, Zap, ClipboardList, CalendarRange } from 'lucide-react'
+import { Droplets, Tag, Users, Zap, ClipboardList, CalendarRange, KeyRound } from 'lucide-react'
 
 const sections = [
   {
@@ -48,6 +48,14 @@ const sections = [
     icon: ClipboardList,
     color: 'text-rose-600',
     bg: 'bg-rose-50',
+  },
+  {
+    href: '/configuracion/cuenta',
+    title: 'Mi cuenta',
+    description: 'Cambia tu contraseña de acceso al dashboard.',
+    icon: KeyRound,
+    color: 'text-slate-600',
+    bg: 'bg-slate-100',
   },
 ]
 
