@@ -1,13 +1,15 @@
 'use client'
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Pencil, Trash2, Droplets } from 'lucide-react'
+import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
+import { KpiCard } from '@/components/ui/KpiCard'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
+import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Snapshot {
@@ -79,6 +81,7 @@ function LiquidezConfigContent() {
   const [confirmId, setConfirmId] = useState<number | null>(null)
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+  const [faltaLoading, setFaltaLoading] = useState(false)
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -116,11 +119,37 @@ function LiquidezConfigContent() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // "Falta por pagar" de una quincena = misma formula que Presupuesto/Dashboard
+  // (lib/presupuesto-totales.calcularFaltaPorPagar), para que el snapshot de
+  // liquidez no quede desincronizado con el presupuesto real.
+  async function fetchFaltaPorPagar(qId: string): Promise<number | null> {
+    if (!qId) return null
+    try {
+      const res = await fetch(`/api/presupuestos?quincenaId=${qId}`)
+      if (!res.ok) return null
+      const data = await res.json()
+      if (!Array.isArray(data)) return null
+      return calcularFaltaPorPagar(data)
+    } catch {
+      return null
+    }
+  }
+
+  async function applyQuincena(qId: string) {
+    setForm(f => ({ ...f, quincenaId: qId }))
+    if (!qId) return
+    setFaltaLoading(true)
+    const falta = await fetchFaltaPorPagar(qId)
+    setFaltaLoading(false)
+    if (falta != null) setForm(f => ({ ...f, faltaPagar: falta.toString() }))
+  }
+
   function openCreate() {
     setEditing(null)
     setForm({ ...EMPTY_FORM, quincenaId })
     setFormErrors({})
     setModalOpen(true)
+    if (quincenaId) applyQuincena(quincenaId)
   }
 
   function openEdit(s: Snapshot) {
@@ -143,6 +172,7 @@ function LiquidezConfigContent() {
     })
     setFormErrors({})
     setModalOpen(true)
+    applyQuincena(s.quincenaId.toString())
   }
 
   function validate() {
@@ -206,6 +236,13 @@ function LiquidezConfigContent() {
 
   const set = (key: string, val: string | boolean) => setForm(f => ({ ...f, [key]: val }))
 
+  // La API ordena por fechaCorte desc, asi que el primero es el corte mas
+  // reciente de la quincena seleccionada.
+  const latestSnapshot = snapshots[0] ?? null
+  const totalLiquido = latestSnapshot ? sumLiquidez(latestSnapshot) : 0
+  const faltaPagarLatest = latestSnapshot?.faltaPagar ?? 0
+  const deltaLiquido = totalLiquido - faltaPagarLatest
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
@@ -232,6 +269,30 @@ function LiquidezConfigContent() {
           {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
         </select>
       </div>
+
+      {/* Analítica: líquido vs falta por pagar del corte más reciente */}
+      {!loading && latestSnapshot && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <KpiCard
+            label="Total líquido" value={formatMXN(totalLiquido)}
+            subtitle={`corte ${formatDate(latestSnapshot.fechaCorte)}`}
+            icon={<Wallet size={20} className="text-blue-600 dark:text-blue-300" />}
+            color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
+          />
+          <KpiCard
+            label="Falta por pagar" value={formatMXN(faltaPagarLatest)}
+            icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
+            color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
+          />
+          <KpiCard
+            label="Delta (líquido neto)" value={formatMXN(deltaLiquido)}
+            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : 'te queda libre'}
+            icon={deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" /> : <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
+            color={deltaLiquido < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
+            bg={deltaLiquido < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'}
+          />
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -323,7 +384,7 @@ function LiquidezConfigContent() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="lq-quincena">Quincena *</Label>
-              <select id="lq-quincena" value={form.quincenaId} onChange={e => set('quincenaId', e.target.value)} className={fieldClass(formErrors.quincenaId)}>
+              <select id="lq-quincena" value={form.quincenaId} onChange={e => applyQuincena(e.target.value)} className={fieldClass(formErrors.quincenaId)}>
                 <option value="">Seleccionar...</option>
                 {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
               </select>
@@ -375,8 +436,12 @@ function LiquidezConfigContent() {
               <input id="lq-otros-nota" type="text" placeholder="Ej. Efectivo en caja chica" value={form.otrosNota} onChange={e => set('otrosNota', e.target.value)} className={fieldClass()} />
             </div>
             <div>
-              <Label htmlFor="lq-fp">Falta por pagar</Label>
+              <Label htmlFor="lq-fp">
+                Falta por pagar
+                {faltaLoading && <span className="ml-1 text-slate-400 dark:text-slate-500 normal-case font-normal">(calculando...)</span>}
+              </Label>
               <input id="lq-fp" type="number" min="0" step="0.01" placeholder="0.00" value={form.faltaPagar} onChange={e => set('faltaPagar', e.target.value)} className={fieldClass()} />
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Auto-calculado del presupuesto de la quincena; puedes ajustarlo si hace falta.</p>
             </div>
           </div>
 
