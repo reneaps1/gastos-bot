@@ -1,7 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, FileDown, FileSpreadsheet, Image as ImageIcon, FileText, Loader2 } from 'lucide-react'
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
+import { ArrowLeft, FileDown, FileSpreadsheet, Image as ImageIcon, FileText, Loader2, Droplets, Target, CheckCircle2, Clock } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { formatQuincenaRange, getMexicoDateString } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
@@ -26,16 +25,6 @@ interface Fila extends PresupuestoRow {
   estado: 'Cubierto' | 'Parcial' | 'Pendiente'
 }
 
-const CAT_COLOR: Record<string, string> = {
-  Hogar: '#f97316', Salud: '#f43f5e', Familia: '#ec4899', Transporte: '#0ea5e9',
-  Suscripciones: '#8b5cf6', Deudas: '#ef4444', Personal: '#f59e0b', Ingresos: '#10b981',
-  Ahorro: '#3b82f6', Diversión: '#14b8a6', Super: '#84cc16', Telefonia: '#6366f1',
-}
-const FALLBACK_COLORS = ['#64748b', '#a855f7', '#0891b2', '#ca8a04', '#be185d']
-function colorForCategoria(nombre: string, index: number) {
-  return CAT_COLOR[nombre] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length]
-}
-
 // Hex explicito (no clases Tailwind) para todo lo que vive dentro de
 // captureRef: html2canvas no soporta oklch()/lab(), que es como Tailwind v4
 // resuelve el color de sus clases en el navegador -- usarlas ahi cuelga la
@@ -44,13 +33,22 @@ const C = {
   white: '#ffffff', slate900: '#0f172a', slate800: '#1e293b', slate700: '#334155',
   slate600: '#475569', slate500: '#64748b', slate400: '#94a3b8', slate300: '#cbd5e1',
   slate200: '#e2e8f0', slate100: '#f1f5f9', slate50: '#f8fafc',
-  emerald600: '#059669', amber600: '#d97706', rose600: '#e11d48',
+  emerald600: '#059669', emerald50: '#ecfdf5',
+  amber600: '#d97706', amber50: '#fffbeb',
+  rose600: '#e11d48', rose50: '#fff1f2',
+  indigo600: '#4f46e5', indigo50: '#eef2ff',
+  blue600: '#2563eb', blue50: '#eff6ff',
 }
 
 function estadoColor(estado: Fila['estado']) {
   if (estado === 'Cubierto') return C.emerald600
   if (estado === 'Parcial') return C.amber600
   return C.rose600
+}
+function estadoBg(estado: Fila['estado']) {
+  if (estado === 'Cubierto') return C.emerald50
+  if (estado === 'Parcial') return C.amber50
+  return C.rose50
 }
 
 type ExportKind = 'pdf' | 'excel' | 'imagen' | 'csv'
@@ -92,28 +90,6 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   const totalPresupuestado = rows.reduce((s, r) => s + Number(r.montoPresupuestado), 0)
   const totalPagado = rows.reduce((s, r) => s + r.pagado, 0)
   const totalFalta = calcularFaltaPorPagar(rows)
-
-  const pagadoPorCategoriaRaw = (() => {
-    const map = new Map<string, number>()
-    for (const r of rows) {
-      if (r.categoria.tipo !== 'Gasto') continue
-      map.set(r.categoria.nombre, (map.get(r.categoria.nombre) ?? 0) + r.pagado)
-    }
-    return [...map.entries()].map(([nombre, pagado]) => ({ nombre, pagado })).filter(c => c.pagado > 0).sort((a, b) => b.pagado - a.pagado)
-  })()
-  const TOP_CATS = 5
-  const pagadoPorCategoria = pagadoPorCategoriaRaw.length > TOP_CATS + 1
-    ? [...pagadoPorCategoriaRaw.slice(0, TOP_CATS), { nombre: 'Otros', pagado: pagadoPorCategoriaRaw.slice(TOP_CATS).reduce((s, c) => s + c.pagado, 0) }]
-    : pagadoPorCategoriaRaw
-
-  const comparativoTipo = (['Gasto', 'Ingreso', 'Ahorro'] as const).map(tipo => {
-    const tipoRows = rows.filter(r => r.categoria.tipo === tipo)
-    return {
-      tipo,
-      Presupuestado: tipoRows.reduce((s, r) => s + Number(r.montoPresupuestado), 0),
-      Pagado: tipoRows.reduce((s, r) => s + r.pagado, 0),
-    }
-  }).filter(t => t.Presupuestado > 0 || t.Pagado > 0)
 
   async function handleExport(kind: ExportKind) {
     setExportingKind(kind)
@@ -190,52 +166,22 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
 
           <div className="grid grid-cols-4 gap-2.5">
             {[
-              { label: 'Liquidez disponible', value: liquidezDisponible },
-              { label: 'Presupuestado', value: totalPresupuestado },
-              { label: 'Pagado', value: totalPagado },
-              { label: 'Falta por cubrir', value: totalFalta },
+              { label: 'Liquidez disponible', value: liquidezDisponible, icon: Droplets, color: C.blue600, bg: C.blue50 },
+              { label: 'Presupuestado', value: totalPresupuestado, icon: Target, color: C.indigo600, bg: C.indigo50 },
+              { label: 'Pagado', value: totalPagado, icon: CheckCircle2, color: C.emerald600, bg: C.emerald50 },
+              { label: 'Falta por cubrir', value: totalFalta, icon: Clock, color: totalFalta > 0 ? C.amber600 : C.emerald600, bg: totalFalta > 0 ? C.amber50 : C.emerald50 },
             ].map(k => (
-              <div key={k.label} className="rounded-lg p-2.5 text-center" style={{ border: `1px solid ${C.slate300}` }}>
-                <p className="text-[10px]" style={{ color: C.slate500 }}>{k.label}</p>
-                <p className="text-sm font-bold tabular-nums" style={{ color: C.slate900 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
+              <div key={k.label} className="rounded-lg p-2.5 flex items-center gap-2" style={{ border: `1px solid ${C.slate300}` }}>
+                <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: k.bg }}>
+                  <k.icon size={15} style={{ color: k.color }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] truncate" style={{ color: C.slate500 }}>{k.label}</p>
+                  <p className="text-sm font-bold tabular-nums truncate" style={{ color: C.slate900 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
+                </div>
               </div>
             ))}
           </div>
-
-          {(pagadoPorCategoria.length > 0 || comparativoTipo.length > 0) && (
-            <div className={`grid gap-3 ${pagadoPorCategoria.length > 0 && comparativoTipo.length > 0 ? 'grid-cols-2' : 'grid-cols-1'}`}>
-              {pagadoPorCategoria.length > 0 && (
-                <div className="rounded-lg p-2" style={{ border: `1px solid ${C.slate300}` }}>
-                  <p className="text-[10px] font-medium text-center mb-1" style={{ color: C.slate500 }}>Pagado por categoría</p>
-                  <ResponsiveContainer width="100%" height={150}>
-                    <PieChart>
-                      <Pie data={pagadoPorCategoria} dataKey="pagado" nameKey="nombre" cx="50%" cy="50%" outerRadius={52} isAnimationActive={false}>
-                        {pagadoPorCategoria.map((c, i) => <Cell key={c.nombre} fill={colorForCategoria(c.nombre, i)} />)}
-                      </Pie>
-                      <Tooltip formatter={(v) => formatMXN(Number(v))} />
-                      <Legend wrapperStyle={{ fontSize: 9, color: C.slate700 }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-              {comparativoTipo.length > 0 && (
-                <div className="rounded-lg p-2" style={{ border: `1px solid ${C.slate300}` }}>
-                  <p className="text-[10px] font-medium text-center mb-1" style={{ color: C.slate500 }}>Presupuestado vs. pagado</p>
-                  <ResponsiveContainer width="100%" height={150}>
-                    <BarChart data={comparativoTipo} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={C.slate200} />
-                      <XAxis dataKey="tipo" tick={{ fontSize: 9, fill: C.slate600 }} />
-                      <YAxis tick={{ fontSize: 9, fill: C.slate600 }} width={38} />
-                      <Tooltip formatter={(v) => formatMXN(Number(v))} />
-                      <Legend wrapperStyle={{ fontSize: 9, color: C.slate700 }} />
-                      <Bar dataKey="Presupuestado" fill={C.slate400} radius={[2, 2, 0, 0]} isAnimationActive={false} />
-                      <Bar dataKey="Pagado" fill="#4f46e5" radius={[2, 2, 0, 0]} isAnimationActive={false} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </div>
-          )}
 
           {rows.length === 0 ? (
             <p className="text-sm" style={{ color: C.slate400 }}>Sin presupuesto capturado para esta quincena.</p>
@@ -260,7 +206,11 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
                       <td className="py-1 px-2.5 text-right tabular-nums" style={{ color: C.slate700 }}>{formatMXN(Number(r.montoPresupuestado))}</td>
                       <td className="py-1 px-2.5 text-right tabular-nums" style={{ color: C.slate700 }}>{formatMXN(r.pagado)}</td>
                       <td className="py-1 px-2.5 text-right tabular-nums" style={{ color: C.slate700 }}>{formatMXN(r.falta)}</td>
-                      <td className="py-1 px-2.5 font-medium" style={{ color: estadoColor(r.estado) }}>{r.estado}</td>
+                      <td className="py-1 px-2.5">
+                        <span className="inline-block rounded-full px-2 py-0.5 text-[9px] font-semibold" style={{ color: estadoColor(r.estado), backgroundColor: estadoBg(r.estado) }}>
+                          {r.estado}
+                        </span>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
