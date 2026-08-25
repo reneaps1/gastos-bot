@@ -345,8 +345,9 @@ export default function PresupuestoPage() {
   }
 
   function buildSaveBody() {
+    const ownQuincenaId = editingP?.quincenaId?.toString() ?? quincenaId
     return {
-      quincenaId: form.targetQuincenaId || quincenaId,
+      quincenaId: (form.targetQuincenaId && form.targetQuincenaId !== 'keep') ? form.targetQuincenaId : ownQuincenaId,
       categoriaId: form.categoriaId, descripcion: form.descripcion.trim(),
       tipo: form.tipo, montoPresupuestado: form.montoPresupuestado,
       clasificacion: form.clasificacion || null, notas: form.notas || null,
