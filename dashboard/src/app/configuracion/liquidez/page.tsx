@@ -90,12 +90,12 @@ function LiquidezConfigContent() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [faltaLoading, setFaltaLoading] = useState(false)
 
-  // Arqueo real: compara el corte mas reciente contra lo que "deberia" haber
+  // Descuadre real: compara el corte mas reciente contra lo que "deberia" haber
   // segun el corte anterior (cualquier quincena) mas los movimientos ya
   // registrados entre ambas fechas. Distinto del Delta de arriba, que compara
   // contra "falta por pagar" (cobertura hacia adelante).
-  const [arqueoData, setArqueoData] = useState<{ arqueo: number; previousSnapshot: Snapshot } | null>(null)
-  const [arqueoLoading, setArqueoLoading] = useState(false)
+  const [descuadreData, setDescuadreData] = useState<{ descuadre: number; previousSnapshot: Snapshot } | null>(null)
+  const [descuadreLoading, setDescuadreLoading] = useState(false)
   const [ajusteModalOpen, setAjusteModalOpen] = useState(false)
   const [ajusteTipo, setAjusteTipo] = useState<'Gasto' | 'Ingreso'>('Gasto')
   const [ajusteMonto, setAjusteMonto] = useState(0)
@@ -280,15 +280,15 @@ function LiquidezConfigContent() {
     }
   }
 
-  // Arqueo real: lo que hay ahora vs. lo que "deberia" haber segun el corte
+  // Descuadre real: lo que hay ahora vs. lo que "deberia" haber segun el corte
   // anterior (cualquier quincena) mas ingresos cobrados y gastos ya pagados
   // registrados entre las dos fechas de corte. Se usa GastoPagado (no Gasto)
   // e IngresoPagado (no Ingreso) porque un movimiento Pendiente todavia no
   // ha entrado ni salido del bolsillo. No se restan movimientos de Ahorro:
   // si el destino tipico es Uala Inversion, que ya es una de las cuentas
   // contadas, restarlo tambien lo restaria dos veces.
-  async function fetchArqueo(previous: Snapshot, latest: Snapshot) {
-    setArqueoLoading(true)
+  async function fetchDescuadre(previous: Snapshot, latest: Snapshot) {
+    setDescuadreLoading(true)
     try {
       const desde = previous.fechaCorte.split('T')[0]
       const hasta = latest.fechaCorte.split('T')[0]
@@ -297,20 +297,20 @@ function LiquidezConfigContent() {
       const ingresos = Number(data.totales?.IngresoPagado ?? 0)
       const gastoPagado = Number(data.totales?.GastoPagado ?? 0)
       const teoricoEsperado = sumLiquidez(previous) + ingresos - gastoPagado
-      setArqueoData({ arqueo: sumLiquidez(latest) - teoricoEsperado, previousSnapshot: previous })
+      setDescuadreData({ descuadre: sumLiquidez(latest) - teoricoEsperado, previousSnapshot: previous })
     } catch {
-      setArqueoData(null)
+      setDescuadreData(null)
     } finally {
-      setArqueoLoading(false)
+      setDescuadreLoading(false)
     }
   }
 
-  function openAjusteModal(arqueo: number) {
+  function openAjusteModal(descuadre: number) {
     if (!latestSnapshot) return
-    const tipo = arqueo < 0 ? 'Gasto' : 'Ingreso'
+    const tipo = descuadre < 0 ? 'Gasto' : 'Ingreso'
     setAjusteTipo(tipo)
-    setAjusteMonto(Math.abs(arqueo))
-    setAjusteForm({ ...AJUSTE_EMPTY, descripcion: `Ajuste de arqueo — corte ${formatDate(latestSnapshot.fechaCorte)}` })
+    setAjusteMonto(Math.abs(descuadre))
+    setAjusteForm({ ...AJUSTE_EMPTY, descripcion: `Ajuste de descuadre — corte ${formatDate(latestSnapshot.fechaCorte)}` })
     setAjusteErrors({})
     setAjusteModalOpen(true)
   }
@@ -326,7 +326,7 @@ function LiquidezConfigContent() {
         body: JSON.stringify({
           fecha: latestSnapshot.fechaCorte.split('T')[0],
           quincenaId: latestSnapshot.quincenaId,
-          descripcion: ajusteForm.descripcion.trim() || `Ajuste de arqueo — corte ${formatDate(latestSnapshot.fechaCorte)}`,
+          descripcion: ajusteForm.descripcion.trim() || `Ajuste de descuadre — corte ${formatDate(latestSnapshot.fechaCorte)}`,
           categoriaId: ajusteForm.categoriaId,
           tipo: ajusteTipo,
           monto: ajusteMonto,
@@ -337,7 +337,7 @@ function LiquidezConfigContent() {
       if (!res.ok) throw new Error()
       toast('Ajuste registrado')
       setAjusteModalOpen(false)
-      fetchArqueo(previousSnapshot, latestSnapshot)
+      fetchDescuadre(previousSnapshot, latestSnapshot)
     } catch {
       toast('Error al registrar el ajuste', 'error')
     } finally {
@@ -356,22 +356,22 @@ function LiquidezConfigContent() {
   const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
 
   // Corte inmediatamente anterior por fecha (no por quincena) al mas
-  // reciente de la seleccion actual — base para el arqueo real.
+  // reciente de la seleccion actual — base para el descuadre real.
   const previousSnapshot = latestSnapshot
     ? allSnapshots.find(s => new Date(s.fechaCorte).getTime() < new Date(latestSnapshot.fechaCorte).getTime()) ?? null
     : null
 
   useEffect(() => {
-    if (!latestSnapshot || !previousSnapshot) { setArqueoData(null); return }
-    fetchArqueo(previousSnapshot, latestSnapshot)
+    if (!latestSnapshot || !previousSnapshot) { setDescuadreData(null); return }
+    fetchDescuadre(previousSnapshot, latestSnapshot)
     // Solo debe recalcular cuando cambian los snapshots (filtro de quincena,
-    // guardar/editar/borrar) — fetchArqueo se redefine cada render pero no
+    // guardar/editar/borrar) — fetchDescuadre se redefine cada render pero no
     // debe disparar el efecto por si solo.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snapshots, allSnapshots])
 
-  const ARQUEO_TOLERANCIA = 1
-  const arqueoCuadra = arqueoData != null && Math.abs(arqueoData.arqueo) < ARQUEO_TOLERANCIA
+  const DESCUADRE_TOLERANCIA = 1
+  const descuadreCuadra = descuadreData != null && Math.abs(descuadreData.descuadre) < DESCUADRE_TOLERANCIA
 
   return (
     <div className="space-y-6">
@@ -437,27 +437,27 @@ function LiquidezConfigContent() {
               : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
             }
           />
-          {previousSnapshot && arqueoData && (
+          {previousSnapshot && descuadreData && (
             <KpiCard
-              label="Arqueo vs. corte anterior" value={formatMXN(arqueoData.arqueo)}
-              subtitle={arqueoCuadra ? 'cuadra' : arqueoData.arqueo < 0 ? 'gasto sin registrar' : 'ingreso sin registrar'}
+              label="Descuadre vs. corte anterior" value={formatMXN(descuadreData.descuadre)}
+              subtitle={descuadreCuadra ? 'cuadra' : descuadreData.descuadre < 0 ? 'gasto sin registrar' : 'ingreso sin registrar'}
               icon={
-                arqueoCuadra ? <Equal size={20} className="text-slate-500 dark:text-slate-300" />
-                : arqueoData.arqueo < 0 ? <AlertTriangle size={20} className="text-rose-600 dark:text-rose-300" />
+                descuadreCuadra ? <Equal size={20} className="text-slate-500 dark:text-slate-300" />
+                : descuadreData.descuadre < 0 ? <AlertTriangle size={20} className="text-rose-600 dark:text-rose-300" />
                 : <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
               }
-              color={arqueoCuadra ? 'text-slate-600 dark:text-slate-300' : arqueoData.arqueo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
+              color={descuadreCuadra ? 'text-slate-600 dark:text-slate-300' : descuadreData.descuadre < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
               bg={
-                arqueoCuadra ? 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
-                : arqueoData.arqueo < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
+                descuadreCuadra ? 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
+                : descuadreData.descuadre < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
                 : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
               }
-              action={!arqueoCuadra && !arqueoLoading && (
+              action={!descuadreCuadra && !descuadreLoading && (
                 <button
-                  onClick={() => openAjusteModal(arqueoData.arqueo)}
+                  onClick={() => openAjusteModal(descuadreData.descuadre)}
                   className="mt-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
                 >
-                  {arqueoData.arqueo < 0 ? 'Registrar gasto faltante' : 'Registrar ingreso no explicado'}
+                  {descuadreData.descuadre < 0 ? 'Registrar gasto faltante' : 'Registrar ingreso no explicado'}
                 </button>
               )}
             />
@@ -672,12 +672,12 @@ function LiquidezConfigContent() {
         </div>
       </FormModal>
 
-      {/* Modal de ajuste de arqueo */}
+      {/* Modal de ajuste de descuadre */}
       <FormModal open={ajusteModalOpen} onOpenChange={setAjusteModalOpen} title={ajusteTipo === 'Gasto' ? 'Registrar gasto faltante' : 'Registrar ingreso no explicado'}>
         <div className="space-y-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
             Se registrará como una transacción real de tipo {ajusteTipo} por {formatMXN(ajusteMonto)}
-            {latestSnapshot && ` con fecha ${formatDate(latestSnapshot.fechaCorte)}`}, para que el arqueo de este corte cuadre.
+            {latestSnapshot && ` con fecha ${formatDate(latestSnapshot.fechaCorte)}`}, para que este corte cuadre.
           </p>
           <div>
             <Label htmlFor="aj-desc">Descripción</Label>
