@@ -1,18 +1,20 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Droplets } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
-import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
+import { getInitialQuincenaId, getDefaultQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
+import { KpiCard } from '@/components/ui/KpiCard'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
 
 const CAT_DOT: Record<string, string> = {
@@ -146,6 +148,11 @@ function pctColor(pct: number) {
 function pctTextColor(pct: number) {
   return pct > 90 ? 'text-rose-600 dark:text-rose-400' : pct > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
 }
+function montoTipoColor(tipo: string) {
+  if (tipo === 'Ingreso') return 'text-emerald-600 dark:text-emerald-400'
+  if (tipo === 'Ahorro') return 'text-blue-600 dark:text-blue-400'
+  return 'text-rose-600 dark:text-rose-400' // Gasto
+}
 
 export default function PresupuestoPage() {
   const { toast } = useToast()
@@ -163,6 +170,7 @@ export default function PresupuestoPage() {
   const [busqueda, setBusqueda] = useState('')
   const [pendientePorPagar, setPendientePorPagar] = useState(0)
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
+  const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
   const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tarjetas')
@@ -206,7 +214,9 @@ export default function PresupuestoPage() {
       setQuincenas(q)
       setCategorias(c)
       setQuincenaId(getInitialQuincenaId(q))
+      setTablaQuincenaId(getDefaultQuincenaId(q))
       setLimiteReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
+      setIngresoReferencia(cfg.ingresoReferencia != null ? Number(cfg.ingresoReferencia) : null)
     })
   }, [])
 
@@ -531,6 +541,7 @@ export default function PresupuestoPage() {
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
           openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP}
+          ingresoReferencia={ingresoReferencia}
         />
       ) : (
         <>
@@ -1365,6 +1376,7 @@ interface PresupuestoTablaProps {
   openEdit: (p: Presupuesto) => void
   setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
   setDetalleP: (p: Presupuesto | null) => void
+  ingresoReferencia: number | null
 }
 
 function PresupuestoTabla({
@@ -1375,7 +1387,7 @@ function PresupuestoTabla({
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
-  openEdit, setDeleteTarget, setDetalleP,
+  openEdit, setDeleteTarget, setDetalleP, ingresoReferencia,
 }: PresupuestoTablaProps) {
   const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
@@ -1401,6 +1413,23 @@ function PresupuestoTabla({
   const totalExcedido = totalReal > totalPresupuestado ? totalReal - totalPresupuestado : 0
   const totalRestante = totalPresupuestado - totalReal
   const totalFaltaPorPagar = calcularFaltaPorPagar(gastoFilasTabla)
+
+  const ingresoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Ingreso')
+  const totalIngresoPresupuestado = ingresoFilasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const balancePresupuestado = totalIngresoPresupuestado - totalPresupuestado
+
+  const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
+  useEffect(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) { setLiquidezSnapshot(null); return }
+    fetch(`/api/liquidez?quincenaId=${tablaQuincenaId}`)
+      .then(r => r.json())
+      .then(data => {
+        const raw = Array.isArray(data) && data.length > 0 ? data[0] : null
+        setLiquidezSnapshot(raw ? { ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0 } : null)
+      })
+  }, [tablaQuincenaId])
+  const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
+  const liquidezNeta = liquidezSnapshot ? totalLiquidez - liquidezSnapshot.faltaPagar : 0
 
   return (
     <div className="space-y-4">
@@ -1452,6 +1481,45 @@ function PresupuestoTabla({
         <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
       </div>
 
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <KpiCard
+          label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
+          subtitle={ingresoReferencia != null ? `meta ${formatMXN(ingresoReferencia)}` : undefined}
+          icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
+          color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+        />
+        <KpiCard
+          label="Gastos" value={formatMXN(totalPresupuestado)}
+          icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
+          color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
+        />
+        <KpiCard
+          label="Balance" value={formatMXN(balancePresupuestado)}
+          icon={<Scale size={20} className={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
+          color={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
+          bg={balancePresupuestado >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+        />
+        {tablaQuincenaId !== ALL_QUINCENAS && (
+          liquidezSnapshot ? (
+            <KpiCard
+              label="Liquidez" value={formatMXN(totalLiquidez)}
+              subtitle={liquidezSnapshot.faltaPagar > 0 ? `neta ${formatMXN(liquidezNeta)}` : undefined}
+              subtitleColor={liquidezNeta < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
+              icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
+              color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
+            />
+          ) : (
+            <Link href={`/configuracion/liquidez?quincenaId=${tablaQuincenaId}`}>
+              <KpiCard
+                label="Liquidez" value="—" subtitle="Sin corte capturado"
+                icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
+                color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
+              />
+            </Link>
+          )
+        )}
+      </div>
+
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {tablaLoading ? (
           <div className="py-20 flex justify-center items-center text-slate-400 dark:text-slate-500 text-sm">Cargando...</div>
@@ -1478,9 +1546,9 @@ function PresupuestoTabla({
                     <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</span>
                   </div>
                   <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-slate-500 dark:text-slate-400 tabular-nums">
+                    <span className={`tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
                       <button onClick={() => setDetalleP(p)}
-                        className="font-semibold text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline cursor-pointer transition-colors"
+                        className="font-semibold hover:underline hover:opacity-80 cursor-pointer transition-colors"
                         aria-label={`Ver movimientos de ${p.descripcion}`}>
                         {formatMXN(p.real)}
                       </button>
@@ -1563,10 +1631,10 @@ function PresupuestoTabla({
                       </td>
                       <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px] truncate">{p.descripcion}</td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">{formatMXN(Number(p.montoPresupuestado))}</td>
-                      <td className="px-4 py-3 text-right tabular-nums text-slate-700 dark:text-slate-300">
+                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(Number(p.montoPresupuestado))}</td>
+                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
                         <button onClick={() => setDetalleP(p)}
-                          className="hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline cursor-pointer transition-colors"
+                          className="hover:underline hover:opacity-80 cursor-pointer transition-colors"
                           aria-label={`Ver movimientos de ${p.descripcion}`}>
                           {formatMXN(p.real)}
                         </button>
