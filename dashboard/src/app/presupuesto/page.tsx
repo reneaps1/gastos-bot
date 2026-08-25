@@ -472,6 +472,12 @@ export default function PresupuestoPage() {
   const totalGastado = gastoGrupos.reduce((s, g) => s + g.real, 0)
   const pctGlobal = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0
 
+  // Card de Ingresos fija: total presupuestado y real, sin importar que filtro
+  // de busqueda oculte las demas tarjetas por categoria.
+  const ingresoGrupos = grupos.filter(g => g.categoria.tipo === 'Ingreso')
+  const totalIngresoPresupuestado = ingresoGrupos.reduce((s, g) => s + g.montoPresupuestado, 0)
+  const totalIngresoReal = ingresoGrupos.reduce((s, g) => s + g.real, 0)
+
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
 
@@ -551,7 +557,14 @@ export default function PresupuestoPage() {
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className={`grid grid-cols-1 gap-4 ${limiteReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3'}`}>
+        <div className={`grid grid-cols-1 gap-4 ${limiteReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+          <KpiCard
+            label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
+            subtitle={`real ${formatMXN(totalIngresoReal)}`}
+            icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
+            color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+          />
+
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Progreso global</p>
             <div className="flex justify-between items-end mb-2">
