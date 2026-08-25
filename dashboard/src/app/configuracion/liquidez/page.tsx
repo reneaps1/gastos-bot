@@ -1,7 +1,8 @@
 'use client'
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -249,9 +250,15 @@ function LiquidezConfigContent() {
   const totalLiquido = latestSnapshot ? sumLiquidez(latestSnapshot) : 0
   const faltaPagarLatest = latestSnapshot?.faltaPagar ?? 0
   const deltaLiquido = totalLiquido - faltaPagarLatest
+  const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
 
   return (
     <div className="space-y-6">
+      {quincenaIdParam && currentQuincena && (
+        <Link href={`/quincena/${currentQuincena.codigo}`} className="inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+          <ArrowLeft size={14} /> Volver a {currentQuincena.codigo}
+        </Link>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Liquidez</h2>

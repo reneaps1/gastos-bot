@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, Clock, Droplets, SearchX } from 'lucide-react'
+import { ArrowLeft, TrendingUp, TrendingDown, CheckCircle2, Clock, Droplets, SearchX, FileText } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { getMexicoDateString, formatQuincenaRange } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
@@ -115,12 +115,23 @@ export default function QuincenaResumenPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">{target.codigo}</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{formatQuincenaRange(target)}</p>
-        <div className="mt-3">
-          <QuincenaStatus quincenas={quincenas} selectedId={target.id.toString()} today={getMexicoDateString()} />
+      <Link href="/presupuesto" className="inline-flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+        <ArrowLeft size={14} /> Volver a Presupuesto
+      </Link>
+      <div className="flex items-start justify-between flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">{target.codigo}</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{formatQuincenaRange(target)}</p>
+          <div className="mt-3">
+            <QuincenaStatus quincenas={quincenas} selectedId={target.id.toString()} today={getMexicoDateString()} />
+          </div>
         </div>
+        <Link
+          href={`/quincena/${target.codigo}/reporte`}
+          className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg transition-colors"
+        >
+          <FileText size={14} /> Reporte
+        </Link>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
