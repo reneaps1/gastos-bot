@@ -41,6 +41,10 @@ body {
   font-family: system-ui, -apple-system, sans-serif;
 }
 
+@page {
+  margin: 1.6cm 1.4cm;
+}
+
 @media print {
   body {
     background: #ffffff;

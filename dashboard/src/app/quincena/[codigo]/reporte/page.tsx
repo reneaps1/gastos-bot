@@ -124,6 +124,10 @@ export default function ReporteQuincenaPage() {
   const totalLiquido = snapshot ? sumLiquidez(snapshot) : 0
   const faltaPagar = snapshot?.faltaPagar ?? 0
   const delta = totalLiquido - faltaPagar
+  const deltaColor = delta < 0 ? 'text-rose-600' : delta > 0 ? 'text-emerald-600' : 'text-slate-700'
+  const fechaReporte = new Intl.DateTimeFormat('es-MX', {
+    weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(new Date())
 
   async function handleExportExcel() {
     if (!target) return
@@ -190,149 +194,175 @@ export default function ReporteQuincenaPage() {
       </div>
 
       {/* Encabezado del reporte */}
-      <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
-        <img src="/icon-192.png" alt="Milo" className="h-10 w-10 rounded-lg" />
+      <div className="flex items-center gap-4 border-b-2 border-slate-800 pb-4">
+        <img src="/icon-192.png" alt="Milo" className="h-12 w-12 rounded-lg" />
         <div>
-          <p className="text-lg font-bold text-slate-800">Milo Gastos — Reporte de quincena</p>
-          <p className="text-sm text-slate-500">
-            {target.codigo} · {formatQuincenaRange(target)} · generado el {formatDate(new Date())}
-          </p>
+          <p className="text-xl font-bold tracking-tight text-slate-900">Milo Gastos</p>
+          <p className="text-sm font-medium text-slate-600">Reporte de quincena · {target.codigo}</p>
+        </div>
+        <div className="ml-auto text-right">
+          <p className="text-xs uppercase tracking-wide text-slate-400">Periodo</p>
+          <p className="text-sm font-medium text-slate-700">{formatQuincenaRange(target)}</p>
+          <p className="text-xs text-slate-400 mt-1">Fecha del reporte: {fechaReporte}</p>
         </div>
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 break-inside-avoid">
-        {[
-          { label: 'Ingresos', value: totales.Ingreso },
-          { label: 'Gastos', value: totales.Gasto },
-          { label: 'Pagado', value: totales.GastoPagado },
-          { label: 'Pendiente', value: pendiente },
-        ].map(k => (
-          <div key={k.label} className="border border-slate-200 rounded-xl p-3 text-center">
-            <p className="text-xs text-slate-500">{k.label}</p>
-            <p className="text-base font-bold text-slate-800 tabular-nums">{formatMXN(k.value)}</p>
+      {/* ── Página 1: Resumen ── */}
+      <div className="break-after-page space-y-6 pt-2">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 border-b border-slate-300 pb-1.5">Resumen</h2>
+
+        {/* Liquidez primero: es la pregunta que más importa — cuánto hay disponible de verdad */}
+        <section className="space-y-3 break-inside-avoid">
+          <h3 className="text-sm font-bold text-slate-800">Liquidez</h3>
+          {snapshot ? (
+            <>
+              <p className="text-xs text-slate-500">
+                Corte del {formatDate(snapshot.fechaCorte)}{snapshot.validado && <span className="ml-1.5 text-emerald-600 font-medium">· Validado</span>}
+              </p>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="border border-slate-300 rounded-lg p-3 text-center">
+                  <p className="text-xs text-slate-500">Total líquido</p>
+                  <p className="text-lg font-bold text-slate-900 tabular-nums">{formatMXN(totalLiquido)}</p>
+                </div>
+                <div className="border border-slate-300 rounded-lg p-3 text-center">
+                  <p className="text-xs text-slate-500">Falta por pagar</p>
+                  <p className="text-lg font-bold text-amber-600 tabular-nums">{formatMXN(faltaPagar)}</p>
+                </div>
+                <div className="border border-slate-300 rounded-lg p-3 text-center">
+                  <p className="text-xs text-slate-500">Delta (líquido neto)</p>
+                  <p className={`text-lg font-bold tabular-nums ${deltaColor}`}>{formatMXN(delta)}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
+                {[
+                  { label: 'BBVA', value: snapshot.bbva },
+                  { label: 'Banamex', value: snapshot.banamex },
+                  { label: 'Ualá', value: snapshot.uala },
+                  { label: 'Efectivo', value: snapshot.efectivo },
+                  ...(snapshot.otros > 0 ? [{ label: snapshot.otrosNota ?? 'Otros', value: snapshot.otros }] : []),
+                ].map(c => (
+                  <div key={c.label} className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-center">
+                    <p className="text-[10px] text-slate-500">{c.label}</p>
+                    <p className="text-xs font-bold text-slate-800 tabular-nums">{formatMXN(c.value)}</p>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-400">Sin corte de liquidez capturado para esta quincena.</p>
+          )}
+        </section>
+
+        {/* KPIs de presupuesto */}
+        <section className="space-y-3 break-inside-avoid">
+          <h3 className="text-sm font-bold text-slate-800">Presupuesto</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              { label: 'Ingresos', value: totales.Ingreso },
+              { label: 'Gastos', value: totales.Gasto },
+              { label: 'Pagado', value: totales.GastoPagado },
+              { label: 'Pendiente', value: pendiente },
+            ].map(k => (
+              <div key={k.label} className="border border-slate-300 rounded-lg p-3 text-center">
+                <p className="text-xs text-slate-500">{k.label}</p>
+                <p className="text-lg font-bold text-slate-900 tabular-nums">{formatMXN(k.value)}</p>
+              </div>
+            ))}
           </div>
-        ))}
+        </section>
       </div>
 
-      {/* Presupuesto detallado */}
-      <section className="space-y-4">
-        <h2 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-1">Presupuesto</h2>
-        {TIPOS.map(tipo => {
-          const rows = presupuestos.filter(p => p.tipo === tipo)
-          if (rows.length === 0) return null
-          const totalPresup = rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
-          const totalRealTipo = rows.reduce((s, p) => s + p.real, 0)
-          return (
-            <div key={tipo} className="break-inside-avoid">
-              <p className="text-sm font-semibold text-slate-700 mb-1.5">
-                {tipo} <span className="font-normal text-slate-400">— presupuestado {formatMXN(totalPresup)} · real {formatMXN(totalRealTipo)}</span>
-              </p>
-              {groupByCategoria(rows).map(([catNombre, catRows]) => (
-                <div key={catNombre} className="mb-2 break-inside-avoid">
-                  <p className="text-xs font-medium text-slate-500 mt-2">{catNombre}</p>
-                  <table className="w-full text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-200 text-slate-500">
-                        <th className="text-left py-1 pr-2 font-medium">Descripción</th>
-                        <th className="text-right py-1 px-2 font-medium">Presupuestado</th>
-                        <th className="text-right py-1 px-2 font-medium">Real</th>
-                        <th className="text-right py-1 px-2 font-medium">Pendiente</th>
-                        <th className="text-right py-1 pl-2 font-medium">Restante</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {catRows.map(p => (
-                        <tr key={p.id} className="border-b border-slate-100 break-inside-avoid">
-                          <td className="py-1 pr-2 text-slate-700">{p.descripcion}</td>
-                          <td className="py-1 px-2 text-right tabular-nums text-slate-700">{formatMXN(p.montoPresupuestado)}</td>
-                          <td className="py-1 px-2 text-right tabular-nums text-slate-700">{formatMXN(p.real)}</td>
-                          <td className="py-1 px-2 text-right tabular-nums text-amber-600">{formatMXN(p.pendiente)}</td>
-                          <td className="py-1 pl-2 text-right tabular-nums text-slate-700">{formatMXN(Number(p.montoPresupuestado) - p.real)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
-            </div>
-          )
-        })}
-        {presupuestos.length === 0 && <p className="text-sm text-slate-400">Sin presupuesto capturado para esta quincena.</p>}
-      </section>
+      {/* ── Página 2+: Detalle ── */}
+      <div className="space-y-6">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500 border-b border-slate-300 pb-1.5">Detalle</h2>
 
-      {/* Detalle de transacciones */}
-      <section className="space-y-2">
-        <h2 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-1">Detalle de transacciones</h2>
-        {transacciones.length === 0 ? (
-          <p className="text-sm text-slate-400">Sin transacciones registradas.</p>
-        ) : (
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr className="border-b border-slate-200 text-slate-500">
-                <th className="text-left py-1 pr-2 font-medium">Fecha</th>
-                <th className="text-left py-1 px-2 font-medium">Tipo</th>
-                <th className="text-left py-1 px-2 font-medium">Categoría</th>
-                <th className="text-left py-1 px-2 font-medium">Descripción</th>
-                <th className="text-right py-1 px-2 font-medium">Monto</th>
-                <th className="text-left py-1 pl-2 font-medium">Estatus</th>
-              </tr>
-            </thead>
-            <tbody>
-              {transacciones.map(t => (
-                <tr key={t.id} className="border-b border-slate-100 break-inside-avoid">
-                  <td className="py-1 pr-2 text-slate-700">{formatDate(t.fecha)}</td>
-                  <td className="py-1 px-2 text-slate-700">{t.tipo}</td>
-                  <td className="py-1 px-2 text-slate-700">{t.categoria?.nombre ?? '—'}</td>
-                  <td className="py-1 px-2 text-slate-700">{t.descripcion}</td>
-                  <td className="py-1 px-2 text-right tabular-nums text-slate-700">{formatMXN(t.monto)}</td>
-                  <td className="py-1 pl-2 text-slate-700">{t.estatus}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
+        {/* Presupuesto detallado */}
+        <section className="space-y-4">
+          <h3 className="text-sm font-bold text-slate-800">Presupuesto por categoría</h3>
+          {TIPOS.map(tipo => {
+            const rows = presupuestos.filter(p => p.tipo === tipo)
+            if (rows.length === 0) return null
+            const totalPresup = rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+            const totalRealTipo = rows.reduce((s, p) => s + p.real, 0)
+            return (
+              <div key={tipo} className="break-inside-avoid">
+                <p className="text-sm font-semibold text-slate-700 mb-2">
+                  {tipo} <span className="font-normal text-slate-400">— presupuestado {formatMXN(totalPresup)} · real {formatMXN(totalRealTipo)}</span>
+                </p>
+                {groupByCategoria(rows).map(([catNombre, catRows]) => (
+                  <div key={catNombre} className="mb-3 break-inside-avoid">
+                    <p className="text-xs font-semibold text-slate-600 mb-1">{catNombre}</p>
+                    <div className="overflow-hidden rounded-lg border border-slate-300">
+                      <table className="w-full text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-100 text-slate-600">
+                            <th className="text-left py-2 px-3 font-semibold">Descripción</th>
+                            <th className="text-right py-2 px-3 font-semibold">Presupuestado</th>
+                            <th className="text-right py-2 px-3 font-semibold">Real</th>
+                            <th className="text-right py-2 px-3 font-semibold">Pendiente</th>
+                            <th className="text-right py-2 px-3 font-semibold">Restante</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {catRows.map(p => (
+                            <tr key={p.id} className="border-t border-slate-200 even:bg-slate-50/70 break-inside-avoid">
+                              <td className="py-1.5 px-3 text-slate-700">{p.descripcion}</td>
+                              <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(p.montoPresupuestado)}</td>
+                              <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(p.real)}</td>
+                              <td className="py-1.5 px-3 text-right tabular-nums text-amber-600">{formatMXN(p.pendiente)}</td>
+                              <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(Number(p.montoPresupuestado) - p.real)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })}
+          {presupuestos.length === 0 && <p className="text-sm text-slate-400">Sin presupuesto capturado para esta quincena.</p>}
+        </section>
 
-      {/* Liquidez */}
-      <section className="space-y-3 break-inside-avoid">
-        <h2 className="text-base font-bold text-slate-800 border-b border-slate-200 pb-1">Liquidez</h2>
-        {snapshot ? (
-          <>
-            <p className="text-xs text-slate-500">
-              Corte del {formatDate(snapshot.fechaCorte)}{snapshot.validado && <span className="ml-1.5 text-emerald-600 font-medium">· Validado</span>}
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {[
-                { label: 'Total líquido', value: totalLiquido },
-                { label: 'Falta por pagar', value: faltaPagar },
-                { label: 'Delta', value: delta },
-              ].map(k => (
-                <div key={k.label} className="border border-slate-200 rounded-xl p-3 text-center">
-                  <p className="text-xs text-slate-500">{k.label}</p>
-                  <p className="text-base font-bold text-slate-800 tabular-nums">{formatMXN(k.value)}</p>
-                </div>
-              ))}
+        {/* Detalle de transacciones */}
+        <section className="space-y-2">
+          <h3 className="text-sm font-bold text-slate-800">Detalle de transacciones</h3>
+          {transacciones.length === 0 ? (
+            <p className="text-sm text-slate-400">Sin transacciones registradas.</p>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-slate-300">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="bg-slate-100 text-slate-600">
+                    <th className="text-left py-2 px-3 font-semibold">Fecha</th>
+                    <th className="text-left py-2 px-3 font-semibold">Tipo</th>
+                    <th className="text-left py-2 px-3 font-semibold">Categoría</th>
+                    <th className="text-left py-2 px-3 font-semibold">Descripción</th>
+                    <th className="text-right py-2 px-3 font-semibold">Monto</th>
+                    <th className="text-left py-2 px-3 font-semibold">Estatus</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transacciones.map(t => (
+                    <tr key={t.id} className="border-t border-slate-200 even:bg-slate-50/70 break-inside-avoid">
+                      <td className="py-1.5 px-3 text-slate-700">{formatDate(t.fecha)}</td>
+                      <td className="py-1.5 px-3 text-slate-700">{t.tipo}</td>
+                      <td className="py-1.5 px-3 text-slate-700">{t.categoria?.nombre ?? '—'}</td>
+                      <td className="py-1.5 px-3 text-slate-700">{t.descripcion}</td>
+                      <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(t.monto)}</td>
+                      <td className="py-1.5 px-3 text-slate-700">{t.estatus}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-              {[
-                { label: 'BBVA', value: snapshot.bbva },
-                { label: 'Banamex', value: snapshot.banamex },
-                { label: 'Ualá', value: snapshot.uala },
-                { label: 'Efectivo', value: snapshot.efectivo },
-                ...(snapshot.otros > 0 ? [{ label: snapshot.otrosNota ?? 'Otros', value: snapshot.otros }] : []),
-              ].map(c => (
-                <div key={c.label} className="bg-slate-50 rounded-lg p-2 text-center">
-                  <p className="text-[10px] text-slate-500">{c.label}</p>
-                  <p className="text-xs font-bold text-slate-800 tabular-nums">{formatMXN(c.value)}</p>
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <p className="text-sm text-slate-400">Sin corte de liquidez capturado para esta quincena.</p>
-        )}
-      </section>
+          )}
+        </section>
+      </div>
+
+      <p className="text-[10px] text-slate-400 border-t border-slate-200 pt-2 text-center">
+        Documento generado automáticamente por Milo Gastos · {fechaReporte}
+      </p>
     </div>
   )
 }
