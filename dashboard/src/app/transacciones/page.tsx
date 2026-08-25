@@ -5,7 +5,7 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
-import { formatQuincenaOption, formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, isDateInQuincenaGap, persistQuincenaId } from '@/lib/quincena-selection'
+import { formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, isDateInQuincenaGap, persistQuincenaId } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
@@ -672,7 +672,7 @@ export default function TransaccionesPage() {
               <Label htmlFor="tx-quincena">Quincena *</Label>
               <select id="tx-quincena" value={form.quincenaId} onChange={e => setForm(f => ({ ...f, quincenaId: e.target.value, presupuestoId: '' }))} className={fieldClass(formErrors.quincenaId)}>
                 <option value="">Seleccionar...</option>
-                {quincenas.map(q => <option key={q.id} value={q.id}>{formatQuincenaOption(q)}</option>)}
+                {quincenas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
               </select>
               {formQuincena && (
                 <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
