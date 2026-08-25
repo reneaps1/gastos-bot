@@ -386,7 +386,7 @@ function LiquidezConfigContent() {
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Snapshots de caja por quincena</p>
         </div>
         <div className="flex items-center flex-wrap gap-2">
-          {currentQuincena && <ReporteButton quincenaId={currentQuincena.id} quincenaCodigo={currentQuincena.codigo} />}
+          {currentQuincena && <ReporteButton quincenaId={currentQuincena.id} quincenaCodigo={currentQuincena.codigo} fechaInicio={currentQuincena.fechaInicio} fechaFin={currentQuincena.fechaFin} />}
           <button
             onClick={openCreate}
             className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors"

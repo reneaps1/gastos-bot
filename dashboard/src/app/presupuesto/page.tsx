@@ -496,7 +496,7 @@ export default function PresupuestoPage() {
               <Droplets size={14} /> Liquidez
             </Link>
           )}
-          {qInfo && <ReporteButton quincenaId={qInfo.id} quincenaCodigo={qInfo.codigo} />}
+          {qInfo && <ReporteButton quincenaId={qInfo.id} quincenaCodigo={qInfo.codigo} fechaInicio={qInfo.fechaInicio} fechaFin={qInfo.fechaFin} />}
           {presupuestos.length === 0 && !loading && (
             <button onClick={handleCopiar} disabled={copying}
               className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
