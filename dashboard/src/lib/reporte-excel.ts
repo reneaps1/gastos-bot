@@ -152,3 +152,73 @@ export async function downloadReporteExcel(data: ReporteData) {
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
 }
+
+export interface ReporteResumenRow {
+  categoria: string
+  descripcion: string
+  presupuestado: number
+  pagado: number
+  falta: number
+  estado: string
+}
+
+export interface ReporteResumenData {
+  quincena: ReporteQuincena
+  liquidezDisponible: number | null
+  totalPresupuestado: number
+  totalPagado: number
+  totalFalta: number
+  rows: ReporteResumenRow[]
+}
+
+export async function downloadResumenExcel(data: ReporteResumenData) {
+  const ExcelJS = (await import('exceljs')).default
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'Milo Gastos'
+  wb.created = new Date()
+
+  const moneyFmt = '"$"#,##0.00'
+  const sheet = wb.addWorksheet('Resumen')
+  sheet.addRow(['Reporte resumido de quincena', data.quincena.codigo])
+  sheet.addRow(['Periodo', `${data.quincena.fechaInicio.split('T')[0]} a ${data.quincena.fechaFin.split('T')[0]}`])
+  sheet.addRow(['Generado', new Date().toLocaleString('es-MX')])
+  sheet.addRow([])
+  if (data.liquidezDisponible != null) {
+    sheet.addRow(['Liquidez disponible', money(data.liquidezDisponible)]).getCell(2).numFmt = moneyFmt
+  }
+  sheet.addRow(['Presupuestado', money(data.totalPresupuestado)]).getCell(2).numFmt = moneyFmt
+  sheet.addRow(['Pagado', money(data.totalPagado)]).getCell(2).numFmt = moneyFmt
+  sheet.addRow(['Falta por cubrir', money(data.totalFalta)]).getCell(2).numFmt = moneyFmt
+  sheet.addRow([])
+  sheet.getColumn(1).width = 26
+  sheet.getColumn(2).width = 18
+
+  const headerRow = sheet.addRow(['Categoría', 'Descripción', 'Presupuestado', 'Pagado', 'Falta', 'Estado'])
+  headerRow.font = { bold: true }
+  sheet.getColumn(3).width = 16
+  sheet.getColumn(4).width = 16
+  sheet.getColumn(5).width = 16
+  sheet.getColumn(6).width = 14
+  for (const row of data.rows) {
+    const r = sheet.addRow([row.categoria, row.descripcion, money(row.presupuestado), money(row.pagado), money(row.falta), row.estado])
+    r.getCell(3).numFmt = moneyFmt
+    r.getCell(4).numFmt = moneyFmt
+    r.getCell(5).numFmt = moneyFmt
+  }
+  const totalRow = sheet.addRow(['TOTAL', '', money(data.totalPresupuestado), money(data.totalPagado), money(data.totalFalta), ''])
+  totalRow.font = { bold: true }
+  totalRow.getCell(3).numFmt = moneyFmt
+  totalRow.getCell(4).numFmt = moneyFmt
+  totalRow.getCell(5).numFmt = moneyFmt
+
+  const buffer = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `resumen-presupuesto-${data.quincena.codigo}.xlsx`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
