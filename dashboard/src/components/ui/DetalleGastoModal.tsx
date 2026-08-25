@@ -3,10 +3,11 @@ import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 
-// Detalle de las transacciones que componen el gasto real de una partida de
-// presupuesto. Consulta con presupuestoId + tipo=Gasto, que es exactamente el
-// filtro con el que /api/presupuestos calcula el campo `real` de cada linea,
-// para que el total del detalle siempre cuadre con el numero de la pagina.
+// Detalle de las transacciones que componen el real de una partida de
+// presupuesto. Consulta solo por presupuestoId (sin filtro de tipo), que es
+// exactamente el filtro con el que /api/presupuestos calcula el campo `real`
+// de cada linea, para que el total del detalle siempre cuadre con el numero
+// de la pagina -- sea la partida de Gasto, Ingreso o Ahorro.
 
 export interface PartidaDetalle {
   id: number
@@ -41,7 +42,7 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
     let cancelado = false
     // limit alto: una partida rara vez pasa de unas decenas de movimientos, y
     // asi el listado no queda paginado a la mitad.
-    fetch(`/api/transacciones?presupuestoId=${partida.id}&tipo=Gasto&limit=200`)
+    fetch(`/api/transacciones?presupuestoId=${partida.id}&limit=200`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
@@ -49,7 +50,11 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
       .then(json => {
         if (cancelado) return
         setRows(json.data ?? [])
-        setTotal(Number(json.totales?.Gasto ?? 0))
+        // Las transacciones de una partida comparten su tipo (Gasto, Ingreso o
+        // Ahorro) por construccion, asi que solo uno de estos tres viene con
+        // monto — sumarlos da el total real sin tener que adivinar cual es.
+        const t = json.totales ?? {}
+        setTotal(Number(t.Gasto ?? 0) + Number(t.Ingreso ?? 0) + Number(t.Ahorro ?? 0))
       })
       .catch(() => {
         if (!cancelado) setError('No se pudo cargar el detalle. Intenta de nuevo.')

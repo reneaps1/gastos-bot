@@ -63,7 +63,7 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
   return Array.from(map.values())
 }
 interface TxSinPresupuesto {
-  id: number; descripcion: string; monto: string | number
+  id: number; descripcion: string; monto: string | number; tipo: string
   categoria: { id: number; nombre: string }; fecha: string; estatus: 'Pagado' | 'Pendiente'
 }
 
@@ -247,7 +247,7 @@ export default function PresupuestoPage() {
     try {
       const [presupRes, txRes] = await Promise.all([
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
-        fetch(`/api/transacciones?quincenaId=${quincenaId}&tipo=Gasto&limit=500`),
+        fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=500`),
       ])
       const data: Presupuesto[] = await presupRes.json()
       const txData = await txRes.json()
@@ -285,6 +285,7 @@ export default function PresupuestoPage() {
     if (!crearLineaForm.descripcion || !crearLineaForm.categoriaId || !crearLineaForm.monto) return
     setSaving(true)
     try {
+      const tipo = txSinPresupuesto.find(t => t.id === txId)?.tipo ?? 'Gasto'
       const presupRes = await fetch('/api/presupuestos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -292,7 +293,7 @@ export default function PresupuestoPage() {
           quincenaId, descripcion: crearLineaForm.descripcion,
           categoriaId: crearLineaForm.categoriaId,
           montoPresupuestado: crearLineaForm.monto,
-          tipo: 'Gasto',
+          tipo,
         }),
       })
       if (!presupRes.ok) return
@@ -609,12 +610,12 @@ export default function PresupuestoPage() {
         </div>
       )}
 
-      {/* Gastos sin presupuesto */}
+      {/* Movimientos sin presupuesto */}
       {!loading && txSinPresupuesto.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl border border-amber-200 dark:border-amber-800/50 p-5">
           <div className="flex items-center gap-2 mb-3">
             <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
-            <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Gastos sin presupuesto</h3>
+            <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Movimientos sin presupuesto</h3>
             <span className="ml-auto text-xs text-amber-600 dark:text-amber-500">{txSinPresupuesto.length} {txSinPresupuesto.length === 1 ? 'transacción' : 'transacciones'}</span>
           </div>
           <div className="border border-amber-200 dark:border-amber-800/40 rounded-xl overflow-visible bg-white dark:bg-slate-800/60">
@@ -622,8 +623,12 @@ export default function PresupuestoPage() {
               const isOpen = openPopoverId === tx.id
               const isAssigning = assigningTxId === tx.id
               const showCrearForm = crearLineaForTxId === tx.id
+              // Una transaccion solo puede asignarse a una linea (o crear una
+              // nueva categoria) de su mismo tipo: un Ingreso no se mezcla con
+              // partidas de Gasto/Ahorro.
+              const presupuestosDelTipo = presupuestos.filter(p => p.categoria.tipo === tx.tipo)
               const categoriasDisponibles = Array.from(
-                new Map([tx.categoria, ...presupuestos.map(p => p.categoria)].map(c => [c.id, c])).values()
+                new Map([tx.categoria, ...categorias.filter(c => c.tipo === tx.tipo)].map(c => [c.id, c])).values()
               ).sort((a, b) => a.nombre.localeCompare(b.nombre))
               return (
                 <div key={tx.id}
@@ -632,11 +637,11 @@ export default function PresupuestoPage() {
                     <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
                     <div className="min-w-0">
                       <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
-                      <p className="text-[11px] text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {new Date(tx.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}</p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">{tx.tipo} · {tx.categoria.nombre} · {new Date(tx.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">{formatMXN(Number(tx.monto))}</span>
+                    <span className={`text-xs font-semibold tabular-nums ${montoTipoColor(tx.tipo)}`}>{formatMXN(Number(tx.monto))}</span>
                     <div className="relative">
                       <button
                         onClick={() => { setOpenPopoverId(isOpen ? null : tx.id); setCrearLineaForTxId(null) }}
@@ -656,7 +661,7 @@ export default function PresupuestoPage() {
                                   <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Asignar a:</p>
                                 </div>
                                 <div className="max-h-48 overflow-y-auto py-1">
-                                  {presupuestos.length > 0 ? presupuestos.map(p => (
+                                  {presupuestosDelTipo.length > 0 ? presupuestosDelTipo.map(p => (
                                     <button key={p.id} onClick={() => handleAsignar(tx.id, p.id)}
                                       className="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 flex items-start justify-between gap-2 transition-colors cursor-pointer">
                                       <div className="min-w-0">
@@ -666,7 +671,7 @@ export default function PresupuestoPage() {
                                       <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(Number(p.montoPresupuestado))}</span>
                                     </button>
                                   )) : (
-                                    <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas en esta quincena</p>
+                                    <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas de {tx.tipo.toLowerCase()} en esta quincena</p>
                                   )}
                                 </div>
                                 <div className="border-t border-slate-100 dark:border-slate-700">
@@ -723,10 +728,14 @@ export default function PresupuestoPage() {
               )
             })}
           </div>
+          {/* "Fuera de plan" solo tiene sentido para Gasto — mezclar Ingreso/Ahorro
+              en la misma suma daria un numero que no significa nada (son flujos
+              en sentido contrario). Los montos de cada tipo ya se ven arriba,
+              coloreados, en la lista. */}
           <div className="mt-3 flex justify-between items-center">
-            <span className="text-xs text-amber-600 dark:text-amber-500">Total fuera de plan</span>
+            <span className="text-xs text-amber-600 dark:text-amber-500">Gasto fuera de plan</span>
             <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">
-              {formatMXN(txSinPresupuesto.reduce((s, t) => s + Number(t.monto), 0))}
+              {formatMXN(txSinPresupuesto.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0))}
             </span>
           </div>
         </div>
