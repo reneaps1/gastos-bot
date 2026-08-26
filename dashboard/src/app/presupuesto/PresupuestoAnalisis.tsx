@@ -393,6 +393,23 @@ export function PresupuestoAnalisis({
     return { ...q, ma3Gastos, ...catValues, gastoSimulado }
   })
 
+  // Que series tienen al menos un dato para graficar en el rango actual --
+  // si ninguna serie activa tiene ni un solo valor real, el auto-domain de
+  // Recharts colapsa y el eje Y se queda sin etiquetas (grafica "rota" en
+  // blanco). Se detecta ese caso para mostrar un mensaje en vez de un eje
+  // vacio -- el auto-scale en si funciona bien apenas hay algun dato.
+  const activeChartKeys = [
+    ...SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => s.key),
+    ...categoriasAgregadas.map(c => `cat_${c.categoriaId}`),
+    ...lineasAgregadas.map(l => lineaDataKey(l)),
+  ]
+  const hayDatosParaGraficar = activeChartKeys.length > 0 && chartData.some(row =>
+    activeChartKeys.some(k => {
+      const v = (row as unknown as Record<string, number | null>)[k]
+      return typeof v === 'number' && Number.isFinite(v)
+    })
+  )
+
   // Analitica: siempre sobre TODAS las quincenas (sin el filtro de Categoria/
   // Rango de la tabla/grafica) y solo las ya cerradas -- necesita una muestra
   // estable, no la que el usuario este mirando en ese momento.
@@ -742,47 +759,57 @@ export function PresupuestoAnalisis({
             </div>
           )}
 
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
-              <Tooltip formatter={(v) => formatMXN(Number(v ?? 0))} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-              {SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => (
-                <Line key={s.key} type={s.tipo ?? 'monotone'} dataKey={s.key} name={s.label}
-                  stroke={s.color} strokeWidth={s.dashed ? 1.5 : 2} strokeDasharray={s.dashed ? '4 2' : undefined}
-                  dot={s.dashed ? false : { r: 3, fill: s.color }} activeDot={s.dashed ? undefined : { r: 5 }}
-                  connectNulls={s.tipo === 'stepAfter'} isAnimationActive={false} />
-              ))}
-              {categoriasAgregadas.map((c, i) => {
-                const cat = categorias.find(x => x.id === c.categoriaId)
-                if (!cat) return null
-                const color = colorForCategoria(cat.nombre, i)
-                const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'ppto'})`
-                return (
-                  <Line key={`cat_${c.categoriaId}`} type="monotone" dataKey={`cat_${c.categoriaId}`} name={name}
-                    stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
-                    connectNulls isAnimationActive={false} />
-                )
-              })}
-              {lineasAgregadas.map((l, i) => {
-                const cat = categorias.find(c => c.id === l.categoriaId)
-                const color = colorForLinea(i)
-                const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
-                const name = `${label} (${l.unidad === 'real' ? 'real' : 'ppto'})`
-                return (
-                  <Line key={lineaDataKey(l)} type="monotone" dataKey={lineaDataKey(l)} name={name}
-                    stroke={color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
-                    connectNulls isAnimationActive={false} />
-                )
-              })}
-              {simulando && (
-                <Line type="monotone" dataKey="gastoSimulado" name="Gasto simulado" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2"
-                  dot={{ r: 3, fill: '#f59e0b' }} activeDot={{ r: 5 }} connectNulls isAnimationActive={false} />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
+          {hayDatosParaGraficar ? (
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+                <YAxis tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
+                <Tooltip formatter={(v) => formatMXN(Number(v ?? 0))} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                {SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => (
+                  <Line key={s.key} type={s.tipo ?? 'monotone'} dataKey={s.key} name={s.label}
+                    stroke={s.color} strokeWidth={s.dashed ? 1.5 : 2} strokeDasharray={s.dashed ? '4 2' : undefined}
+                    dot={s.dashed ? false : { r: 3, fill: s.color }} activeDot={s.dashed ? undefined : { r: 5 }}
+                    connectNulls={s.tipo === 'stepAfter'} isAnimationActive={false} />
+                ))}
+                {categoriasAgregadas.map((c, i) => {
+                  const cat = categorias.find(x => x.id === c.categoriaId)
+                  if (!cat) return null
+                  const color = colorForCategoria(cat.nombre, i)
+                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'ppto'})`
+                  return (
+                    <Line key={`cat_${c.categoriaId}`} type="monotone" dataKey={`cat_${c.categoriaId}`} name={name}
+                      stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
+                      connectNulls isAnimationActive={false} />
+                  )
+                })}
+                {lineasAgregadas.map((l, i) => {
+                  const cat = categorias.find(c => c.id === l.categoriaId)
+                  const color = colorForLinea(i)
+                  const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
+                  const name = `${label} (${l.unidad === 'real' ? 'real' : 'ppto'})`
+                  return (
+                    <Line key={lineaDataKey(l)} type="monotone" dataKey={lineaDataKey(l)} name={name}
+                      stroke={color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
+                      connectNulls isAnimationActive={false} />
+                  )
+                })}
+                {simulando && (
+                  <Line type="monotone" dataKey="gastoSimulado" name="Gasto simulado" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2"
+                    dot={{ r: 3, fill: '#f59e0b' }} activeDot={{ r: 5 }} connectNulls isAnimationActive={false} />
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="h-[240px] flex items-center justify-center text-center px-6">
+              <p className="text-sm text-slate-400 dark:text-slate-500">
+                {activeChartKeys.length === 0
+                  ? 'Activa al menos una serie arriba para ver la gráfica.'
+                  : 'Sin datos para la selección actual en este rango de quincenas.'}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
