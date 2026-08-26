@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { findOverlap, findGapWarnings } from '@/lib/quincena-validation'
+import { parseMontoReferencia } from '@/lib/referencia'
 
 export async function GET(
   request: Request,
@@ -34,7 +35,12 @@ export async function PUT(
     if (!current) return NextResponse.json({ error: 'Quincena not found' }, { status: 404 })
 
     const body = await request.json()
-    const { codigo, fechaInicio, fechaFin, tipo } = body
+    const { codigo, fechaInicio, fechaFin, tipo, ingresoReferencia, limiteGastoReferencia } = body
+
+    const ingreso = parseMontoReferencia(ingresoReferencia, 'ingresoReferencia')
+    if (!ingreso.ok) return NextResponse.json({ error: ingreso.error }, { status: 400 })
+    const limite = parseMontoReferencia(limiteGastoReferencia, 'limiteGastoReferencia')
+    if (!limite.ok) return NextResponse.json({ error: limite.error }, { status: 400 })
 
     const nextFechaInicio = fechaInicio !== undefined ? fechaInicio : current.fechaInicio.toISOString().slice(0, 10)
     const nextFechaFin = fechaFin !== undefined ? fechaFin : current.fechaFin.toISOString().slice(0, 10)
@@ -85,6 +91,8 @@ export async function PUT(
         ...(fechaInicio !== undefined && { fechaInicio: new Date(fechaInicio) }),
         ...(fechaFin !== undefined && { fechaFin: new Date(fechaFin) }),
         ...(tipo !== undefined && { tipo }),
+        ...(ingreso.value !== undefined && { ingresoReferencia: ingreso.value }),
+        ...(limite.value !== undefined && { limiteGastoReferencia: limite.value }),
       },
     })
 

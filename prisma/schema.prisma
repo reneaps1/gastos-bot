@@ -92,6 +92,11 @@ model Quincena {
   fechaInicio DateTime    @map("fecha_inicio") @db.Date
   fechaFin    DateTime    @map("fecha_fin") @db.Date
   tipo        TipoPeriodo @default(QUINCENAL)
+  // ingresoReferencia / limiteGastoReferencia: sobreescriben, solo para esta
+  // quincena, los valores globales del mismo nombre en Configuracion. NULL
+  // (el default) significa "usa el global" — ver lib/referencia.ts (dashboard) resolveReferencia().
+  ingresoReferencia     Decimal? @map("ingreso_referencia") @db.Decimal(12, 2)
+  limiteGastoReferencia Decimal? @map("limite_gasto_referencia") @db.Decimal(12, 2)
 
   transacciones        Transaccion[]      @relation("TransaccionImpacto")
   transaccionesConsumo Transaccion[]      @relation("TransaccionConsumo")

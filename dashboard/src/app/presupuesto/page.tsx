@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
@@ -16,6 +16,8 @@ import { FilterChip } from '@/components/ui/FilterChip'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
+import { PresupuestoAnalisis } from './PresupuestoAnalisis'
+import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -23,7 +25,7 @@ const CAT_DOT: Record<string, string> = {
   Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
 
-interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
@@ -172,7 +174,7 @@ export default function PresupuestoPage() {
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
-  const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tabla')
+  const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis'>('tabla')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
   const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
   const [tablaLoading, setTablaLoading] = useState(false)
@@ -186,6 +188,15 @@ export default function PresupuestoPage() {
   const [busquedaTabla, setBusquedaTabla] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  // Pestaña Análisis: estado propio y aislado (mismo patrón que Tabla), fetch
+  // disparado solo cuando esa pestaña está activa. No comparte nada con
+  // Tarjetas/Tabla para que cambiar de pestaña y volver no pierda filtros.
+  const [analisisPresupuestos, setAnalisisPresupuestos] = useState<Presupuesto[]>([])
+  const [analisisLoading, setAnalisisLoading] = useState(false)
+  const [analisisConfigGlobal, setAnalisisConfigGlobal] = useState<{ ingresoReferencia: number | null; limiteGastoReferencia: number | null }>({ ingresoReferencia: null, limiteGastoReferencia: null })
+  const [analisisRango, setAnalisisRango] = useState('ultimas6')
+  const [analisisCategoriaId, setAnalisisCategoriaId] = useState('')
 
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
   const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
@@ -210,7 +221,7 @@ export default function PresupuestoPage() {
       fetch('/api/categorias').then(r => r.json()),
       fetch('/api/configuracion').then(r => r.json()),
     ]).then(([q, c, cfg]) => {
-      setQuincenas(q)
+      setQuincenas(q.map(normalizeReferencia))
       setCategorias(c)
       setQuincenaId(getInitialQuincenaId(q))
       setTablaQuincenaId(getDefaultQuincenaId(q))
@@ -235,6 +246,31 @@ export default function PresupuestoPage() {
   useEffect(() => {
     if (vista === 'tabla') fetchPresupuestosTabla()
   }, [vista, fetchPresupuestosTabla])
+
+  // Balance por Q necesita el detalle de TODAS las quincenas (no solo la
+  // seleccionada) para poder agregar por periodo y alimentar la analitica —
+  // /api/presupuestos sin quincenaId ya devuelve exactamente eso, mismo fetch
+  // que ya usa la vista Tabla en modo "Todas".
+  const fetchAnalisis = useCallback(async () => {
+    setAnalisisLoading(true)
+    try {
+      const [presupRes, cfgRes] = await Promise.all([
+        fetch('/api/presupuestos'),
+        fetch('/api/configuracion'),
+      ])
+      setAnalisisPresupuestos(await presupRes.json())
+      const cfg = await cfgRes.json()
+      setAnalisisConfigGlobal(normalizeReferencia(cfg))
+    } finally { setAnalisisLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (vista === 'analisis') fetchAnalisis()
+  }, [vista, fetchAnalisis])
+
+  function handleQuincenaReferenciaUpdated(updated: Quincena) {
+    setQuincenas(qs => qs.map(q => q.id === updated.id ? { ...q, ...normalizeReferencia(updated) } : q))
+  }
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc') }
@@ -480,6 +516,10 @@ export default function PresupuestoPage() {
 
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
+  // Limite de referencia efectivo: el override propio de esta quincena
+  // (configurable en Presupuesto → Análisis) si existe, si no el global de
+  // Configuración → Períodos de pago.
+  const refEfectiva = resolveReferencia(qInfo, { limiteGastoReferencia: limiteReferencia })
 
   return (
     <div className="space-y-6">
@@ -530,6 +570,10 @@ export default function PresupuestoPage() {
           className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tabla' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
           <Table2 size={14} /> Tabla
         </button>
+        <button onClick={() => setVista('analisis')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'analisis' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <Sparkles size={14} /> Análisis
+        </button>
       </div>
 
       {vista === 'tabla' ? (
@@ -548,6 +592,15 @@ export default function PresupuestoPage() {
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
           openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP}
         />
+      ) : vista === 'analisis' ? (
+        <PresupuestoAnalisis
+          quincenas={quincenas} categorias={categorias} today={today}
+          presupuestos={analisisPresupuestos} loading={analisisLoading}
+          configGlobal={analisisConfigGlobal}
+          rango={analisisRango} setRango={setAnalisisRango}
+          categoriaId={analisisCategoriaId} setCategoriaId={setAnalisisCategoriaId}
+          onQuincenaUpdated={handleQuincenaReferenciaUpdated}
+        />
       ) : (
         <>
       {/* Selector de quincena */}
@@ -557,7 +610,7 @@ export default function PresupuestoPage() {
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className={`grid grid-cols-1 gap-4 ${limiteReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+        <div className={`grid grid-cols-1 gap-4 ${refEfectiva.limiteGastoReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
           <KpiCard
             label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
             subtitle={`real ${formatMXN(totalIngresoReal)}`}
@@ -599,18 +652,22 @@ export default function PresupuestoPage() {
             </p>
           </div>
 
-          {limiteReferencia != null && (() => {
-            const pctLimite = limiteReferencia > 0 ? (gastoParaLimite / limiteReferencia) * 100 : 0
+          {refEfectiva.limiteGastoReferencia != null && (() => {
+            const limiteEfectivo = refEfectiva.limiteGastoReferencia!
+            const pctLimite = limiteEfectivo > 0 ? (gastoParaLimite / limiteEfectivo) * 100 : 0
             return (
               <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1">
                   Límite de referencia
-                  <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago). Es solo informativo, no bloquea nada.">ⓘ</span>
+                  {refEfectiva.limiteEsOverride && (
+                    <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">personalizado</span>
+                  )}
+                  <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago, o personalizado para esta quincena en Presupuesto → Análisis). Es solo informativo, no bloquea nada.">ⓘ</span>
                 </p>
                 <div className="flex justify-between items-end mb-2">
                   <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">
                     {formatMXN(gastoParaLimite)}
-                    <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(limiteReferencia)}</span>
+                    <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(limiteEfectivo)}</span>
                   </p>
                   <span className={`text-lg font-bold ${pctTextColor(pctLimite)}`}>{pctLimite.toFixed(0)}%</span>
                 </div>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { findOverlap, findGapWarnings } from '@/lib/quincena-validation'
+import { parseMontoReferencia } from '@/lib/referencia'
 
 export async function GET(request: Request) {
   try {
@@ -25,7 +26,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { codigo, fechaInicio, fechaFin, tipo } = body
+    const { codigo, fechaInicio, fechaFin, tipo, ingresoReferencia, limiteGastoReferencia } = body
 
     if (!codigo || !fechaInicio || !fechaFin) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -33,6 +34,11 @@ export async function POST(request: Request) {
     if (fechaFin < fechaInicio) {
       return NextResponse.json({ error: 'fechaFin debe ser posterior a fechaInicio' }, { status: 400 })
     }
+
+    const ingreso = parseMontoReferencia(ingresoReferencia, 'ingresoReferencia')
+    if (!ingreso.ok) return NextResponse.json({ error: ingreso.error }, { status: 400 })
+    const limite = parseMontoReferencia(limiteGastoReferencia, 'limiteGastoReferencia')
+    if (!limite.ok) return NextResponse.json({ error: limite.error }, { status: 400 })
 
     const existing = await prisma.quincena.findFirst({ where: { codigo } })
     if (existing) {
@@ -51,6 +57,8 @@ export async function POST(request: Request) {
         fechaInicio: new Date(fechaInicio),
         fechaFin: new Date(fechaFin),
         ...(tipo !== undefined && { tipo }),
+        ...(ingreso.value !== undefined && { ingresoReferencia: ingreso.value }),
+        ...(limite.value !== undefined && { limiteGastoReferencia: limite.value }),
       },
     })
 
