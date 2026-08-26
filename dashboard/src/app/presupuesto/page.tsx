@@ -195,7 +195,8 @@ export default function PresupuestoPage() {
   const [analisisPresupuestos, setAnalisisPresupuestos] = useState<Presupuesto[]>([])
   const [analisisLoading, setAnalisisLoading] = useState(false)
   const [analisisConfigGlobal, setAnalisisConfigGlobal] = useState<{ ingresoReferencia: number | null; limiteGastoReferencia: number | null }>({ ingresoReferencia: null, limiteGastoReferencia: null })
-  const [analisisRango, setAnalisisRango] = useState('ultimas6')
+  const [analisisDesdeId, setAnalisisDesdeId] = useState('')
+  const [analisisHastaId, setAnalisisHastaId] = useState('')
   const [analisisCategoriaId, setAnalisisCategoriaId] = useState('')
 
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
@@ -597,7 +598,8 @@ export default function PresupuestoPage() {
           quincenas={quincenas} categorias={categorias} today={today}
           presupuestos={analisisPresupuestos} loading={analisisLoading}
           configGlobal={analisisConfigGlobal}
-          rango={analisisRango} setRango={setAnalisisRango}
+          desdeId={analisisDesdeId} setDesdeId={setAnalisisDesdeId}
+          hastaId={analisisHastaId} setHastaId={setAnalisisHastaId}
           categoriaId={analisisCategoriaId} setCategoriaId={setAnalisisCategoriaId}
           onQuincenaUpdated={handleQuincenaReferenciaUpdated}
         />
