@@ -117,6 +117,49 @@ function serieCategoria(rows: PresupuestoRow[], categoriaId: number): Map<number
   return map
 }
 
+interface LineaPresupuesto { categoriaId: number; descripcion: string }
+
+// Gasto real por quincena de una linea de presupuesto especifica (ej. solo
+// "Renta" dentro de Hogar, no toda la categoria). Un Presupuesto vive en una
+// sola quincena -- no hay un id estable de la linea a traves del tiempo,
+// asi que se identifica por categoria+descripcion, igual nombre cada Q.
+function serieLinea(rows: PresupuestoRow[], linea: LineaPresupuesto): Map<number, number> {
+  const map = new Map<number, number>()
+  for (const p of rows) {
+    if (p.categoriaId !== linea.categoriaId || p.descripcion !== linea.descripcion) continue
+    map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + p.real)
+  }
+  return map
+}
+
+function lineaDataKey(l: LineaPresupuesto) {
+  return `lin_${l.categoriaId}_${l.descripcion}`
+}
+
+// Todas las combinaciones categoria+descripcion ya usadas alguna vez (en
+// TODAS las quincenas, mismo criterio que serieCategoria) -- son las
+// opciones que puede elegir el selector "+ Agregar categoria o linea".
+function lineasDisponibles(rows: PresupuestoRow[]): LineaPresupuesto[] {
+  const vistos = new Set<string>()
+  const result: LineaPresupuesto[] = []
+  for (const p of rows) {
+    const key = lineaDataKey({ categoriaId: p.categoriaId, descripcion: p.descripcion })
+    if (vistos.has(key)) continue
+    vistos.add(key)
+    result.push({ categoriaId: p.categoriaId, descripcion: p.descripcion })
+  }
+  return result.sort((a, b) => a.descripcion.localeCompare(b.descripcion))
+}
+
+// Paleta propia para lineas especificas, deliberadamente distinta de
+// CAT_COLOR -- una linea siempre se dibuja punteada (ver <Line> mas abajo),
+// asi que el patron solido/punteado ya la distingue de una categoria
+// agregada aunque el color rote y coincida por casualidad.
+const LINEA_COLORS = ['#a855f7', '#0891b2', '#ca8a04', '#be185d', '#65a30d', '#c026d3']
+function colorForLinea(index: number) {
+  return LINEA_COLORS[index % LINEA_COLORS.length]
+}
+
 function getSortValue(q: BalancePorQ, key: SortKey): string | number {
   switch (key) {
     case 'quincena': return q.fechaInicio
@@ -275,6 +318,13 @@ export function PresupuestoAnalisis({
   function quitarCategoria(id: number) {
     setCategoriasAgregadas(prev => prev.filter(c => c !== id))
   }
+  const [lineasAgregadas, setLineasAgregadas] = useState<LineaPresupuesto[]>([])
+  function agregarLinea(linea: LineaPresupuesto) {
+    setLineasAgregadas(prev => prev.some(l => l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion) ? prev : [...prev, linea])
+  }
+  function quitarLinea(linea: LineaPresupuesto) {
+    setLineasAgregadas(prev => prev.filter(l => !(l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion)))
+  }
 
   // Modo Simulacion: 100% en memoria del navegador, nunca se guarda -- ver
   // guardarReferencia() mas abajo para contraste (ese si hace PUT). Cambiar
@@ -307,6 +357,7 @@ export function PresupuestoAnalisis({
   // columna por cada categoria agregada y, si hay simulacion activa, el
   // gasto real hipotetico de esa quincena.
   const seriesCategoriaData = categoriasAgregadas.map(id => ({ id, serie: serieCategoria(presupuestos, id) }))
+  const seriesLineaData = lineasAgregadas.map(l => ({ key: lineaDataKey(l), serie: serieLinea(presupuestos, l) }))
   const simGastoNum = Number(simGastoInput)
   const simGastoHipotetico = simGastoInput !== '' && Number.isFinite(simGastoNum) ? simGastoNum : null
   const chartData = balancePorQ.map((q, i, arr) => {
@@ -314,6 +365,7 @@ export function PresupuestoAnalisis({
     const ma3Gastos = ventana.length >= 3 ? ventana.reduce((s, x) => s + x.gastos, 0) / ventana.length : null
     const catValues: Record<string, number | null> = {}
     for (const { id, serie } of seriesCategoriaData) catValues[`cat_${id}`] = serie.get(q.quincenaId) ?? null
+    for (const { key, serie } of seriesLineaData) catValues[key] = serie.get(q.quincenaId) ?? null
     const gastoSimulado = simulando && simGastoHipotetico != null
       ? (q.quincenaId === simQuincena?.id ? simGastoHipotetico : q.gastosReales)
       : null
@@ -386,6 +438,24 @@ export function PresupuestoAnalisis({
   }
 
   const quincenasOrdenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
+
+  // Opciones del selector "+ Agregar categoria o linea": una categoria
+  // completa (si no esta ya agregada) mas cada linea individual ya usada en
+  // esa categoria (si no esta ya agregada) -- agrupadas por categoria para
+  // que el dropdown se lea como un arbol categoria -> sus lineas.
+  const disponibles = lineasDisponibles(presupuestos)
+  const gruposAgregar = categorias
+    .map(cat => {
+      const opciones: { value: string; label: string }[] = []
+      if (!categoriasAgregadas.includes(cat.id)) opciones.push({ value: `c${cat.id}`, label: 'Toda la categoría' })
+      disponibles.forEach((l, idx) => {
+        if (l.categoriaId !== cat.id) return
+        if (lineasAgregadas.some(la => la.categoriaId === l.categoriaId && la.descripcion === l.descripcion)) return
+        opciones.push({ value: `l${idx}`, label: l.descripcion })
+      })
+      return { cat, opciones }
+    })
+    .filter(g => g.opciones.length > 0)
 
   return (
     <div className="space-y-6">
@@ -561,7 +631,7 @@ export function PresupuestoAnalisis({
             })}
           </div>
 
-          {/* Categorías agregadas para comparar */}
+          {/* Categorías y líneas agregadas para comparar */}
           <div className="flex flex-wrap items-center gap-1.5 mb-3">
             {categoriasAgregadas.map((id, i) => {
               const cat = categorias.find(c => c.id === id)
@@ -576,14 +646,38 @@ export function PresupuestoAnalisis({
                 </span>
               )
             })}
-            {categorias.some(c => !categoriasAgregadas.includes(c.id)) && (
+            {lineasAgregadas.map((l, i) => {
+              const cat = categorias.find(c => c.id === l.categoriaId)
+              const color = colorForLinea(i)
+              const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
+              return (
+                <span key={lineaDataKey(l)}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full border-2 border-dashed"
+                  style={{ borderColor: color, color }}>
+                  {label}
+                  <button type="button" onClick={() => quitarLinea(l)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${label} de la gráfica`}>
+                    <X size={12} />
+                  </button>
+                </span>
+              )
+            })}
+            {gruposAgregar.length > 0 && (
               <div className="relative inline-flex items-center">
                 <Plus size={12} className="absolute left-2.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
-                <select value="" onChange={e => { const id = Number(e.target.value); if (id) agregarCategoria(id) }}
-                  aria-label="Agregar categoría a la gráfica"
+                <select value="" onChange={e => {
+                    const v = e.target.value
+                    if (!v) return
+                    if (v[0] === 'c') agregarCategoria(Number(v.slice(1)))
+                    else { const l = disponibles[Number(v.slice(1))]; if (l) agregarLinea(l) }
+                  }}
+                  aria-label="Agregar categoría o línea de presupuesto a la gráfica"
                   className="text-xs rounded-full pl-7 pr-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400">
-                  <option value="">Agregar categoría</option>
-                  {categorias.filter(c => !categoriasAgregadas.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  <option value="">Agregar categoría o línea</option>
+                  {gruposAgregar.map(({ cat, opciones }) => (
+                    <optgroup key={cat.id} label={cat.nombre}>
+                      {opciones.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </optgroup>
+                  ))}
                 </select>
               </div>
             )}
@@ -634,6 +728,16 @@ export function PresupuestoAnalisis({
                 return (
                   <Line key={`cat_${id}`} type="monotone" dataKey={`cat_${id}`} name={cat.nombre}
                     stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
+                    connectNulls isAnimationActive={false} />
+                )
+              })}
+              {lineasAgregadas.map((l, i) => {
+                const cat = categorias.find(c => c.id === l.categoriaId)
+                const color = colorForLinea(i)
+                const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
+                return (
+                  <Line key={lineaDataKey(l)} type="monotone" dataKey={lineaDataKey(l)} name={label}
+                    stroke={color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
                     connectNulls isAnimationActive={false} />
                 )
               })}
