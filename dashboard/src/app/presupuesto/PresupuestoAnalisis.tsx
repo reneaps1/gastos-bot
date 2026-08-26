@@ -104,30 +104,45 @@ function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global:
     })
 }
 
-// Gasto real por quincena de una categoria especifica -- para las series
-// opcionales "+ Agregar categoria". Usa TODAS las filas (no filasFiltradas),
-// a proposito: el filtro de Categoria de arriba acota tabla/agregados, pero
-// una serie agregada aqui debe poder compararse sin importar ese filtro.
-function serieCategoria(rows: PresupuestoRow[], categoriaId: number): Map<number, number> {
+// Categoria/linea agregada puede mostrar su monto real o su presupuestado --
+// se alterna con un toggle en el chip ya agregado, en vez de que el
+// desplegable ofrezca 2 entradas por cada categoria/linea (saturaria el
+// menu). Real por default: es lo que ya mostraban categoria/linea antes de
+// que existiera esta opcion.
+type UnidadSerie = 'real' | 'presupuestado'
+function valorSerie(p: PresupuestoRow, unidad: UnidadSerie): number {
+  return unidad === 'real' ? p.real : Number(p.montoPresupuestado)
+}
+function otraUnidad(u: UnidadSerie): UnidadSerie {
+  return u === 'real' ? 'presupuestado' : 'real'
+}
+
+// Monto (real o presupuestado, segun unidad) por quincena de una categoria
+// especifica -- para las series opcionales "+ Agregar categoria o linea".
+// Usa TODAS las filas (no filasFiltradas), a proposito: el filtro de
+// Categoria de arriba acota tabla/agregados, pero una serie agregada aqui
+// debe poder compararse sin importar ese filtro.
+function serieCategoria(rows: PresupuestoRow[], categoriaId: number, unidad: UnidadSerie): Map<number, number> {
   const map = new Map<number, number>()
   for (const p of rows) {
     if (p.categoriaId !== categoriaId) continue
-    map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + p.real)
+    map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + valorSerie(p, unidad))
   }
   return map
 }
 
 interface LineaPresupuesto { categoriaId: number; descripcion: string }
 
-// Gasto real por quincena de una linea de presupuesto especifica (ej. solo
-// "Renta" dentro de Hogar, no toda la categoria). Un Presupuesto vive en una
-// sola quincena -- no hay un id estable de la linea a traves del tiempo,
-// asi que se identifica por categoria+descripcion, igual nombre cada Q.
-function serieLinea(rows: PresupuestoRow[], linea: LineaPresupuesto): Map<number, number> {
+// Monto (real o presupuestado) por quincena de una linea de presupuesto
+// especifica (ej. solo "Renta" dentro de Hogar, no toda la categoria). Un
+// Presupuesto vive en una sola quincena -- no hay un id estable de la linea
+// a traves del tiempo, asi que se identifica por categoria+descripcion,
+// igual nombre cada Q.
+function serieLinea(rows: PresupuestoRow[], linea: LineaPresupuesto, unidad: UnidadSerie): Map<number, number> {
   const map = new Map<number, number>()
   for (const p of rows) {
     if (p.categoriaId !== linea.categoriaId || p.descripcion !== linea.descripcion) continue
-    map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + p.real)
+    map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + valorSerie(p, unidad))
   }
   return map
 }
@@ -311,19 +326,25 @@ export function PresupuestoAnalisis({
       return next
     })
   }
-  const [categoriasAgregadas, setCategoriasAgregadas] = useState<number[]>([])
-  function agregarCategoria(id: number) {
-    if (!categoriasAgregadas.includes(id)) setCategoriasAgregadas(prev => [...prev, id])
+  const [categoriasAgregadas, setCategoriasAgregadas] = useState<{ categoriaId: number; unidad: UnidadSerie }[]>([])
+  function agregarCategoria(categoriaId: number) {
+    setCategoriasAgregadas(prev => prev.some(c => c.categoriaId === categoriaId) ? prev : [...prev, { categoriaId, unidad: 'real' }])
   }
-  function quitarCategoria(id: number) {
-    setCategoriasAgregadas(prev => prev.filter(c => c !== id))
+  function quitarCategoria(categoriaId: number) {
+    setCategoriasAgregadas(prev => prev.filter(c => c.categoriaId !== categoriaId))
   }
-  const [lineasAgregadas, setLineasAgregadas] = useState<LineaPresupuesto[]>([])
+  function toggleUnidadCategoria(categoriaId: number) {
+    setCategoriasAgregadas(prev => prev.map(c => c.categoriaId === categoriaId ? { ...c, unidad: otraUnidad(c.unidad) } : c))
+  }
+  const [lineasAgregadas, setLineasAgregadas] = useState<(LineaPresupuesto & { unidad: UnidadSerie })[]>([])
   function agregarLinea(linea: LineaPresupuesto) {
-    setLineasAgregadas(prev => prev.some(l => l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion) ? prev : [...prev, linea])
+    setLineasAgregadas(prev => prev.some(l => l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion) ? prev : [...prev, { ...linea, unidad: 'real' }])
   }
   function quitarLinea(linea: LineaPresupuesto) {
     setLineasAgregadas(prev => prev.filter(l => !(l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion)))
+  }
+  function toggleUnidadLinea(linea: LineaPresupuesto) {
+    setLineasAgregadas(prev => prev.map(l => l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion ? { ...l, unidad: otraUnidad(l.unidad) } : l))
   }
 
   // Modo Simulacion: 100% en memoria del navegador, nunca se guarda -- ver
@@ -356,8 +377,8 @@ export function PresupuestoAnalisis({
   // orden cronologico que la tabla (sin el sort del usuario), mas una
   // columna por cada categoria agregada y, si hay simulacion activa, el
   // gasto real hipotetico de esa quincena.
-  const seriesCategoriaData = categoriasAgregadas.map(id => ({ id, serie: serieCategoria(presupuestos, id) }))
-  const seriesLineaData = lineasAgregadas.map(l => ({ key: lineaDataKey(l), serie: serieLinea(presupuestos, l) }))
+  const seriesCategoriaData = categoriasAgregadas.map(c => ({ id: c.categoriaId, serie: serieCategoria(presupuestos, c.categoriaId, c.unidad) }))
+  const seriesLineaData = lineasAgregadas.map(l => ({ key: lineaDataKey(l), serie: serieLinea(presupuestos, l, l.unidad) }))
   const simGastoNum = Number(simGastoInput)
   const simGastoHipotetico = simGastoInput !== '' && Number.isFinite(simGastoNum) ? simGastoNum : null
   const chartData = balancePorQ.map((q, i, arr) => {
@@ -447,7 +468,7 @@ export function PresupuestoAnalisis({
   const gruposAgregar = categorias
     .map(cat => {
       const opciones: { value: string; label: string }[] = []
-      if (!categoriasAgregadas.includes(cat.id)) opciones.push({ value: `c${cat.id}`, label: 'Toda la categoría' })
+      if (!categoriasAgregadas.some(c => c.categoriaId === cat.id)) opciones.push({ value: `c${cat.id}`, label: 'Toda la categoría' })
       disponibles.forEach((l, idx) => {
         if (l.categoriaId !== cat.id) return
         if (lineasAgregadas.some(la => la.categoriaId === l.categoriaId && la.descripcion === l.descripcion)) return
@@ -631,16 +652,23 @@ export function PresupuestoAnalisis({
             })}
           </div>
 
-          {/* Categorías y líneas agregadas para comparar */}
+          {/* Categorías y líneas agregadas para comparar -- cada chip trae su
+              propio toggle real/ppto, en vez de que el desplegable ofrezca
+              2 entradas por categoria/linea (saturaria el menu). */}
           <div className="flex flex-wrap items-center gap-1.5 mb-3">
-            {categoriasAgregadas.map((id, i) => {
-              const cat = categorias.find(c => c.id === id)
+            {categoriasAgregadas.map((c, i) => {
+              const cat = categorias.find(x => x.id === c.categoriaId)
               if (!cat) return null
               const color = colorForCategoria(cat.nombre, i)
               return (
-                <span key={id} className="inline-flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full text-white" style={{ backgroundColor: color }}>
+                <span key={c.categoriaId} className="inline-flex items-center gap-1 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full text-white" style={{ backgroundColor: color }}>
                   {cat.nombre}
-                  <button type="button" onClick={() => quitarCategoria(id)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${cat.nombre} de la gráfica`}>
+                  <button type="button" onClick={() => toggleUnidadCategoria(c.categoriaId)}
+                    className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/25 hover:bg-white/40 cursor-pointer"
+                    title="Cambiar entre real y presupuestado">
+                    {c.unidad === 'real' ? 'real' : 'ppto'}
+                  </button>
+                  <button type="button" onClick={() => quitarCategoria(c.categoriaId)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${cat.nombre} de la gráfica`}>
                     <X size={12} />
                   </button>
                 </span>
@@ -652,9 +680,15 @@ export function PresupuestoAnalisis({
               const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
               return (
                 <span key={lineaDataKey(l)}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full border-2 border-dashed"
+                  className="inline-flex items-center gap-1 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full border-2 border-dashed"
                   style={{ borderColor: color, color }}>
                   {label}
+                  <button type="button" onClick={() => toggleUnidadLinea(l)}
+                    className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white hover:opacity-80 cursor-pointer"
+                    style={{ backgroundColor: color }}
+                    title="Cambiar entre real y presupuestado">
+                    {l.unidad === 'real' ? 'real' : 'ppto'}
+                  </button>
                   <button type="button" onClick={() => quitarLinea(l)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${label} de la gráfica`}>
                     <X size={12} />
                   </button>
@@ -721,12 +755,13 @@ export function PresupuestoAnalisis({
                   dot={s.dashed ? false : { r: 3, fill: s.color }} activeDot={s.dashed ? undefined : { r: 5 }}
                   connectNulls={s.tipo === 'stepAfter'} isAnimationActive={false} />
               ))}
-              {categoriasAgregadas.map((id, i) => {
-                const cat = categorias.find(c => c.id === id)
+              {categoriasAgregadas.map((c, i) => {
+                const cat = categorias.find(x => x.id === c.categoriaId)
                 if (!cat) return null
                 const color = colorForCategoria(cat.nombre, i)
+                const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'ppto'})`
                 return (
-                  <Line key={`cat_${id}`} type="monotone" dataKey={`cat_${id}`} name={cat.nombre}
+                  <Line key={`cat_${c.categoriaId}`} type="monotone" dataKey={`cat_${c.categoriaId}`} name={name}
                     stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
                     connectNulls isAnimationActive={false} />
                 )
@@ -735,8 +770,9 @@ export function PresupuestoAnalisis({
                 const cat = categorias.find(c => c.id === l.categoriaId)
                 const color = colorForLinea(i)
                 const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
+                const name = `${label} (${l.unidad === 'real' ? 'real' : 'ppto'})`
                 return (
-                  <Line key={lineaDataKey(l)} type="monotone" dataKey={lineaDataKey(l)} name={label}
+                  <Line key={lineaDataKey(l)} type="monotone" dataKey={lineaDataKey(l)} name={name}
                     stroke={color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
                     connectNulls isAnimationActive={false} />
                 )
