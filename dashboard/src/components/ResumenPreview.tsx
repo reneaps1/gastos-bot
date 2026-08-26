@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
-import { ArrowLeft, FileDown, FileSpreadsheet, Image as ImageIcon, FileText, Loader2, Droplets, Target, CheckCircle2, Clock } from 'lucide-react'
+import { ArrowLeft, FileDown, FileSpreadsheet, Image as ImageIcon, FileText, Loader2 } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { formatQuincenaRange, getMexicoDateString } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
@@ -87,9 +87,19 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
     return () => { cancelled = true }
   }, [quincena.id])
 
+  // Los 4 totales de arriba son de la quincena completa (para que no cambien
+  // segun lo que se muestre en la tabla), pero la tabla en si solo lista lo
+  // que todavia no esta cubierto -- lo ya pagado al 100% no aporta nada a un
+  // reporte que existe para ver que falta.
   const totalPresupuestado = rows.reduce((s, r) => s + Number(r.montoPresupuestado), 0)
   const totalPagado = rows.reduce((s, r) => s + r.pagado, 0)
   const totalFalta = calcularFaltaPorPagar(rows)
+  const filasPorCubrir = rows.filter(r => r.estado !== 'Cubierto')
+  // El pie de la tabla suma solo lo que se ve en la tabla (lo pendiente), no
+  // la quincena completa -- si no, no cuadraria con las filas visibles.
+  const totalPresupuestadoPendiente = filasPorCubrir.reduce((s, r) => s + Number(r.montoPresupuestado), 0)
+  const totalPagadoPendiente = filasPorCubrir.reduce((s, r) => s + r.pagado, 0)
+  const totalFaltaPendiente = calcularFaltaPorPagar(filasPorCubrir)
 
   async function handleExport(kind: ExportKind) {
     setExportingKind(kind)
@@ -104,18 +114,19 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           quincena,
           liquidezDisponible,
           totalPresupuestado, totalPagado, totalFalta,
-          rows: rows.map(r => ({
+          totalPresupuestadoPendiente, totalPagadoPendiente, totalFaltaPendiente,
+          rows: filasPorCubrir.map(r => ({
             categoria: r.categoria.nombre, descripcion: r.descripcion,
             presupuestado: Number(r.montoPresupuestado), pagado: r.pagado, falta: r.falta, estado: r.estado,
           })),
         })
       } else if (kind === 'csv') {
         const csv = toCsv([
-          ...rows,
+          ...filasPorCubrir,
           {
-            id: -1, descripcion: 'TOTAL', categoria: { nombre: '', tipo: '' },
-            montoPresupuestado: totalPresupuestado, real: 0, pendiente: 0,
-            pagado: totalPagado, falta: totalFalta, estado: 'Cubierto' as const,
+            id: -1, descripcion: 'TOTAL PENDIENTE', categoria: { nombre: '', tipo: '' },
+            montoPresupuestado: totalPresupuestadoPendiente, real: 0, pendiente: 0,
+            pagado: totalPagadoPendiente, falta: totalFaltaPendiente, estado: 'Cubierto' as const,
           },
         ], [
           { key: 'categoria', label: 'Categoría', value: r => r.categoria.nombre },
@@ -164,27 +175,29 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
             <p className="ml-auto text-xs" style={{ color: C.slate500 }}>{formatQuincenaRange(quincena)}</p>
           </div>
 
+          {/* Bloques de texto centrado, sin icono ni flexbox con gap a proposito:
+              html2canvas duplica/desalinea el contenido cuando el layout usa
+              `gap` de flex o elementos con fondo propio dentro de una fila --
+              ya paso una vez con la version con icono. Este patron simple es
+              el que ya se sabe que captura bien. */}
           <div className="grid grid-cols-4 gap-2.5">
             {[
-              { label: 'Liquidez disponible', value: liquidezDisponible, icon: Droplets, color: C.blue600, bg: C.blue50 },
-              { label: 'Presupuestado', value: totalPresupuestado, icon: Target, color: C.indigo600, bg: C.indigo50 },
-              { label: 'Pagado', value: totalPagado, icon: CheckCircle2, color: C.emerald600, bg: C.emerald50 },
-              { label: 'Falta por cubrir', value: totalFalta, icon: Clock, color: totalFalta > 0 ? C.amber600 : C.emerald600, bg: totalFalta > 0 ? C.amber50 : C.emerald50 },
+              { label: 'Liquidez disponible', value: liquidezDisponible },
+              { label: 'Presupuestado', value: totalPresupuestado },
+              { label: 'Pagado', value: totalPagado },
+              { label: 'Falta por cubrir', value: totalFalta },
             ].map(k => (
-              <div key={k.label} className="rounded-lg p-2.5 flex items-center gap-2" style={{ border: `1px solid ${C.slate300}` }}>
-                <div className="w-8 h-8 rounded-md flex items-center justify-center shrink-0" style={{ backgroundColor: k.bg }}>
-                  <k.icon size={15} style={{ color: k.color }} />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] truncate" style={{ color: C.slate500 }}>{k.label}</p>
-                  <p className="text-sm font-bold tabular-nums truncate" style={{ color: C.slate900 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
-                </div>
+              <div key={k.label} className="rounded-lg p-2.5 text-center" style={{ border: `1px solid ${C.slate300}` }}>
+                <p className="text-[10px]" style={{ color: C.slate500 }}>{k.label}</p>
+                <p className="text-sm font-bold tabular-nums" style={{ color: C.slate900 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
               </div>
             ))}
           </div>
 
           {rows.length === 0 ? (
             <p className="text-sm" style={{ color: C.slate400 }}>Sin presupuesto capturado para esta quincena.</p>
+          ) : filasPorCubrir.length === 0 ? (
+            <p className="text-sm font-medium" style={{ color: C.emerald600 }}>✓ Todo cubierto — no queda ninguna partida pendiente.</p>
           ) : (
             <div className="overflow-hidden rounded-lg" style={{ border: `1px solid ${C.slate300}` }}>
               <table className="w-full text-[11px] border-collapse">
@@ -199,7 +212,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((r, i) => (
+                  {filasPorCubrir.map((r, i) => (
                     <tr key={r.id} style={{ borderTop: `1px solid ${C.slate200}`, backgroundColor: i % 2 === 1 ? C.slate50 : C.white }}>
                       <td className="py-1 px-2.5" style={{ color: C.slate700 }}>{r.categoria.nombre}</td>
                       <td className="py-1 px-2.5" style={{ color: C.slate700 }}>{r.descripcion}</td>
@@ -216,10 +229,10 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
                 </tbody>
                 <tfoot>
                   <tr className="font-bold" style={{ borderTop: `2px solid ${C.slate300}`, backgroundColor: C.slate50 }}>
-                    <td className="py-1.5 px-2.5" style={{ color: C.slate800 }} colSpan={2}>TOTAL</td>
-                    <td className="py-1.5 px-2.5 text-right tabular-nums" style={{ color: C.slate800 }}>{formatMXN(totalPresupuestado)}</td>
-                    <td className="py-1.5 px-2.5 text-right tabular-nums" style={{ color: C.slate800 }}>{formatMXN(totalPagado)}</td>
-                    <td className="py-1.5 px-2.5 text-right tabular-nums" style={{ color: C.slate800 }}>{formatMXN(totalFalta)}</td>
+                    <td className="py-1.5 px-2.5" style={{ color: C.slate800 }} colSpan={2}>TOTAL PENDIENTE</td>
+                    <td className="py-1.5 px-2.5 text-right tabular-nums" style={{ color: C.slate800 }}>{formatMXN(totalPresupuestadoPendiente)}</td>
+                    <td className="py-1.5 px-2.5 text-right tabular-nums" style={{ color: C.slate800 }}>{formatMXN(totalPagadoPendiente)}</td>
+                    <td className="py-1.5 px-2.5 text-right tabular-nums" style={{ color: C.slate800 }}>{formatMXN(totalFaltaPendiente)}</td>
                     <td></td>
                   </tr>
                 </tfoot>

@@ -168,6 +168,12 @@ export interface ReporteResumenData {
   totalPresupuestado: number
   totalPagado: number
   totalFalta: number
+  // `rows` solo trae lo pendiente (ver ResumenPreview.tsx) -- estos totales
+  // deben sumar esas mismas filas, no la quincena completa, o la fila TOTAL
+  // no va a cuadrar con lo que esta arriba de ella.
+  totalPresupuestadoPendiente: number
+  totalPagadoPendiente: number
+  totalFaltaPendiente: number
   rows: ReporteResumenRow[]
 }
 
@@ -205,7 +211,7 @@ export async function downloadResumenExcel(data: ReporteResumenData) {
     r.getCell(4).numFmt = moneyFmt
     r.getCell(5).numFmt = moneyFmt
   }
-  const totalRow = sheet.addRow(['TOTAL', '', money(data.totalPresupuestado), money(data.totalPagado), money(data.totalFalta), ''])
+  const totalRow = sheet.addRow(['TOTAL PENDIENTE', '', money(data.totalPresupuestadoPendiente), money(data.totalPagadoPendiente), money(data.totalFaltaPendiente), ''])
   totalRow.font = { bold: true }
   totalRow.getCell(3).numFmt = moneyFmt
   totalRow.getCell(4).numFmt = moneyFmt
