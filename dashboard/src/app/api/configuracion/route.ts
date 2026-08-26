@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { parseMontoReferencia } from '@/lib/referencia'
 
 const TIPOS_VALIDOS = ['QUINCENAL', 'SEMANAL', 'MENSUAL']
 
@@ -11,18 +12,6 @@ export async function GET() {
     console.error('Error fetching configuracion:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
-}
-
-// Valida un monto de referencia opcional: null limpia el valor, un numero >= 0
-// lo fija, cualquier otra cosa es invalido. undefined significa "no tocar".
-function parseMontoReferencia(value: unknown, campo: string) {
-  if (value === undefined) return { ok: true as const, value: undefined }
-  if (value === null) return { ok: true as const, value: null }
-  const n = Number(value)
-  if (!Number.isFinite(n) || n < 0) {
-    return { ok: false as const, error: `${campo} debe ser un numero mayor o igual a 0, o null` }
-  }
-  return { ok: true as const, value: n }
 }
 
 export async function PUT(request: Request) {
