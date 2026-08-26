@@ -1,13 +1,14 @@
 'use client'
 import { useState, useEffect, Fragment } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { ChevronUp, ChevronDown, ChevronRight, Target, AlertTriangle, Activity, Sparkles, RefreshCw } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronRight, Target, AlertTriangle, Activity, Sparkles, RefreshCw, FlaskConical, Plus, X } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { resolveReferencia, normalizeReferencia, type ReferenciaValores } from '@/lib/referencia'
+import { colorForCategoria } from '@/lib/category-colors'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -35,10 +36,25 @@ interface Props {
 
 interface BalancePorQ {
   quincenaId: number; codigo: string; fechaInicio: string
-  ingresos: number; gastos: number; gastosReales: number; balance: number
+  ingresos: number; ingresosReales: number; gastos: number; gastosReales: number; balance: number
   esCerrada: boolean
   ingresoRef: number | null; limiteRef: number | null; tieneOverride: boolean
 }
+
+// Series fijas disponibles en la grafica -- cada una es un dataKey que ya
+// vive (o se deriva) en BalancePorQ/chartData. "Ingresos"/"Gastos" son las
+// unicas activas por default; el resto es opt-in para no saturar la grafica.
+interface SerieConfig { key: string; label: string; color: string; dashed?: boolean; tipo?: 'monotone' | 'stepAfter' }
+const SERIES_BASE: SerieConfig[] = [
+  { key: 'ingresos', label: 'Ingresos (presupuestado)', color: '#10b981' },
+  { key: 'ingresosReales', label: 'Ingresos (real)', color: '#047857', dashed: true },
+  { key: 'gastos', label: 'Gastos (presupuestado)', color: '#f43f5e' },
+  { key: 'gastosReales', label: 'Gastos (real)', color: '#be123c', dashed: true },
+  { key: 'ma3Gastos', label: 'Tendencia (prom. móvil 3)', color: '#6366f1', dashed: true },
+  { key: 'ingresoRef', label: 'Meta ingreso', color: '#10b981', dashed: true, tipo: 'stepAfter' },
+  { key: 'limiteRef', label: 'Límite gasto', color: '#f43f5e', dashed: true, tipo: 'stepAfter' },
+]
+const DEFAULT_SERIES = new Set(['ingresos', 'gastos'])
 
 type SortKey = 'quincena' | 'ingresos' | 'gastos' | 'balance'
 
@@ -65,10 +81,10 @@ function defaultDesdeHasta(quincenas: Quincena[], today: string): { desde: strin
 }
 
 function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global: ReferenciaValores, today: string): BalancePorQ[] {
-  const byQ = new Map<number, { ingresos: number; gastos: number; gastosReales: number }>()
+  const byQ = new Map<number, { ingresos: number; ingresosReales: number; gastos: number; gastosReales: number }>()
   for (const p of rows) {
-    const acc = byQ.get(p.quincenaId) ?? { ingresos: 0, gastos: 0, gastosReales: 0 }
-    if (p.categoria.tipo === 'Ingreso') acc.ingresos += Number(p.montoPresupuestado)
+    const acc = byQ.get(p.quincenaId) ?? { ingresos: 0, ingresosReales: 0, gastos: 0, gastosReales: 0 }
+    if (p.categoria.tipo === 'Ingreso') { acc.ingresos += Number(p.montoPresupuestado); acc.ingresosReales += p.real }
     if (p.categoria.tipo === 'Gasto') { acc.gastos += Number(p.montoPresupuestado); acc.gastosReales += p.real }
     byQ.set(p.quincenaId, acc)
   }
@@ -79,13 +95,26 @@ function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global:
       const ref = resolveReferencia(q, global)
       return {
         quincenaId: q.id, codigo: q.codigo, fechaInicio: q.fechaInicio,
-        ingresos: acc.ingresos, gastos: acc.gastos, gastosReales: acc.gastosReales,
+        ingresos: acc.ingresos, ingresosReales: acc.ingresosReales, gastos: acc.gastos, gastosReales: acc.gastosReales,
         balance: acc.ingresos - acc.gastos,
         esCerrada: q.fechaFin < today,
         ingresoRef: ref.ingresoReferencia, limiteRef: ref.limiteGastoReferencia,
         tieneOverride: ref.ingresoEsOverride || ref.limiteEsOverride,
       }
     })
+}
+
+// Gasto real por quincena de una categoria especifica -- para las series
+// opcionales "+ Agregar categoria". Usa TODAS las filas (no filasFiltradas),
+// a proposito: el filtro de Categoria de arriba acota tabla/agregados, pero
+// una serie agregada aqui debe poder compararse sin importar ese filtro.
+function serieCategoria(rows: PresupuestoRow[], categoriaId: number): Map<number, number> {
+  const map = new Map<number, number>()
+  for (const p of rows) {
+    if (p.categoriaId !== categoriaId) continue
+    map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + p.real)
+  }
+  return map
 }
 
 function getSortValue(q: BalancePorQ, key: SortKey): string | number {
@@ -119,6 +148,14 @@ function fieldClass() {
 
 function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
   return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
+}
+
+// Sustituye el gasto real de una quincena por un valor hipotetico -- usado
+// por el modo Simulacion para recalcular proyeccion/consistencia "que tal
+// si". No muta el arreglo original.
+function conSimulacion(cerradas: BalancePorQ[], sim: { quincenaId: number; gastoHipotetico: number } | null): BalancePorQ[] {
+  if (!sim) return cerradas
+  return cerradas.map(q => q.quincenaId === sim.quincenaId ? { ...q, gastosReales: sim.gastoHipotetico } : q)
 }
 
 // Analitica: promedio +- desviacion del gasto real de las ultimas hasta-3
@@ -221,12 +258,66 @@ export function PresupuestoAnalisis({
     return sortDir === 'asc' ? cmp : -cmp
   })
 
+  // Series elegibles de la grafica (checkmarks) + categorias agregadas como
+  // lineas de comparacion opcionales.
+  const [seriesActivas, setSeriesActivas] = useState<Set<string>>(new Set(DEFAULT_SERIES))
+  function toggleSerie(key: string) {
+    setSeriesActivas(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+  const [categoriasAgregadas, setCategoriasAgregadas] = useState<number[]>([])
+  function agregarCategoria(id: number) {
+    if (!categoriasAgregadas.includes(id)) setCategoriasAgregadas(prev => [...prev, id])
+  }
+  function quitarCategoria(id: number) {
+    setCategoriasAgregadas(prev => prev.filter(c => c !== id))
+  }
+
+  // Modo Simulacion: 100% en memoria del navegador, nunca se guarda -- ver
+  // guardarReferencia() mas abajo para contraste (ese si hace PUT). Cambiar
+  // de quincena o refrescar la pagina la borra sin dejar rastro.
+  const [simulando, setSimulando] = useState(false)
+  const [simQuincenaId, setSimQuincenaId] = useState('')
+  const [simGastoInput, setSimGastoInput] = useState('')
+  const simQuincena = quincenasFiltradas.find(q => q.id.toString() === simQuincenaId) ?? null
+
+  // Al activar Simular, o al no haber ninguna quincena elegida todavia,
+  // arranca en la mas reciente del rango actual con su gasto real como
+  // punto de partida editable.
+  useEffect(() => {
+    if (!simulando) return
+    const objetivo = simQuincenaId ? balancePorQ.find(q => q.quincenaId.toString() === simQuincenaId) : undefined
+    if (objetivo) return
+    const ultima = balancePorQ[balancePorQ.length - 1]
+    if (ultima) { setSimQuincenaId(ultima.quincenaId.toString()); setSimGastoInput(ultima.gastosReales.toString()) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simulando, quincenasFiltradas])
+
+  function cambiarSimQuincena(id: string) {
+    setSimQuincenaId(id)
+    const q = balancePorQ.find(x => x.quincenaId.toString() === id)
+    setSimGastoInput(q ? q.gastosReales.toString() : '')
+  }
+
   // Grafica: promedio movil de 3 sobre el gasto presupuestado, en el mismo
-  // orden cronologico que la tabla (sin el sort del usuario).
+  // orden cronologico que la tabla (sin el sort del usuario), mas una
+  // columna por cada categoria agregada y, si hay simulacion activa, el
+  // gasto real hipotetico de esa quincena.
+  const seriesCategoriaData = categoriasAgregadas.map(id => ({ id, serie: serieCategoria(presupuestos, id) }))
+  const simGastoNum = Number(simGastoInput)
+  const simGastoHipotetico = simGastoInput !== '' && Number.isFinite(simGastoNum) ? simGastoNum : null
   const chartData = balancePorQ.map((q, i, arr) => {
     const ventana = arr.slice(Math.max(0, i - 2), i + 1)
     const ma3Gastos = ventana.length >= 3 ? ventana.reduce((s, x) => s + x.gastos, 0) / ventana.length : null
-    return { ...q, ma3Gastos }
+    const catValues: Record<string, number | null> = {}
+    for (const { id, serie } of seriesCategoriaData) catValues[`cat_${id}`] = serie.get(q.quincenaId) ?? null
+    const gastoSimulado = simulando && simGastoHipotetico != null
+      ? (q.quincenaId === simQuincena?.id ? simGastoHipotetico : q.gastosReales)
+      : null
+    return { ...q, ma3Gastos, ...catValues, gastoSimulado }
   })
 
   // Analitica: siempre sobre TODAS las quincenas (sin el filtro de Categoria/
@@ -238,6 +329,19 @@ export function PresupuestoAnalisis({
   const proy = proyeccion(todasCerradas)
   const cons = consistencia(todasCerradas)
   const excesos = categoriasQueExceden(presupuestos, todasCerradas)
+
+  // "Con simulacion": mismas funciones, sustituyendo el gasto real de la
+  // quincena simulada. Si esa quincena no esta cerrada (ej. la actual, "en
+  // curso"), la sustitucion no cambia nada en proyeccion/consistencia -- en
+  // ese caso no se muestra el renglon "con simulacion" para no mostrar un
+  // numero identico al real sin explicacion.
+  const simSustitucion = simulando && simQuincena && simGastoHipotetico != null
+    ? { quincenaId: simQuincena.id, gastoHipotetico: simGastoHipotetico }
+    : null
+  const simAfectaCerradas = simSustitucion != null && todasCerradas.some(q => q.quincenaId === simSustitucion.quincenaId)
+  const cerradasConSim = conSimulacion(todasCerradas, simSustitucion)
+  const proySim = simAfectaCerradas ? proyeccion(cerradasConSim) : null
+  const consSim = simAfectaCerradas ? consistencia(cerradasConSim) : null
 
   // Formulario de referencia por quincena
   const [refQuincenaId, setRefQuincenaId] = useState('')
@@ -297,6 +401,11 @@ export function PresupuestoAnalisis({
             subtitle={proy ? `± ${formatMXN(proy.desviacion)} (${proy.n} quincenas)` : 'Historial insuficiente'}
             icon={<Target size={20} className="text-indigo-600 dark:text-indigo-300" />}
             color="text-indigo-600 dark:text-indigo-400" bg="bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50"
+            action={proySim && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                <FlaskConical size={10} /> con simulación: {formatMXN(proySim.promedio)}
+              </p>
+            )}
           />
           <KpiCard
             label="Consistencia del gasto"
@@ -304,6 +413,11 @@ export function PresupuestoAnalisis({
             subtitle={cons ? `variación ${(cons.cv * 100).toFixed(0)}% (${cons.n} quincenas)` : 'Historial insuficiente'}
             icon={<Activity size={20} className="text-sky-600 dark:text-sky-300" />}
             color="text-sky-600 dark:text-sky-400" bg="bg-sky-50 dark:bg-sky-950/50 dark:ring-1 dark:ring-sky-800/50"
+            action={consSim && (
+              <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                <FlaskConical size={10} /> con simulación: {consSim.cv < 0.10 ? 'Muy consistente' : consSim.cv < 0.25 ? 'Moderada' : 'Muy variable'}
+              </p>
+            )}
           />
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1.5">
@@ -424,7 +538,82 @@ export function PresupuestoAnalisis({
       {/* Gráfica */}
       {chartData.length > 1 && (
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
-          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">Ingresos y gastos presupuestados por quincena</p>
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Comparativa por quincena</p>
+            <button type="button" onClick={() => setSimulando(s => !s)}
+              className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${simulando ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-300 dark:hover:border-amber-700'}`}>
+              <FlaskConical size={13} /> Simular
+            </button>
+          </div>
+
+          {/* Series elegibles */}
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {SERIES_BASE.map(s => {
+              const active = seriesActivas.has(s.key)
+              return (
+                <button key={s.key} type="button" onClick={() => toggleSerie(s.key)}
+                  className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-full border cursor-pointer transition-colors ${active ? 'text-white border-transparent' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-slate-700 dark:hover:text-slate-200'}`}
+                  style={active ? { backgroundColor: s.color } : undefined}>
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: active ? '#fff' : s.color }} />
+                  {s.label}
+                </button>
+              )
+            })}
+          </div>
+
+          {/* Categorías agregadas para comparar */}
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            {categoriasAgregadas.map((id, i) => {
+              const cat = categorias.find(c => c.id === id)
+              if (!cat) return null
+              const color = colorForCategoria(cat.nombre, i)
+              return (
+                <span key={id} className="inline-flex items-center gap-1.5 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full text-white" style={{ backgroundColor: color }}>
+                  {cat.nombre}
+                  <button type="button" onClick={() => quitarCategoria(id)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${cat.nombre} de la gráfica`}>
+                    <X size={12} />
+                  </button>
+                </span>
+              )
+            })}
+            {categorias.some(c => !categoriasAgregadas.includes(c.id)) && (
+              <div className="relative inline-flex items-center">
+                <Plus size={12} className="absolute left-2.5 text-slate-400 dark:text-slate-500 pointer-events-none" />
+                <select value="" onChange={e => { const id = Number(e.target.value); if (id) agregarCategoria(id) }}
+                  aria-label="Agregar categoría a la gráfica"
+                  className="text-xs rounded-full pl-7 pr-2.5 py-1.5 bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-dashed border-slate-300 dark:border-slate-600 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                  <option value="">Agregar categoría</option>
+                  {categorias.filter(c => !categoriasAgregadas.includes(c.id)).map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          {/* Mini-formulario de simulación -- 100% en memoria, ver conSimulacion() */}
+          {simulando && (
+            <div className="flex flex-wrap items-end gap-3 mb-3 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl">
+              <div>
+                <Label htmlFor="an-sim-q">Quincena a simular</Label>
+                <select id="an-sim-q" value={simQuincenaId} onChange={e => cambiarSimQuincena(e.target.value)}
+                  className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                  {quincenasFiltradas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="an-sim-gasto">Gasto hipotético</Label>
+                <input id="an-sim-gasto" type="number" min="0" step="0.01" value={simGastoInput} onChange={e => setSimGastoInput(e.target.value)} className={fieldClass()} />
+              </div>
+              <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5 pb-2">
+                <FlaskConical size={12} /> Solo en esta vista — nada se guarda ni se envía al servidor.
+              </p>
+              {simSustitucion && !simAfectaCerradas && (
+                <p className="text-xs text-amber-700 dark:text-amber-400 basis-full">
+                  {simQuincena?.codigo} sigue en curso — se ve reflejado en la gráfica, pero Proyección/Consistencia solo usan quincenas ya cerradas.
+                </p>
+              )}
+            </div>
+          )}
+
           <ResponsiveContainer width="100%" height={240}>
             <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
@@ -432,11 +621,26 @@ export function PresupuestoAnalisis({
               <YAxis tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
               <Tooltip formatter={(v) => formatMXN(Number(v ?? 0))} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
               <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
-              <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
-              <Line type="monotone" dataKey="ma3Gastos" name="Tendencia (prom. móvil 3)" stroke="#6366f1" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-              <Line type="stepAfter" dataKey="ingresoRef" name="Meta ingreso" stroke="#10b981" strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls />
-              <Line type="stepAfter" dataKey="limiteRef" name="Límite gasto" stroke="#f43f5e" strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls />
+              {SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => (
+                <Line key={s.key} type={s.tipo ?? 'monotone'} dataKey={s.key} name={s.label}
+                  stroke={s.color} strokeWidth={s.dashed ? 1.5 : 2} strokeDasharray={s.dashed ? '4 2' : undefined}
+                  dot={s.dashed ? false : { r: 3, fill: s.color }} activeDot={s.dashed ? undefined : { r: 5 }}
+                  connectNulls={s.tipo === 'stepAfter'} isAnimationActive={false} />
+              ))}
+              {categoriasAgregadas.map((id, i) => {
+                const cat = categorias.find(c => c.id === id)
+                if (!cat) return null
+                const color = colorForCategoria(cat.nombre, i)
+                return (
+                  <Line key={`cat_${id}`} type="monotone" dataKey={`cat_${id}`} name={cat.nombre}
+                    stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
+                    connectNulls isAnimationActive={false} />
+                )
+              })}
+              {simulando && (
+                <Line type="monotone" dataKey="gastoSimulado" name="Gasto simulado" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2"
+                  dot={{ r: 3, fill: '#f59e0b' }} activeDot={{ r: 5 }} connectNulls isAnimationActive={false} />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
