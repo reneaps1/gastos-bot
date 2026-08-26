@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect, Fragment } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { ChevronUp, ChevronDown, ChevronRight, Target, AlertTriangle, Activity, Sparkles, RefreshCw, FlaskConical, Plus, X } from 'lucide-react'
+import { useState, useEffect, useRef, Fragment } from 'react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush } from 'recharts'
+import { ChevronUp, ChevronDown, ChevronRight, Target, AlertTriangle, Activity, Sparkles, RefreshCw, FlaskConical, Plus, X, CopyPlus } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { KpiCard } from '@/components/ui/KpiCard'
@@ -133,15 +133,24 @@ function serieCategoria(rows: PresupuestoRow[], categoriaId: number, unidad: Uni
 
 interface LineaPresupuesto { categoriaId: number; descripcion: string }
 
+// Normaliza descripcion antes de comparar (trim + minusculas) para que dos
+// filas que representan la "misma" linea recurrente pero se tipearon con
+// distinto case/espacios (ej. "Renta" vs "renta ") se fusionen en una sola
+// serie en vez de partirse en dos series con datos incompletos cada una.
+function normalizarDescripcion(s: string) {
+  return s.trim().toLowerCase()
+}
+
 // Monto (real o presupuestado) por quincena de una linea de presupuesto
 // especifica (ej. solo "Renta" dentro de Hogar, no toda la categoria). Un
 // Presupuesto vive en una sola quincena -- no hay un id estable de la linea
 // a traves del tiempo, asi que se identifica por categoria+descripcion,
-// igual nombre cada Q.
+// igual nombre cada Q (normalizada).
 function serieLinea(rows: PresupuestoRow[], linea: LineaPresupuesto, unidad: UnidadSerie): Map<number, number> {
   const map = new Map<number, number>()
+  const descripcionNormalizada = normalizarDescripcion(linea.descripcion)
   for (const p of rows) {
-    if (p.categoriaId !== linea.categoriaId || p.descripcion !== linea.descripcion) continue
+    if (p.categoriaId !== linea.categoriaId || normalizarDescripcion(p.descripcion) !== descripcionNormalizada) continue
     map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + valorSerie(p, unidad))
   }
   return map
@@ -154,11 +163,14 @@ function lineaDataKey(l: LineaPresupuesto) {
 // Todas las combinaciones categoria+descripcion ya usadas alguna vez (en
 // TODAS las quincenas, mismo criterio que serieCategoria) -- son las
 // opciones que puede elegir el selector "+ Agregar categoria o linea".
+// Deduplica por descripcion normalizada (ver normalizarDescripcion) pero
+// muestra la primera grafia tal cual se encontro, sin inventar una version
+// "canonica".
 function lineasDisponibles(rows: PresupuestoRow[]): LineaPresupuesto[] {
   const vistos = new Set<string>()
   const result: LineaPresupuesto[] = []
   for (const p of rows) {
-    const key = lineaDataKey({ categoriaId: p.categoriaId, descripcion: p.descripcion })
+    const key = `${p.categoriaId}_${normalizarDescripcion(p.descripcion)}`
     if (vistos.has(key)) continue
     vistos.add(key)
     result.push({ categoriaId: p.categoriaId, descripcion: p.descripcion })
@@ -173,6 +185,19 @@ function lineasDisponibles(rows: PresupuestoRow[]): LineaPresupuesto[] {
 const LINEA_COLORS = ['#a855f7', '#0891b2', '#ca8a04', '#be185d', '#65a30d', '#c026d3']
 function colorForLinea(index: number) {
   return LINEA_COLORS[index % LINEA_COLORS.length]
+}
+
+// Claves por INSTANCIA para la grafica (distintas de lineaDataKey, que es
+// por identidad categoria+descripcion y solo la usa lineasDisponibles para
+// deduplicar filas crudas). Cada categoria/linea agregada o duplicada tiene
+// su propio dataKey, aunque comparta categoria/descripcion con otra
+// instancia ya agregada -- asi "renta (real)" y "renta (ppto)" pueden
+// coexistir como dos series independientes.
+function categoriaInstanceKey(instanceId: number) {
+  return `cat_${instanceId}`
+}
+function lineaInstanceKey(instanceId: number) {
+  return `lin_${instanceId}`
 }
 
 function getSortValue(q: BalancePorQ, key: SortKey): string | number {
@@ -303,6 +328,9 @@ export function PresupuestoAnalisis({
       return next
     })
   }
+  // Colapsar/expandir toda la tabla, sin afectar expandedQ (el detalle por
+  // fila que estaba abierto sigue abierto al volver a expandir).
+  const [tablaColapsada, setTablaColapsada] = useState(false)
 
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -326,25 +354,57 @@ export function PresupuestoAnalisis({
       return next
     })
   }
-  const [categoriasAgregadas, setCategoriasAgregadas] = useState<{ categoriaId: number; unidad: UnidadSerie }[]>([])
+  // Contador monotono para instanceId, nunca decrementado al quitar una
+  // instancia -- a diferencia de .length, un id derivado de .length se
+  // reutilizaria despues de quitar+agregar y podria chocar con una
+  // instancia que sigue viva. Un solo contador compartido entre categorias
+  // y lineas (no dos independientes): ambos chips viven en el mismo
+  // contenedor, y si cada arreglo tuviera su propio contador desde 0 una
+  // categoria y una linea podrian generar el mismo instanceId y colisionar
+  // como key de React.
+  const nextInstanceId = useRef(0)
+  function mintInstanceId() {
+    return nextInstanceId.current++
+  }
+
+  const [categoriasAgregadas, setCategoriasAgregadas] = useState<{ instanceId: number; categoriaId: number; unidad: UnidadSerie }[]>([])
   function agregarCategoria(categoriaId: number) {
-    setCategoriasAgregadas(prev => prev.some(c => c.categoriaId === categoriaId) ? prev : [...prev, { categoriaId, unidad: 'real' }])
+    if (categoriasAgregadas.some(c => c.categoriaId === categoriaId)) return
+    setCategoriasAgregadas(prev => [...prev, { instanceId: mintInstanceId(), categoriaId, unidad: 'real' }])
   }
-  function quitarCategoria(categoriaId: number) {
-    setCategoriasAgregadas(prev => prev.filter(c => c.categoriaId !== categoriaId))
+  // Agrega una segunda (o tercera...) instancia de la MISMA categoria, con
+  // la unidad opuesta a la original por default -- un clic te da real+ppto
+  // lado a lado, en vez de reabrir el desplegable (que solo ofrece cada
+  // categoria/linea una vez, ver gruposAgregar).
+  function duplicarCategoria(instanceId: number) {
+    const original = categoriasAgregadas.find(c => c.instanceId === instanceId)
+    if (!original) return
+    setCategoriasAgregadas(prev => [...prev, { instanceId: mintInstanceId(), categoriaId: original.categoriaId, unidad: otraUnidad(original.unidad) }])
   }
-  function toggleUnidadCategoria(categoriaId: number) {
-    setCategoriasAgregadas(prev => prev.map(c => c.categoriaId === categoriaId ? { ...c, unidad: otraUnidad(c.unidad) } : c))
+  function quitarCategoria(instanceId: number) {
+    setCategoriasAgregadas(prev => prev.filter(c => c.instanceId !== instanceId))
   }
-  const [lineasAgregadas, setLineasAgregadas] = useState<(LineaPresupuesto & { unidad: UnidadSerie })[]>([])
+  function toggleUnidadCategoria(instanceId: number) {
+    setCategoriasAgregadas(prev => prev.map(c => c.instanceId === instanceId ? { ...c, unidad: otraUnidad(c.unidad) } : c))
+  }
+
+  const [lineasAgregadas, setLineasAgregadas] = useState<(LineaPresupuesto & { instanceId: number; unidad: UnidadSerie; color: string })[]>([])
   function agregarLinea(linea: LineaPresupuesto) {
-    setLineasAgregadas(prev => prev.some(l => l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion) ? prev : [...prev, { ...linea, unidad: 'real' }])
+    if (lineasAgregadas.some(l => l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion)) return
+    const instanceId = mintInstanceId()
+    setLineasAgregadas(prev => [...prev, { ...linea, instanceId, unidad: 'real', color: colorForLinea(instanceId) }])
   }
-  function quitarLinea(linea: LineaPresupuesto) {
-    setLineasAgregadas(prev => prev.filter(l => !(l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion)))
+  function duplicarLinea(instanceId: number) {
+    const original = lineasAgregadas.find(l => l.instanceId === instanceId)
+    if (!original) return
+    const nuevoId = mintInstanceId()
+    setLineasAgregadas(prev => [...prev, { categoriaId: original.categoriaId, descripcion: original.descripcion, instanceId: nuevoId, unidad: otraUnidad(original.unidad), color: colorForLinea(nuevoId) }])
   }
-  function toggleUnidadLinea(linea: LineaPresupuesto) {
-    setLineasAgregadas(prev => prev.map(l => l.categoriaId === linea.categoriaId && l.descripcion === linea.descripcion ? { ...l, unidad: otraUnidad(l.unidad) } : l))
+  function quitarLinea(instanceId: number) {
+    setLineasAgregadas(prev => prev.filter(l => l.instanceId !== instanceId))
+  }
+  function toggleUnidadLinea(instanceId: number) {
+    setLineasAgregadas(prev => prev.map(l => l.instanceId === instanceId ? { ...l, unidad: otraUnidad(l.unidad) } : l))
   }
 
   // Modo Simulacion: 100% en memoria del navegador, nunca se guarda -- ver
@@ -377,16 +437,16 @@ export function PresupuestoAnalisis({
   // orden cronologico que la tabla (sin el sort del usuario), mas una
   // columna por cada categoria agregada y, si hay simulacion activa, el
   // gasto real hipotetico de esa quincena.
-  const seriesCategoriaData = categoriasAgregadas.map(c => ({ id: c.categoriaId, serie: serieCategoria(presupuestos, c.categoriaId, c.unidad) }))
-  const seriesLineaData = lineasAgregadas.map(l => ({ key: lineaDataKey(l), serie: serieLinea(presupuestos, l, l.unidad) }))
+  const seriesCategoriaData = categoriasAgregadas.map(c => ({ instanceId: c.instanceId, serie: serieCategoria(presupuestos, c.categoriaId, c.unidad) }))
+  const seriesLineaData = lineasAgregadas.map(l => ({ instanceId: l.instanceId, serie: serieLinea(presupuestos, l, l.unidad) }))
   const simGastoNum = Number(simGastoInput)
   const simGastoHipotetico = simGastoInput !== '' && Number.isFinite(simGastoNum) ? simGastoNum : null
   const chartData = balancePorQ.map((q, i, arr) => {
     const ventana = arr.slice(Math.max(0, i - 2), i + 1)
     const ma3Gastos = ventana.length >= 3 ? ventana.reduce((s, x) => s + x.gastos, 0) / ventana.length : null
     const catValues: Record<string, number | null> = {}
-    for (const { id, serie } of seriesCategoriaData) catValues[`cat_${id}`] = serie.get(q.quincenaId) ?? null
-    for (const { key, serie } of seriesLineaData) catValues[key] = serie.get(q.quincenaId) ?? null
+    for (const { instanceId, serie } of seriesCategoriaData) catValues[categoriaInstanceKey(instanceId)] = serie.get(q.quincenaId) ?? null
+    for (const { instanceId, serie } of seriesLineaData) catValues[lineaInstanceKey(instanceId)] = serie.get(q.quincenaId) ?? null
     const gastoSimulado = simulando && simGastoHipotetico != null
       ? (q.quincenaId === simQuincena?.id ? simGastoHipotetico : q.gastosReales)
       : null
@@ -400,8 +460,8 @@ export function PresupuestoAnalisis({
   // vacio -- el auto-scale en si funciona bien apenas hay algun dato.
   const activeChartKeys = [
     ...SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => s.key),
-    ...categoriasAgregadas.map(c => `cat_${c.categoriaId}`),
-    ...lineasAgregadas.map(l => lineaDataKey(l)),
+    ...categoriasAgregadas.map(c => categoriaInstanceKey(c.instanceId)),
+    ...lineasAgregadas.map(l => lineaInstanceKey(l.instanceId)),
   ]
   const hayDatosParaGraficar = activeChartKeys.length > 0 && chartData.some(row =>
     activeChartKeys.some(k => {
@@ -572,7 +632,15 @@ export function PresupuestoAnalisis({
 
       {/* Balance por Q: tabla */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-        {loading ? (
+        <div className="flex items-center justify-between flex-wrap gap-2 p-4 pb-3">
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Balance por Q</p>
+          <button type="button" onClick={() => setTablaColapsada(v => !v)}
+            aria-label={tablaColapsada ? 'Mostrar tabla de balance por quincena' : 'Ocultar tabla de balance por quincena'}
+            className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-indigo-600 dark:hover:text-indigo-400 hover:border-indigo-300 dark:hover:border-indigo-700">
+            {tablaColapsada ? <ChevronRight size={13} /> : <ChevronDown size={13} />} {tablaColapsada ? 'Mostrar' : 'Ocultar'}
+          </button>
+        </div>
+        {!tablaColapsada && (loading ? (
           <div className="py-16 text-center text-sm text-slate-400 dark:text-slate-500">Cargando...</div>
         ) : filasOrdenadas.length === 0 ? (
           <div className="py-16 text-center text-slate-400 dark:text-slate-500">
@@ -640,7 +708,7 @@ export function PresupuestoAnalisis({
               </tbody>
             </table>
           </div>
-        )}
+        ))}
       </div>
 
       {/* Gráfica */}
@@ -678,35 +746,42 @@ export function PresupuestoAnalisis({
               if (!cat) return null
               const color = colorForCategoria(cat.nombre, i)
               return (
-                <span key={c.categoriaId} className="inline-flex items-center gap-1 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full text-white" style={{ backgroundColor: color }}>
+                <span key={c.instanceId} className="inline-flex items-center gap-1 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full text-white" style={{ backgroundColor: color }}>
                   {cat.nombre}
-                  <button type="button" onClick={() => toggleUnidadCategoria(c.categoriaId)}
+                  <button type="button" onClick={() => toggleUnidadCategoria(c.instanceId)}
                     className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/25 hover:bg-white/40 cursor-pointer"
                     title="Cambiar entre real y presupuestado">
                     {c.unidad === 'real' ? 'real' : 'ppto'}
                   </button>
-                  <button type="button" onClick={() => quitarCategoria(c.categoriaId)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${cat.nombre} de la gráfica`}>
+                  <button type="button" onClick={() => duplicarCategoria(c.instanceId)} className="hover:opacity-70 cursor-pointer"
+                    aria-label={`Duplicar ${cat.nombre} para comparar real vs. presupuestado`} title="Duplicar (comparar real vs. presupuestado)">
+                    <CopyPlus size={12} />
+                  </button>
+                  <button type="button" onClick={() => quitarCategoria(c.instanceId)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${cat.nombre} de la gráfica`}>
                     <X size={12} />
                   </button>
                 </span>
               )
             })}
-            {lineasAgregadas.map((l, i) => {
+            {lineasAgregadas.map(l => {
               const cat = categorias.find(c => c.id === l.categoriaId)
-              const color = colorForLinea(i)
               const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
               return (
-                <span key={lineaDataKey(l)}
+                <span key={l.instanceId}
                   className="inline-flex items-center gap-1 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full border-2 border-dashed"
-                  style={{ borderColor: color, color }}>
+                  style={{ borderColor: l.color, color: l.color }}>
                   {label}
-                  <button type="button" onClick={() => toggleUnidadLinea(l)}
+                  <button type="button" onClick={() => toggleUnidadLinea(l.instanceId)}
                     className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white hover:opacity-80 cursor-pointer"
-                    style={{ backgroundColor: color }}
+                    style={{ backgroundColor: l.color }}
                     title="Cambiar entre real y presupuestado">
                     {l.unidad === 'real' ? 'real' : 'ppto'}
                   </button>
-                  <button type="button" onClick={() => quitarLinea(l)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${label} de la gráfica`}>
+                  <button type="button" onClick={() => duplicarLinea(l.instanceId)} className="hover:opacity-70 cursor-pointer"
+                    aria-label={`Duplicar ${label} para comparar real vs. presupuestado`} title="Duplicar (comparar real vs. presupuestado)">
+                    <CopyPlus size={12} />
+                  </button>
+                  <button type="button" onClick={() => quitarLinea(l.instanceId)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${label} de la gráfica`}>
                     <X size={12} />
                   </button>
                 </span>
@@ -760,7 +835,7 @@ export function PresupuestoAnalisis({
           )}
 
           {hayDatosParaGraficar ? (
-            <ResponsiveContainer width="100%" height={240}>
+            <ResponsiveContainer width="100%" height={268}>
               <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
@@ -779,19 +854,18 @@ export function PresupuestoAnalisis({
                   const color = colorForCategoria(cat.nombre, i)
                   const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'ppto'})`
                   return (
-                    <Line key={`cat_${c.categoriaId}`} type="monotone" dataKey={`cat_${c.categoriaId}`} name={name}
+                    <Line key={categoriaInstanceKey(c.instanceId)} type="monotone" dataKey={categoriaInstanceKey(c.instanceId)} name={name}
                       stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
                       connectNulls isAnimationActive={false} />
                   )
                 })}
-                {lineasAgregadas.map((l, i) => {
+                {lineasAgregadas.map(l => {
                   const cat = categorias.find(c => c.id === l.categoriaId)
-                  const color = colorForLinea(i)
                   const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
                   const name = `${label} (${l.unidad === 'real' ? 'real' : 'ppto'})`
                   return (
-                    <Line key={lineaDataKey(l)} type="monotone" dataKey={lineaDataKey(l)} name={name}
-                      stroke={color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
+                    <Line key={lineaInstanceKey(l.instanceId)} type="monotone" dataKey={lineaInstanceKey(l.instanceId)} name={name}
+                      stroke={l.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: l.color }} activeDot={{ r: 5 }}
                       connectNulls isAnimationActive={false} />
                   )
                 })}
@@ -799,10 +873,11 @@ export function PresupuestoAnalisis({
                   <Line type="monotone" dataKey="gastoSimulado" name="Gasto simulado" stroke="#f59e0b" strokeWidth={2} strokeDasharray="4 2"
                     dot={{ r: 3, fill: '#f59e0b' }} activeDot={{ r: 5 }} connectNulls isAnimationActive={false} />
                 )}
+                <Brush dataKey="codigo" height={24} stroke="#6366f1" fill="#eef2ff" travellerWidth={8} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-[240px] flex items-center justify-center text-center px-6">
+            <div className="h-[268px] flex items-center justify-center text-center px-6">
               <p className="text-sm text-slate-400 dark:text-slate-500">
                 {activeChartKeys.length === 0
                   ? 'Activa al menos una serie arriba para ver la gráfica.'
