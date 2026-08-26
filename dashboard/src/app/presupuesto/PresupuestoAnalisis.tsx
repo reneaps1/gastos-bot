@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Fragment } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
-import { ChevronUp, ChevronDown, Target, AlertTriangle, Activity, Sparkles, RefreshCw } from 'lucide-react'
+import { ChevronUp, ChevronDown, ChevronRight, Target, AlertTriangle, Activity, Sparkles, RefreshCw } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { KpiCard } from '@/components/ui/KpiCard'
@@ -12,7 +12,7 @@ import { resolveReferencia, normalizeReferencia, type ReferenciaValores } from '
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
 interface PresupuestoRow {
-  id: number; quincenaId: number; categoriaId: number
+  id: number; quincenaId: number; categoriaId: number; descripcion: string
   montoPresupuestado: number | string; real: number
   categoria: { nombre: string; tipo: string }
 }
@@ -24,8 +24,10 @@ interface Props {
   presupuestos: PresupuestoRow[]
   loading: boolean
   configGlobal: ReferenciaValores
-  rango: string
-  setRango: (v: string) => void
+  desdeId: string
+  setDesdeId: (v: string) => void
+  hastaId: string
+  setHastaId: (v: string) => void
   categoriaId: string
   setCategoriaId: (v: string) => void
   onQuincenaUpdated: (updated: Quincena) => void
@@ -40,13 +42,26 @@ interface BalancePorQ {
 
 type SortKey = 'quincena' | 'ingresos' | 'gastos' | 'balance'
 
-function quincenasEnRango(quincenas: Quincena[], rango: string, today: string): Quincena[] {
+// Rango contiguo entre dos quincenas elegidas (inclusive en ambos extremos).
+// Si vienen invertidas se auto-corrige, para no dejar la vista en un estado
+// vacio confuso.
+function quincenasEnRango(quincenas: Quincena[], desdeId: string, hastaId: string): Quincena[] {
   const ordenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
-  if (rango === 'año') return ordenadas.filter(q => q.fechaInicio.slice(0, 4) === today.slice(0, 4))
-  if (rango === 'todas') return ordenadas
+  const iDesde = ordenadas.findIndex(q => q.id.toString() === desdeId)
+  const iHasta = ordenadas.findIndex(q => q.id.toString() === hastaId)
+  if (iDesde === -1 || iHasta === -1) return ordenadas
+  const [lo, hi] = iDesde <= iHasta ? [iDesde, iHasta] : [iHasta, iDesde]
+  return ordenadas.slice(lo, hi + 1)
+}
+
+// Ultimas hasta-6 quincenas ya iniciadas, mismo criterio que usaba el preset
+// "Ultimas 6" -- sirve de default inicial para Desde/Hasta.
+function defaultDesdeHasta(quincenas: Quincena[], today: string): { desde: string; hasta: string } | null {
+  const ordenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
   const empezadas = ordenadas.filter(q => q.fechaInicio <= today)
-  const n = rango === 'ultimas12' ? 12 : 6
-  return empezadas.slice(-n)
+  if (empezadas.length === 0) return null
+  const ultimas = empezadas.slice(-6)
+  return { desde: ultimas[0].id.toString(), hasta: ultimas[ultimas.length - 1].id.toString() }
 }
 
 function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global: ReferenciaValores, today: string): BalancePorQ[] {
@@ -165,14 +180,34 @@ function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: Balance
 
 export function PresupuestoAnalisis({
   quincenas, categorias, today, presupuestos, loading, configGlobal,
-  rango, setRango, categoriaId, setCategoriaId, onQuincenaUpdated,
+  desdeId, setDesdeId, hastaId, setHastaId, categoriaId, setCategoriaId, onQuincenaUpdated,
 }: Props) {
   const { toast } = useToast()
 
+  // Default inicial de Desde/Hasta (ultimas 6 quincenas iniciadas), una sola
+  // vez que la lista de quincenas ya cargo -- mismo patron que refQuincenaId
+  // mas abajo.
+  useEffect(() => {
+    if (!desdeId && !hastaId && quincenas.length > 0) {
+      const def = defaultDesdeHasta(quincenas, today)
+      if (def) { setDesdeId(def.desde); setHastaId(def.hasta) }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quincenas])
+
   const filasFiltradas = categoriaId ? presupuestos.filter(p => p.categoriaId.toString() === categoriaId) : presupuestos
-  const quincenasFiltradas = quincenasEnRango(quincenas, rango, today)
+  const quincenasFiltradas = quincenasEnRango(quincenas, desdeId, hastaId)
   const balancePorQ = buildBalancePorQ(filasFiltradas, quincenasFiltradas, configGlobal, today)
     .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
+
+  const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set())
+  function toggleExpand(quincenaId: number) {
+    setExpandedQ(prev => {
+      const next = new Set(prev)
+      next.has(quincenaId) ? next.delete(quincenaId) : next.add(quincenaId)
+      return next
+    })
+  }
 
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -246,84 +281,10 @@ export function PresupuestoAnalisis({
     }
   }
 
+  const quincenasOrdenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
+
   return (
     <div className="space-y-6">
-      {/* Filtros */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex flex-wrap items-center gap-2">
-        <FilterChip value={rango} onChange={setRango} onClear={() => setRango('ultimas6')} placeholder="Rango">
-          <option value="ultimas6">Últimas 6</option>
-          <option value="ultimas12">Últimas 12</option>
-          <option value="año">Este año</option>
-          <option value="todas">Todas</option>
-        </FilterChip>
-        <FilterChip value={categoriaId} onChange={setCategoriaId} onClear={() => setCategoriaId('')} placeholder="Categoría">
-          {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-        </FilterChip>
-      </div>
-
-      {/* Balance por Q: tabla */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-        {loading ? (
-          <div className="py-16 text-center text-sm text-slate-400 dark:text-slate-500">Cargando...</div>
-        ) : filasOrdenadas.length === 0 ? (
-          <div className="py-16 text-center text-slate-400 dark:text-slate-500">
-            <p className="font-medium text-slate-600 dark:text-slate-400">Sin presupuesto en este rango</p>
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
-                <tr>
-                  <SortableTh label="Q" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                  <SortableTh label="Ingresos" sortKeyName="ingresos" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                  <SortableTh label="Gastos" sortKeyName="gastos" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                  <SortableTh label="Balance" sortKeyName="balance" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                {filasOrdenadas.map(q => (
-                  <tr key={q.quincenaId} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
-                    <td className="px-4 py-3">
-                      <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">
-                        {q.codigo}
-                      </span>
-                      {!q.esCerrada && <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">en curso</span>}
-                      {q.tieneOverride && <span className="ml-1.5 text-[10px] text-indigo-500 dark:text-indigo-400" title="Referencia personalizada para esta quincena">·ref</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400 tabular-nums">{formatMXN(q.ingresos)}</td>
-                    <td className="px-4 py-3 text-right text-rose-600 dark:text-rose-400 tabular-nums">{formatMXN(q.gastos)}</td>
-                    <td className={`px-4 py-3 text-right font-semibold tabular-nums ${q.balance >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}`}>
-                      {formatMXN(q.balance)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Gráfica */}
-      {chartData.length > 1 && (
-        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
-          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">Ingresos y gastos presupuestados por quincena</p>
-          <ResponsiveContainer width="100%" height={240}>
-            <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-              <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
-              <YAxis tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
-              <Tooltip formatter={(v) => formatMXN(Number(v ?? 0))} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
-              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-              <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
-              <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
-              <Line type="monotone" dataKey="ma3Gastos" name="Tendencia (prom. móvil 3)" stroke="#6366f1" strokeWidth={2} strokeDasharray="5 3" dot={false} />
-              <Line type="stepAfter" dataKey="ingresoRef" name="Meta ingreso" stroke="#10b981" strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls />
-              <Line type="stepAfter" dataKey="limiteRef" name="Límite gasto" stroke="#f43f5e" strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-
       {/* Analítica */}
       <div>
         <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-1.5">
@@ -365,6 +326,121 @@ export function PresupuestoAnalisis({
           </div>
         </div>
       </div>
+
+      {/* Filtros */}
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex flex-wrap items-end gap-3">
+        <div>
+          <Label htmlFor="an-desde">Desde</Label>
+          <select id="an-desde" value={desdeId} onChange={e => setDesdeId(e.target.value)}
+            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+            {quincenasOrdenadas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
+          </select>
+        </div>
+        <div>
+          <Label htmlFor="an-hasta">Hasta</Label>
+          <select id="an-hasta" value={hastaId} onChange={e => setHastaId(e.target.value)}
+            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+            {quincenasOrdenadas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
+          </select>
+        </div>
+        <FilterChip value={categoriaId} onChange={setCategoriaId} onClear={() => setCategoriaId('')} placeholder="Categoría">
+          {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+        </FilterChip>
+      </div>
+
+      {/* Balance por Q: tabla */}
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        {loading ? (
+          <div className="py-16 text-center text-sm text-slate-400 dark:text-slate-500">Cargando...</div>
+        ) : filasOrdenadas.length === 0 ? (
+          <div className="py-16 text-center text-slate-400 dark:text-slate-500">
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin presupuesto en este rango</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                <tr>
+                  <SortableTh label="Q" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Ingresos" sortKeyName="ingresos" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Gastos" sortKeyName="gastos" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Balance" sortKeyName="balance" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                {filasOrdenadas.map(q => {
+                  const expanded = expandedQ.has(q.quincenaId)
+                  const gastosDeQ = filasFiltradas.filter(p => p.quincenaId === q.quincenaId && p.categoria.tipo === 'Gasto')
+                  return (
+                    <Fragment key={q.quincenaId}>
+                      <tr className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+                        <td className="px-4 py-3">
+                          <button onClick={() => toggleExpand(q.quincenaId)}
+                            className="inline-flex items-center gap-1 text-slate-400 dark:text-slate-500 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors cursor-pointer align-middle"
+                            aria-label={expanded ? 'Ocultar detalle' : 'Ver detalle de gastos'}>
+                            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          </button>
+                          <span className="ml-1.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">
+                            {q.codigo}
+                          </span>
+                          {!q.esCerrada && <span className="ml-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">en curso</span>}
+                          {q.tieneOverride && <span className="ml-1.5 text-[10px] text-indigo-500 dark:text-indigo-400" title="Referencia personalizada para esta quincena">·ref</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right text-emerald-600 dark:text-emerald-400 tabular-nums">{formatMXN(q.ingresos)}</td>
+                        <td className="px-4 py-3 text-right text-rose-600 dark:text-rose-400 tabular-nums">{formatMXN(q.gastos)}</td>
+                        <td className={`px-4 py-3 text-right font-semibold tabular-nums ${q.balance >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                          {formatMXN(q.balance)}
+                        </td>
+                      </tr>
+                      {expanded && (
+                        <tr className="bg-slate-50/70 dark:bg-slate-900/40">
+                          <td colSpan={4} className="px-4 py-3">
+                            {gastosDeQ.length === 0 ? (
+                              <p className="text-xs text-slate-400 dark:text-slate-500">Sin partidas de gasto en esta quincena.</p>
+                            ) : (
+                              <div className="space-y-1 max-w-xl">
+                                {gastosDeQ.map(p => (
+                                  <div key={p.id} className="flex items-center justify-between text-xs">
+                                    <span className="text-slate-600 dark:text-slate-300 truncate pr-3">{p.categoria.nombre} · {p.descripcion}</span>
+                                    <span className="tabular-nums text-slate-500 dark:text-slate-400 shrink-0">
+                                      {formatMXN(p.real)} <span className="text-slate-400 dark:text-slate-600">/ {formatMXN(Number(p.montoPresupuestado))}</span>
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Gráfica */}
+      {chartData.length > 1 && (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">Ingresos y gastos presupuestados por quincena</p>
+          <ResponsiveContainer width="100%" height={240}>
+            <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
+              <YAxis tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
+              <Tooltip formatter={(v) => formatMXN(Number(v ?? 0))} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+              <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
+              <Line type="monotone" dataKey="ma3Gastos" name="Tendencia (prom. móvil 3)" stroke="#6366f1" strokeWidth={2} strokeDasharray="5 3" dot={false} />
+              <Line type="stepAfter" dataKey="ingresoRef" name="Meta ingreso" stroke="#10b981" strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls />
+              <Line type="stepAfter" dataKey="limiteRef" name="Límite gasto" stroke="#f43f5e" strokeWidth={1.5} strokeDasharray="2 2" dot={false} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
       {/* Referencia por quincena */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
