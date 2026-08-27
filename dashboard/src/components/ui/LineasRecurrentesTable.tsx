@@ -1,11 +1,12 @@
 'use client'
 import { useState } from 'react'
 import Link from 'next/link'
-import { Pencil, ExternalLink, PauseCircle, Trash2, AlertTriangle, Repeat, Layers } from 'lucide-react'
+import { Pencil, ExternalLink, PauseCircle, Trash2, AlertTriangle, Repeat, Layers, Search, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { KpiCard } from '@/components/ui/KpiCard'
+import { FilterChip } from '@/components/ui/FilterChip'
 import { colorForCategoria } from '@/lib/category-colors'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
@@ -40,6 +41,39 @@ interface GrupoRecurrente<T extends RecurrenteRow> {
 }
 
 const FREQ_LABEL: Record<string, string> = { CADA_QUINCENA: 'Cada quincena', MENSUAL: 'Mensual' }
+
+type SortKey = 'descripcion' | 'categoria' | 'frecuencia' | 'monto' | 'estado' | 'ocurrencias' | 'rango'
+
+function getSortValue<T extends RecurrenteRow>(g: GrupoRecurrente<T>, key: SortKey): string | number {
+  switch (key) {
+    case 'descripcion': return g.descripcion.toLowerCase()
+    case 'categoria': return g.categoria.nombre.toLowerCase()
+    case 'frecuencia': return FREQ_LABEL[g.frecuencia] ?? g.frecuencia
+    case 'monto': return g.montoPresupuestado
+    case 'estado': return g.activa ? 1 : 0
+    case 'ocurrencias': return g.items.length
+    case 'rango': return g.desde.fechaInicio
+  }
+}
+
+// Mismo componente que ya existe duplicado en page.tsx y PresupuestoAnalisis.tsx --
+// esta app no tiene una version compartida en components/ui/, así que se repite
+// tal cual en vez de romper esa convención por esta única tabla.
+function SortableTh({ label, sortKeyName, align, hideOnMobile, sortKey, sortDir, onSort }: {
+  label: string; sortKeyName: SortKey; align?: 'right' | 'center'; hideOnMobile?: boolean
+  sortKey: SortKey | null; sortDir: 'asc' | 'desc'; onSort: (key: SortKey) => void
+}) {
+  const active = sortKey === sortKeyName
+  return (
+    <th className={`px-4 py-3 ${align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left'} ${hideOnMobile ? 'hidden md:table-cell' : ''}`}>
+      <button onClick={() => onSort(sortKeyName)}
+        className={`inline-flex items-center gap-1 font-medium cursor-pointer transition-colors ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400'}`}>
+        {label}
+        {active && (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+      </button>
+    </th>
+  )
+}
 
 // Fila de referencia de un grupo: la que cubre hoy, o si ninguna, la última
 // ya iniciada. Se usa tanto para "Ver en su quincena" como para anclar el
@@ -80,6 +114,38 @@ export function LineasRecurrentesTable<T extends RecurrenteRow>({ rows, today, l
   const { toast } = useToast()
   const grupos = buildGrupos(rows, today)
   const categoriasUnicas = Array.from(new Set(grupos.map(g => g.categoria.nombre)))
+
+  const [categoriaFiltro, setCategoriaFiltro] = useState('')
+  const [estadoFiltro, setEstadoFiltro] = useState('')
+  const [busqueda, setBusqueda] = useState('')
+  // sortKey empieza en null a propósito: sin tocar ningún encabezado, el
+  // orden es exactamente el que ya devuelve buildGrupos (activas primero,
+  // más recientes arriba) -- este cambio no altera la vista por default.
+  const [sortKey, setSortKey] = useState<SortKey | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc') }
+    else { setSortKey(key); setSortDir('desc') }
+  }
+
+  const gruposFiltrados = grupos.filter(g => {
+    if (categoriaFiltro && g.categoria.nombre !== categoriaFiltro) return false
+    if (estadoFiltro === 'activa' && !g.activa) return false
+    if (estadoFiltro === 'finalizada' && g.activa) return false
+    const needle = busqueda.trim().toLowerCase()
+    if (needle && !g.descripcion.toLowerCase().includes(needle) && !g.categoria.nombre.toLowerCase().includes(needle)) return false
+    return true
+  })
+
+  const gruposOrdenados = sortKey
+    ? [...gruposFiltrados].sort((a, b) => {
+        const va = getSortValue(a, sortKey)
+        const vb = getSortValue(b, sortKey)
+        const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb))
+        return sortDir === 'asc' ? cmp : -cmp
+      })
+    : gruposFiltrados
 
   const [accion, setAccion] = useState<{ grupo: GrupoRecurrente<T>; tipo: 'pausar' | 'eliminar' } | null>(null)
   const [ejecutando, setEjecutando] = useState(false)
@@ -126,6 +192,32 @@ export function LineasRecurrentesTable<T extends RecurrenteRow>({ rows, today, l
         </div>
       )}
 
+      {grupos.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterChip value={categoriaFiltro} onChange={setCategoriaFiltro} onClear={() => setCategoriaFiltro('')} placeholder="Categoría">
+              {categoriasUnicas.map(nombre => <option key={nombre} value={nombre}>{nombre}</option>)}
+            </FilterChip>
+            <FilterChip value={estadoFiltro} onChange={setEstadoFiltro} onClear={() => setEstadoFiltro('')} placeholder="Estado">
+              <option value="activa">Activa</option>
+              <option value="finalizada">Finalizada</option>
+            </FilterChip>
+            <div className="relative flex-1 min-w-[160px]">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+              <input type="text" placeholder="Buscar por descripción o categoría..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+                className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              {busqueda && (
+                <button type="button" onClick={() => setBusqueda('')} aria-label="Quitar búsqueda"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer">
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 dark:text-slate-500">{gruposFiltrados.length} de {grupos.length} series</p>
+        </div>
+      )}
+
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {loading ? (
           <div className="py-16 text-center text-sm text-slate-400 dark:text-slate-500">Cargando...</div>
@@ -135,23 +227,32 @@ export function LineasRecurrentesTable<T extends RecurrenteRow>({ rows, today, l
             <p className="font-medium text-slate-600 dark:text-slate-400">Sin líneas recurrentes todavía</p>
             <p className="text-sm mt-1">Para crear una, abre Tarjetas o Tabla en Presupuesto, edita o crea una partida y activa &quot;Repetir esta partida&quot;.</p>
           </div>
+        ) : gruposFiltrados.length === 0 ? (
+          <div className="py-16 text-center text-slate-400 dark:text-slate-500 px-6">
+            <Search size={28} className="mx-auto mb-3 text-slate-300 dark:text-slate-600" />
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin resultados con estos filtros</p>
+            <button type="button" onClick={() => { setCategoriaFiltro(''); setEstadoFiltro(''); setBusqueda('') }}
+              className="text-sm text-indigo-600 dark:text-indigo-400 hover:underline mt-1 cursor-pointer">
+              Quitar filtros
+            </button>
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Categoría</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Frecuencia</th>
-                  <th className="text-right px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Monto</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estado</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Ocurrencias</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Rango</th>
+                  <SortableTh label="Descripción" sortKeyName="descripcion" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Categoría" sortKeyName="categoria" hideOnMobile sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Frecuencia" sortKeyName="frecuencia" hideOnMobile sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Monto" sortKeyName="monto" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Estado" sortKeyName="estado" align="center" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Ocurrencias" sortKeyName="ocurrencias" align="center" hideOnMobile sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Rango" sortKeyName="rango" hideOnMobile sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                {grupos.map(g => {
+                {gruposOrdenados.map(g => {
                   const ancla = filaAncla(g.items, today)
                   const relevante = ancla?.quincena ?? g.items[0].quincena
                   const hayFuturas = g.items.some(p => p.quincena.fechaInicio > relevante.fechaInicio)
