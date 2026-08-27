@@ -3,7 +3,8 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
-import { formatMXN, formatDateStr } from '@/lib/utils'
+import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
+import { computeQuincenasTarget } from '@/lib/recurrencia'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
@@ -1274,16 +1275,50 @@ export default function PresupuestoPage() {
                     </div>
                   </div>
 
-                  {/* Summary */}
-                  <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-lg px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300">
-                    <Repeat size={11} className="inline mr-1.5 mb-0.5" />
-                    {editingP ? 'Se aplicará a' : 'Se creará en'}{' '}
-                    {form.terminaCon === 'n_ocurrencias'
-                      ? `${form.numOcurrencias} ${form.frecuencia === 'MENSUAL' ? 'meses' : 'quincenas'}`
-                      : 'todas las quincenas futuras disponibles'
+                  {/* Preview en vivo -- mismo computeQuincenasTarget que ya usa el
+                      servidor para generar las filas reales, así este resumen
+                      nunca puede decir algo distinto de lo que se va a guardar. */}
+                  {(() => {
+                    const anclaId = (form.targetQuincenaId && form.targetQuincenaId !== 'keep')
+                      ? form.targetQuincenaId
+                      : (editingP?.quincenaId?.toString() ?? quincenaId)
+                    const inicioQ = quincenas.find(q => q.id.toString() === anclaId)
+                    const preview = inicioQ ? computeQuincenasTarget(
+                      quincenas.map(q => ({ ...q, fechaInicio: new Date(q.fechaInicio), fechaFin: new Date(q.fechaFin) })),
+                      { ...inicioQ, fechaInicio: new Date(inicioQ.fechaInicio), fechaFin: new Date(inicioQ.fechaFin) },
+                      form.frecuencia,
+                      form.diaCobro ? parseInt(form.diaCobro) : null,
+                      form.terminaCon === 'n_ocurrencias' ? (parseInt(form.numOcurrencias) || null) : null
+                    ) : []
+
+                    if (preview.length === 0) {
+                      return (
+                        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2.5 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                          <AlertTriangle size={12} className="shrink-0" />
+                          Sin quincenas disponibles para esta configuración -- revisa la frecuencia o el día de cobro.
+                        </div>
+                      )
                     }
-                    {form.frecuencia === 'MENSUAL' ? ', solo primera quincena del mes' : ''}.
-                  </div>
+                    const primera = preview[0]
+                    const ultima = preview[preview.length - 1]
+                    return (
+                      <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-lg px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300 space-y-1.5">
+                        <p>
+                          <Repeat size={11} className="inline mr-1.5 mb-0.5" />
+                          {editingP ? 'Se aplicará a' : 'Se creará en'}{' '}
+                          <strong>{preview.length}</strong> {preview.length === 1 ? 'quincena' : 'quincenas'}: {primera.codigo} → {ultima.codigo}{' '}
+                          ({formatDate(primera.fechaInicio)} – {formatDate(ultima.fechaFin)})
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {preview.map(q => (
+                            <span key={q.id} className="text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">
+                              {q.codigo}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
           </div>
