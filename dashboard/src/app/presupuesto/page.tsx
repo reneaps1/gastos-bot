@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
@@ -17,6 +17,7 @@ import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
 import { PresupuestoAnalisis } from './PresupuestoAnalisis'
+import { PresupuestoConfiguracion } from './PresupuestoConfiguracion'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
 const CAT_DOT: Record<string, string> = {
@@ -26,7 +27,7 @@ const CAT_DOT: Record<string, string> = {
 }
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
-interface Categoria { id: number; nombre: string; tipo: string }
+interface Categoria { id: number; nombre: string; tipo: string; activo: boolean }
 export interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
@@ -174,7 +175,7 @@ export default function PresupuestoPage() {
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
-  const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis'>('tabla')
+  const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis' | 'configuracion'>('tabla')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
   const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
   const [tablaLoading, setTablaLoading] = useState(false)
@@ -198,6 +199,12 @@ export default function PresupuestoPage() {
   const [analisisDesdeId, setAnalisisDesdeId] = useState('')
   const [analisisHastaId, setAnalisisHastaId] = useState('')
   const [analisisCategoriaId, setAnalisisCategoriaId] = useState('')
+
+  // Pestaña Configuración: mismo patrón de aislamiento que Análisis -- fetch
+  // propio, disparado solo cuando esta pestaña está activa.
+  const [configPresupuestos, setConfigPresupuestos] = useState<Presupuesto[]>([])
+  const [configLoading, setConfigLoading] = useState(false)
+  const [frecuenciaPagoDefault, setFrecuenciaPagoDefault] = useState<string | null>(null)
 
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
   const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
@@ -227,6 +234,7 @@ export default function PresupuestoPage() {
       setQuincenaId(getInitialQuincenaId(q))
       setTablaQuincenaId(getDefaultQuincenaId(q))
       setLimiteReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
+      setFrecuenciaPagoDefault(cfg.frecuenciaPagoDefault ?? null)
     })
   }, [])
 
@@ -268,6 +276,26 @@ export default function PresupuestoPage() {
   useEffect(() => {
     if (vista === 'analisis') fetchAnalisis()
   }, [vista, fetchAnalisis])
+
+  const fetchConfiguracion = useCallback(async () => {
+    setConfigLoading(true)
+    try {
+      const res = await fetch('/api/presupuestos')
+      setConfigPresupuestos(await res.json())
+    } finally { setConfigLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (vista === 'configuracion') fetchConfiguracion()
+  }, [vista, fetchConfiguracion])
+
+  // Pausar/eliminar una serie desde PresupuestoConfiguracion puede afectar
+  // filas que Tarjetas/Tabla ya tienen cargadas para otras quincenas -- se
+  // refrescan ambas, igual que ya hace handleDelete/saveBody.
+  function refetchTrasCambioRecurrente() {
+    fetchPresupuestos()
+    fetchPresupuestosTabla()
+  }
 
   function handleQuincenaReferenciaUpdated(updated: Quincena) {
     setQuincenas(qs => qs.map(q => q.id === updated.id ? { ...q, ...normalizeReferencia(updated) } : q))
@@ -432,19 +460,21 @@ export default function PresupuestoPage() {
     await saveBody({ ...editScopeBody, scope })
   }
 
-  async function handleDelete(mode: 'single' | 'all') {
+  async function handleDelete(mode: 'single' | 'future' | 'all') {
     if (!deleteTarget) return
     setDeleting(true)
     try {
       const { id, p } = deleteTarget
-      const url = mode === 'all' && p.recurrenciaGrupoId
-        ? `/api/presupuestos/${id}?grupoId=${p.recurrenciaGrupoId}`
+      const url = mode !== 'single' && p.recurrenciaGrupoId
+        ? `/api/presupuestos/${id}?grupoId=${p.recurrenciaGrupoId}${mode === 'future' ? '&scope=future' : ''}`
         : `/api/presupuestos/${id}`
       const res = await fetch(url, { method: 'DELETE' })
       if (!res.ok) throw new Error()
       const data = await res.json()
-      toast(mode === 'all' && p.recurrenciaGrupoId
-        ? `${data.count} partidas eliminadas`
+      toast(mode !== 'single' && p.recurrenciaGrupoId
+        ? mode === 'future'
+          ? (data.count > 0 ? `${data.count} ocurrencias futuras eliminadas` : 'No había ocurrencias futuras que pausar')
+          : `${data.count} partidas eliminadas`
         : 'Presupuesto eliminado')
       setDeleteTarget(null)
       fetchPresupuestos()
@@ -562,7 +592,7 @@ export default function PresupuestoPage() {
       </div>
 
       {/* Toggle de vista */}
-      <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+      <div className="inline-flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
         <button onClick={() => setVista('tarjetas')}
           className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tarjetas' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
           <LayoutGrid size={14} /> Tarjetas
@@ -574,6 +604,10 @@ export default function PresupuestoPage() {
         <button onClick={() => setVista('analisis')}
           className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'analisis' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
           <Sparkles size={14} /> Análisis
+        </button>
+        <button onClick={() => setVista('configuracion')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'configuracion' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <SlidersHorizontal size={14} /> Configuración
         </button>
       </div>
 
@@ -603,6 +637,13 @@ export default function PresupuestoPage() {
           categoriaId={analisisCategoriaId} setCategoriaId={setAnalisisCategoriaId}
           onQuincenaUpdated={handleQuincenaReferenciaUpdated}
           openEdit={openEdit}
+        />
+      ) : vista === 'configuracion' ? (
+        <PresupuestoConfiguracion
+          quincenas={quincenas} categorias={categorias} today={today}
+          frecuenciaPagoDefault={frecuenciaPagoDefault}
+          presupuestos={configPresupuestos} loading={configLoading}
+          onChanged={() => { fetchConfiguracion(); refetchTrasCambioRecurrente() }}
         />
       ) : (
         <>
@@ -1322,6 +1363,15 @@ export default function PresupuestoPage() {
               >
                 <p className="text-sm font-medium">Solo esta quincena</p>
                 <p className="text-xs text-rose-400 dark:text-rose-500 mt-0.5">Elimina únicamente este registro</p>
+              </button>
+
+              <button
+                onClick={() => handleDelete('future')}
+                disabled={deleting}
+                className="w-full text-left px-4 py-3 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Pausar futuras</p>
+                <p className="text-xs text-amber-500 dark:text-amber-500/80 mt-0.5">Elimina las quincenas futuras; esta y las anteriores quedan igual</p>
               </button>
 
               <button
