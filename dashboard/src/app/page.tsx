@@ -11,8 +11,9 @@ import { KpiCard } from '@/components/ui/KpiCard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
-interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
 interface User { id: number; nombre: string }
 interface Transaccion {
@@ -83,7 +84,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
-      setQuincenas(data)
+      setQuincenas(data.map(normalizeReferencia))
       setQuincenaId(getInitialQuincenaId(data))
     })
     fetch('/api/configuracion').then(r => r.json()).then(cfg => {
@@ -278,6 +279,9 @@ export default function DashboardPage() {
   const today = getMexicoDateString()
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
+  // Override propio de la quincena activa (configurable en Presupuesto →
+  // Análisis) si existe, si no el global de Configuración → Períodos de pago.
+  const refActual = resolveReferencia(qActual, { ingresoReferencia, limiteGastoReferencia })
   const periodoActual = granularidad !== 'quincena' ? getPeriodoRange(granularidad, periodoAnchor) : null
   const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
   const liquidezNeta = snapshot ? totalLiquidez - snapshot.pagosQuincena : 0
@@ -448,7 +452,7 @@ export default function DashboardPage() {
         <>
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} subtitle={ingresoReferencia != null ? `meta ${formatMXN(ingresoReferencia)}` : undefined} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
+            <KpiCard label="Ingresos" value={formatMXN(metricas.ingresos)} subtitle={refActual.ingresoReferencia != null ? `meta ${formatMXN(refActual.ingresoReferencia)}` : undefined} icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />} color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50" />
             <KpiCard label="Gastos" value={formatMXN(metricas.gastos)} subtitle={metricas.presupTotal > 0 ? `${metricas.pctPresup.toFixed(0)}% del presupuesto` : undefined} icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50" subtitleColor={metricas.pctPresup > 90 ? 'text-rose-500 dark:text-rose-400' : metricas.pctPresup > 70 ? 'text-amber-500 dark:text-amber-400' : 'text-slate-400 dark:text-slate-500'} />
             <KpiCard label="Ahorros" value={formatMXN(metricas.ahorros)} icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />} color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50" />
             <KpiCard label="Margen" value={formatMXN(metricas.margen)} icon={metricas.margen >= 0 ? <TrendingUp size={20} className="text-indigo-600 dark:text-indigo-300" /> : <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />} color={metricas.margen >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'} bg={metricas.margen >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'} subtitle={metricas.ahorros > 0 ? `neto ${formatMXN(metricas.balanceNeto)}` : undefined} />
@@ -471,7 +475,7 @@ export default function DashboardPage() {
                       tickLine={false}
                       axisLine={false}
                       domain={granularidad === 'quincena'
-                        ? [0, (dataMax: number) => Math.max(dataMax, ingresoReferencia ?? 0, limiteGastoReferencia ?? 0) * 1.05]
+                        ? [0, (dataMax: number) => Math.max(dataMax, refActual.ingresoReferencia ?? 0, refActual.limiteGastoReferencia ?? 0) * 1.05]
                         : [0, 'auto']}
                     />
                     <Tooltip formatter={(value) => [formatMXN(Number(value ?? 0))]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
@@ -481,11 +485,11 @@ export default function DashboardPage() {
                     )}
                     {/* Metas de referencia — solo en vista Quincena, ya que el monto se
                         define por quincena y no corresponde a la misma escala en Semana/Mes */}
-                    {granularidad === 'quincena' && ingresoReferencia != null && (
-                      <ReferenceLine y={ingresoReferencia} stroke="#10b981" strokeDasharray="4 2" label={{ value: 'meta ingreso', fontSize: 10, fill: '#10b981', position: 'insideBottomLeft' }} />
+                    {granularidad === 'quincena' && refActual.ingresoReferencia != null && (
+                      <ReferenceLine y={refActual.ingresoReferencia} stroke="#10b981" strokeDasharray="4 2" label={{ value: 'meta ingreso', fontSize: 10, fill: '#10b981', position: 'insideBottomLeft' }} />
                     )}
-                    {granularidad === 'quincena' && limiteGastoReferencia != null && (
-                      <ReferenceLine y={limiteGastoReferencia} stroke="#f43f5e" strokeDasharray="4 2" label={{ value: 'límite', fontSize: 10, fill: '#f43f5e', position: 'insideTopLeft' }} />
+                    {granularidad === 'quincena' && refActual.limiteGastoReferencia != null && (
+                      <ReferenceLine y={refActual.limiteGastoReferencia} stroke="#f43f5e" strokeDasharray="4 2" label={{ value: 'límite', fontSize: 10, fill: '#f43f5e', position: 'insideTopLeft' }} />
                     )}
                     <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
                     <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
@@ -821,8 +825,9 @@ export default function DashboardPage() {
               fuera de "Planificación del presupuesto" (arriba) a propósito: esa
               tarjeta exige ingresos > 0, pero la referencia tiene sentido incluso
               antes de registrar el ingreso de la quincena. */}
-          {granularidad === 'quincena' && limiteGastoReferencia != null && (() => {
-            const pctLimite = limiteGastoReferencia > 0 ? (metricas.gastoParaLimite / limiteGastoReferencia) * 100 : 0
+          {granularidad === 'quincena' && refActual.limiteGastoReferencia != null && (() => {
+            const limiteEfectivo = refActual.limiteGastoReferencia!
+            const pctLimite = limiteEfectivo > 0 ? (metricas.gastoParaLimite / limiteEfectivo) * 100 : 0
             const barColor = pctLimite > 90 ? 'bg-rose-500' : pctLimite > 70 ? 'bg-amber-500' : 'bg-emerald-500'
             const textColor = pctLimite > 90 ? 'text-rose-600 dark:text-rose-400' : pctLimite > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
             return (
@@ -830,10 +835,13 @@ export default function DashboardPage() {
                 <div className="flex items-center justify-between gap-3 mb-2">
                   <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1">
                     Límite de gasto de referencia
-                    <span className="cursor-help text-slate-300 dark:text-slate-600 font-normal" title="Tu límite de referencia (Configuración → Períodos de pago). Es solo informativo, no bloquea nada.">ⓘ</span>
+                    {refActual.limiteEsOverride && (
+                      <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">personalizado</span>
+                    )}
+                    <span className="cursor-help text-slate-300 dark:text-slate-600 font-normal" title="Tu límite de referencia (Configuración → Períodos de pago, o personalizado para esta quincena en Presupuesto → Análisis). Es solo informativo, no bloquea nada.">ⓘ</span>
                   </p>
                   <p className="text-sm font-semibold tabular-nums text-slate-600 dark:text-slate-300">
-                    {formatMXN(metricas.gastoParaLimite)} <span className="text-slate-400 dark:text-slate-500 font-normal">/ {formatMXN(limiteGastoReferencia)}</span>
+                    {formatMXN(metricas.gastoParaLimite)} <span className="text-slate-400 dark:text-slate-500 font-normal">/ {formatMXN(limiteEfectivo)}</span>
                     <span className={`ml-1.5 font-bold ${textColor}`}>{pctLimite.toFixed(0)}%</span>
                   </p>
                 </div>

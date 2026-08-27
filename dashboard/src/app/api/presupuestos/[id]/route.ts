@@ -224,6 +224,27 @@ export async function DELETE(
 
     const { searchParams } = new URL(request.url)
     const grupoId = searchParams.get('grupoId')
+    const scope = searchParams.get('scope')
+
+    if (grupoId && scope === 'future') {
+      // "Pausar futuras": conserva esta fila y todo el historial pasado,
+      // borra solo las ocurrencias con quincena.fechaInicio posterior a la
+      // de esta fila -- mismo corte 'future' que ya usa PUT (exclusivo, no
+      // toca la fila actual). El filtro real usa el grupoId leído del
+      // registro (vía id), no el query param, para no confiar en un valor
+      // de la URL que el cliente pudiera enviar sin relación con esta fila.
+      const current = await prisma.presupuesto.findUnique({ where: { id }, include: { quincena: true } })
+      if (!current || !current.recurrenciaGrupoId) {
+        return NextResponse.json({ error: 'Presupuesto not found' }, { status: 404 })
+      }
+      const { count } = await prisma.presupuesto.deleteMany({
+        where: {
+          recurrenciaGrupoId: current.recurrenciaGrupoId,
+          quincena: { fechaInicio: { gt: current.quincena.fechaInicio } },
+        },
+      })
+      return NextResponse.json({ message: 'Ocurrencias futuras eliminadas', count })
+    }
 
     if (grupoId) {
       const { count } = await prisma.presupuesto.deleteMany({

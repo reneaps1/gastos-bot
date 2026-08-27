@@ -1,9 +1,10 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
-import { formatMXN, formatDateStr } from '@/lib/utils'
+import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
+import { computeQuincenasTarget } from '@/lib/recurrencia'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
@@ -16,6 +17,9 @@ import { FilterChip } from '@/components/ui/FilterChip'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
+import { PresupuestoAnalisis } from './PresupuestoAnalisis'
+import { PresupuestoConfiguracion } from './PresupuestoConfiguracion'
+import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
 const CAT_DOT: Record<string, string> = {
   Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
@@ -23,9 +27,9 @@ const CAT_DOT: Record<string, string> = {
   Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
 
-interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
-interface Categoria { id: number; nombre: string; tipo: string }
-interface Presupuesto {
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
+interface Categoria { id: number; nombre: string; tipo: string; activo: boolean }
+export interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
@@ -172,7 +176,7 @@ export default function PresupuestoPage() {
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
 
-  const [vista, setVista] = useState<'tarjetas' | 'tabla'>('tabla')
+  const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis' | 'configuracion'>('tabla')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
   const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
   const [tablaLoading, setTablaLoading] = useState(false)
@@ -186,6 +190,22 @@ export default function PresupuestoPage() {
   const [busquedaTabla, setBusquedaTabla] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  // Pestaña Análisis: estado propio y aislado (mismo patrón que Tabla), fetch
+  // disparado solo cuando esa pestaña está activa. No comparte nada con
+  // Tarjetas/Tabla para que cambiar de pestaña y volver no pierda filtros.
+  const [analisisPresupuestos, setAnalisisPresupuestos] = useState<Presupuesto[]>([])
+  const [analisisLoading, setAnalisisLoading] = useState(false)
+  const [analisisConfigGlobal, setAnalisisConfigGlobal] = useState<{ ingresoReferencia: number | null; limiteGastoReferencia: number | null }>({ ingresoReferencia: null, limiteGastoReferencia: null })
+  const [analisisDesdeId, setAnalisisDesdeId] = useState('')
+  const [analisisHastaId, setAnalisisHastaId] = useState('')
+  const [analisisCategoriaId, setAnalisisCategoriaId] = useState('')
+
+  // Pestaña Configuración: mismo patrón de aislamiento que Análisis -- fetch
+  // propio, disparado solo cuando esta pestaña está activa.
+  const [configPresupuestos, setConfigPresupuestos] = useState<Presupuesto[]>([])
+  const [configLoading, setConfigLoading] = useState(false)
+  const [frecuenciaPagoDefault, setFrecuenciaPagoDefault] = useState<string | null>(null)
 
   const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
   const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
@@ -210,11 +230,12 @@ export default function PresupuestoPage() {
       fetch('/api/categorias').then(r => r.json()),
       fetch('/api/configuracion').then(r => r.json()),
     ]).then(([q, c, cfg]) => {
-      setQuincenas(q)
+      setQuincenas(q.map(normalizeReferencia))
       setCategorias(c)
       setQuincenaId(getInitialQuincenaId(q))
       setTablaQuincenaId(getDefaultQuincenaId(q))
       setLimiteReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
+      setFrecuenciaPagoDefault(cfg.frecuenciaPagoDefault ?? null)
     })
   }, [])
 
@@ -235,6 +256,51 @@ export default function PresupuestoPage() {
   useEffect(() => {
     if (vista === 'tabla') fetchPresupuestosTabla()
   }, [vista, fetchPresupuestosTabla])
+
+  // Balance por Q necesita el detalle de TODAS las quincenas (no solo la
+  // seleccionada) para poder agregar por periodo y alimentar la analitica —
+  // /api/presupuestos sin quincenaId ya devuelve exactamente eso, mismo fetch
+  // que ya usa la vista Tabla en modo "Todas".
+  const fetchAnalisis = useCallback(async () => {
+    setAnalisisLoading(true)
+    try {
+      const [presupRes, cfgRes] = await Promise.all([
+        fetch('/api/presupuestos'),
+        fetch('/api/configuracion'),
+      ])
+      setAnalisisPresupuestos(await presupRes.json())
+      const cfg = await cfgRes.json()
+      setAnalisisConfigGlobal(normalizeReferencia(cfg))
+    } finally { setAnalisisLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (vista === 'analisis') fetchAnalisis()
+  }, [vista, fetchAnalisis])
+
+  const fetchConfiguracion = useCallback(async () => {
+    setConfigLoading(true)
+    try {
+      const res = await fetch('/api/presupuestos')
+      setConfigPresupuestos(await res.json())
+    } finally { setConfigLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (vista === 'configuracion') fetchConfiguracion()
+  }, [vista, fetchConfiguracion])
+
+  // Pausar/eliminar una serie desde PresupuestoConfiguracion puede afectar
+  // filas que Tarjetas/Tabla ya tienen cargadas para otras quincenas -- se
+  // refrescan ambas, igual que ya hace handleDelete/saveBody.
+  function refetchTrasCambioRecurrente() {
+    fetchPresupuestos()
+    fetchPresupuestosTabla()
+  }
+
+  function handleQuincenaReferenciaUpdated(updated: Quincena) {
+    setQuincenas(qs => qs.map(q => q.id === updated.id ? { ...q, ...normalizeReferencia(updated) } : q))
+  }
 
   function toggleSort(key: SortKey) {
     if (sortKey === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc') }
@@ -395,19 +461,21 @@ export default function PresupuestoPage() {
     await saveBody({ ...editScopeBody, scope })
   }
 
-  async function handleDelete(mode: 'single' | 'all') {
+  async function handleDelete(mode: 'single' | 'future' | 'all') {
     if (!deleteTarget) return
     setDeleting(true)
     try {
       const { id, p } = deleteTarget
-      const url = mode === 'all' && p.recurrenciaGrupoId
-        ? `/api/presupuestos/${id}?grupoId=${p.recurrenciaGrupoId}`
+      const url = mode !== 'single' && p.recurrenciaGrupoId
+        ? `/api/presupuestos/${id}?grupoId=${p.recurrenciaGrupoId}${mode === 'future' ? '&scope=future' : ''}`
         : `/api/presupuestos/${id}`
       const res = await fetch(url, { method: 'DELETE' })
       if (!res.ok) throw new Error()
       const data = await res.json()
-      toast(mode === 'all' && p.recurrenciaGrupoId
-        ? `${data.count} partidas eliminadas`
+      toast(mode !== 'single' && p.recurrenciaGrupoId
+        ? mode === 'future'
+          ? (data.count > 0 ? `${data.count} ocurrencias futuras eliminadas` : 'No había ocurrencias futuras que pausar')
+          : `${data.count} partidas eliminadas`
         : 'Presupuesto eliminado')
       setDeleteTarget(null)
       fetchPresupuestos()
@@ -480,6 +548,10 @@ export default function PresupuestoPage() {
 
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
+  // Limite de referencia efectivo: el override propio de esta quincena
+  // (configurable en Presupuesto → Análisis) si existe, si no el global de
+  // Configuración → Períodos de pago.
+  const refEfectiva = resolveReferencia(qInfo, { limiteGastoReferencia: limiteReferencia })
 
   return (
     <div className="space-y-6">
@@ -521,7 +593,7 @@ export default function PresupuestoPage() {
       </div>
 
       {/* Toggle de vista */}
-      <div className="inline-flex items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+      <div className="inline-flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
         <button onClick={() => setVista('tarjetas')}
           className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tarjetas' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
           <LayoutGrid size={14} /> Tarjetas
@@ -529,6 +601,14 @@ export default function PresupuestoPage() {
         <button onClick={() => setVista('tabla')}
           className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tabla' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
           <Table2 size={14} /> Tabla
+        </button>
+        <button onClick={() => setVista('analisis')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'analisis' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <Sparkles size={14} /> Análisis
+        </button>
+        <button onClick={() => setVista('configuracion')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'configuracion' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <SlidersHorizontal size={14} /> Configuración
         </button>
       </div>
 
@@ -548,6 +628,25 @@ export default function PresupuestoPage() {
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
           openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP}
         />
+      ) : vista === 'analisis' ? (
+        <PresupuestoAnalisis
+          quincenas={quincenas} categorias={categorias} today={today}
+          presupuestos={analisisPresupuestos} loading={analisisLoading}
+          configGlobal={analisisConfigGlobal}
+          desdeId={analisisDesdeId} setDesdeId={setAnalisisDesdeId}
+          hastaId={analisisHastaId} setHastaId={setAnalisisHastaId}
+          categoriaId={analisisCategoriaId} setCategoriaId={setAnalisisCategoriaId}
+          onQuincenaUpdated={handleQuincenaReferenciaUpdated}
+          openEdit={openEdit}
+        />
+      ) : vista === 'configuracion' ? (
+        <PresupuestoConfiguracion
+          quincenas={quincenas} categorias={categorias} today={today}
+          frecuenciaPagoDefault={frecuenciaPagoDefault}
+          presupuestos={configPresupuestos} loading={configLoading}
+          onChanged={() => { fetchConfiguracion(); refetchTrasCambioRecurrente() }}
+          openEdit={openEdit}
+        />
       ) : (
         <>
       {/* Selector de quincena */}
@@ -557,7 +656,7 @@ export default function PresupuestoPage() {
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className={`grid grid-cols-1 gap-4 ${limiteReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+        <div className={`grid grid-cols-1 gap-4 ${refEfectiva.limiteGastoReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
           <KpiCard
             label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
             subtitle={`real ${formatMXN(totalIngresoReal)}`}
@@ -599,18 +698,22 @@ export default function PresupuestoPage() {
             </p>
           </div>
 
-          {limiteReferencia != null && (() => {
-            const pctLimite = limiteReferencia > 0 ? (gastoParaLimite / limiteReferencia) * 100 : 0
+          {refEfectiva.limiteGastoReferencia != null && (() => {
+            const limiteEfectivo = refEfectiva.limiteGastoReferencia!
+            const pctLimite = limiteEfectivo > 0 ? (gastoParaLimite / limiteEfectivo) * 100 : 0
             return (
               <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1">
                   Límite de referencia
-                  <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago). Es solo informativo, no bloquea nada.">ⓘ</span>
+                  {refEfectiva.limiteEsOverride && (
+                    <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">personalizado</span>
+                  )}
+                  <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago, o personalizado para esta quincena en Presupuesto → Análisis). Es solo informativo, no bloquea nada.">ⓘ</span>
                 </p>
                 <div className="flex justify-between items-end mb-2">
                   <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">
                     {formatMXN(gastoParaLimite)}
-                    <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(limiteReferencia)}</span>
+                    <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(limiteEfectivo)}</span>
                   </p>
                   <span className={`text-lg font-bold ${pctTextColor(pctLimite)}`}>{pctLimite.toFixed(0)}%</span>
                 </div>
@@ -1172,16 +1275,50 @@ export default function PresupuestoPage() {
                     </div>
                   </div>
 
-                  {/* Summary */}
-                  <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-lg px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300">
-                    <Repeat size={11} className="inline mr-1.5 mb-0.5" />
-                    {editingP ? 'Se aplicará a' : 'Se creará en'}{' '}
-                    {form.terminaCon === 'n_ocurrencias'
-                      ? `${form.numOcurrencias} ${form.frecuencia === 'MENSUAL' ? 'meses' : 'quincenas'}`
-                      : 'todas las quincenas futuras disponibles'
+                  {/* Preview en vivo -- mismo computeQuincenasTarget que ya usa el
+                      servidor para generar las filas reales, así este resumen
+                      nunca puede decir algo distinto de lo que se va a guardar. */}
+                  {(() => {
+                    const anclaId = (form.targetQuincenaId && form.targetQuincenaId !== 'keep')
+                      ? form.targetQuincenaId
+                      : (editingP?.quincenaId?.toString() ?? quincenaId)
+                    const inicioQ = quincenas.find(q => q.id.toString() === anclaId)
+                    const preview = inicioQ ? computeQuincenasTarget(
+                      quincenas.map(q => ({ ...q, fechaInicio: new Date(q.fechaInicio), fechaFin: new Date(q.fechaFin) })),
+                      { ...inicioQ, fechaInicio: new Date(inicioQ.fechaInicio), fechaFin: new Date(inicioQ.fechaFin) },
+                      form.frecuencia,
+                      form.diaCobro ? parseInt(form.diaCobro) : null,
+                      form.terminaCon === 'n_ocurrencias' ? (parseInt(form.numOcurrencias) || null) : null
+                    ) : []
+
+                    if (preview.length === 0) {
+                      return (
+                        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2.5 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                          <AlertTriangle size={12} className="shrink-0" />
+                          Sin quincenas disponibles para esta configuración -- revisa la frecuencia o el día de cobro.
+                        </div>
+                      )
                     }
-                    {form.frecuencia === 'MENSUAL' ? ', solo primera quincena del mes' : ''}.
-                  </div>
+                    const primera = preview[0]
+                    const ultima = preview[preview.length - 1]
+                    return (
+                      <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-lg px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300 space-y-1.5">
+                        <p>
+                          <Repeat size={11} className="inline mr-1.5 mb-0.5" />
+                          {editingP ? 'Se aplicará a' : 'Se creará en'}{' '}
+                          <strong>{preview.length}</strong> {preview.length === 1 ? 'quincena' : 'quincenas'}: {primera.codigo} → {ultima.codigo}{' '}
+                          ({formatDate(primera.fechaInicio)} – {formatDate(ultima.fechaFin)})
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {preview.map(q => (
+                            <span key={q.id} className="text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">
+                              {q.codigo}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
               )}
           </div>
@@ -1262,6 +1399,15 @@ export default function PresupuestoPage() {
               >
                 <p className="text-sm font-medium">Solo esta quincena</p>
                 <p className="text-xs text-rose-400 dark:text-rose-500 mt-0.5">Elimina únicamente este registro</p>
+              </button>
+
+              <button
+                onClick={() => handleDelete('future')}
+                disabled={deleting}
+                className="w-full text-left px-4 py-3 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Pausar futuras</p>
+                <p className="text-xs text-amber-500 dark:text-amber-500/80 mt-0.5">Elimina las quincenas futuras; esta y las anteriores quedan igual</p>
               </button>
 
               <button

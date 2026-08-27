@@ -11,13 +11,13 @@ interface QuincenaLike {
  * path (POST /api/presupuestos) and the recurring-edit path
  * (PUT /api/presupuestos/[id]).
  */
-export function computeQuincenasTarget(
-  allQuincenas: QuincenaLike[],
-  quincenaInicio: QuincenaLike,
+export function computeQuincenasTarget<Q extends QuincenaLike>(
+  allQuincenas: Q[],
+  quincenaInicio: Q,
   frecuencia: string,
   diaCobro: number | null,
   numOcurrencias: number | null
-): QuincenaLike[] {
+): Q[] {
   if (frecuencia === 'MENSUAL') {
     // Target-date lookup: for each calendar month find the quincena that covers diaCobro
     const targetDay = diaCobro ?? 1

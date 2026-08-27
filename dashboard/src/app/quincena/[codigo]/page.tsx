@@ -9,8 +9,9 @@ import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
-interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Presupuesto { montoPresupuestado: number; real: number; pendiente: number; categoria: { tipo: string } }
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
@@ -35,7 +36,8 @@ export default function QuincenaResumenPage() {
     async function load() {
       setLoading(true)
       try {
-        const data: Quincena[] = await fetch('/api/quincenas').then(r => r.json())
+        const rawQuincenas: Quincena[] = await fetch('/api/quincenas').then(r => r.json())
+        const data = rawQuincenas.map(normalizeReferencia)
         setQuincenas(data)
         const found = data.find(q => q.codigo.toLowerCase() === codigo.toLowerCase()) ?? null
         setTarget(found)
@@ -102,7 +104,10 @@ export default function QuincenaResumenPage() {
   const gastoTotal = totales?.Gasto ?? 0
   const pendientePorPagar = calcularFaltaPorPagar(presupuestos)
   const gastoParaLimite = totales?.GastoParaLimite ?? 0
-  const pctLimite = limiteGastoReferencia != null && limiteGastoReferencia > 0 ? (gastoParaLimite / limiteGastoReferencia) * 100 : null
+  // Override propio de esta quincena (configurable en Presupuesto → Análisis)
+  // si existe, si no el global de Configuración → Períodos de pago.
+  const refTarget = resolveReferencia(target, { ingresoReferencia, limiteGastoReferencia })
+  const pctLimite = refTarget.limiteGastoReferencia != null && refTarget.limiteGastoReferencia > 0 ? (gastoParaLimite / refTarget.limiteGastoReferencia) * 100 : null
   const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
   const liquidezNeta = snapshot ? totalLiquidez - snapshot.pagosQuincena : 0
 
@@ -138,13 +143,13 @@ export default function QuincenaResumenPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           label="Ingresos" value={formatMXN(totales?.Ingreso ?? 0)}
-          subtitle={ingresoReferencia != null ? `meta ${formatMXN(ingresoReferencia)}` : undefined}
+          subtitle={refTarget.ingresoReferencia != null ? `meta ${formatMXN(refTarget.ingresoReferencia)}` : undefined}
           icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
           color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
         />
         <KpiCard
           label="Gastos" value={formatMXN(gastoTotal)}
-          subtitle={limiteGastoReferencia != null ? `límite ${formatMXN(limiteGastoReferencia)}` : undefined}
+          subtitle={refTarget.limiteGastoReferencia != null ? `límite ${formatMXN(refTarget.limiteGastoReferencia)}` : undefined}
           icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
           color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
           subtitleColor={pctLimite != null && pctLimite > 90 ? 'text-rose-500 dark:text-rose-400' : pctLimite != null && pctLimite > 70 ? 'text-amber-500 dark:text-amber-400' : undefined}

@@ -16,6 +16,7 @@ const configLinks = [
   { href: '/configuracion/quincenas', label: 'Períodos de pago' },
   { href: '/configuracion/liquidez', label: 'Liquidez' },
   { href: '/configuracion/categorias', label: 'Categorías' },
+  { href: '/configuracion/lineas-recurrentes', label: 'Líneas recurrentes' },
   { href: '/configuracion/usuarios', label: 'Usuarios' },
   { href: '/configuracion/audit-log', label: 'Audit Log' },
   { href: '/admin/categorias', label: 'Admin Categorías' },
