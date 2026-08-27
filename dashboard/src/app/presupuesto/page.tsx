@@ -27,7 +27,7 @@ const CAT_DOT: Record<string, string> = {
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
-interface Presupuesto {
+export interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
@@ -602,6 +602,7 @@ export default function PresupuestoPage() {
           hastaId={analisisHastaId} setHastaId={setAnalisisHastaId}
           categoriaId={analisisCategoriaId} setCategoriaId={setAnalisisCategoriaId}
           onQuincenaUpdated={handleQuincenaReferenciaUpdated}
+          openEdit={openEdit}
         />
       ) : (
         <>

@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useRef, Fragment } from 'react'
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush, Dot, type DotItemDotProps } from 'recharts'
 import { ChevronUp, ChevronDown, ChevronRight, Target, AlertTriangle, Activity, Sparkles, RefreshCw, FlaskConical, Plus, X, CopyPlus } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
@@ -9,14 +9,14 @@ import { FilterChip } from '@/components/ui/FilterChip'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { resolveReferencia, normalizeReferencia, type ReferenciaValores } from '@/lib/referencia'
 import { colorForCategoria } from '@/lib/category-colors'
+import type { Presupuesto } from './page'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
-interface PresupuestoRow {
-  id: number; quincenaId: number; categoriaId: number; descripcion: string
-  montoPresupuestado: number | string; real: number
-  categoria: { nombre: string; tipo: string }
-}
+// Alias del tipo completo de page.tsx: en runtime `presupuestos` ya trae las
+// filas completas (mismo /api/presupuestos sin filtrar), asi que se necesita
+// el shape completo para poder pasar una fila a openEdit sin cast.
+type PresupuestoRow = Presupuesto
 
 interface Props {
   quincenas: Quincena[]
@@ -32,6 +32,7 @@ interface Props {
   categoriaId: string
   setCategoriaId: (v: string) => void
   onQuincenaUpdated: (updated: Quincena) => void
+  openEdit: (p: Presupuesto) => void
 }
 
 interface BalancePorQ {
@@ -301,6 +302,7 @@ function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: Balance
 export function PresupuestoAnalisis({
   quincenas, categorias, today, presupuestos, loading, configGlobal,
   desdeId, setDesdeId, hastaId, setHastaId, categoriaId, setCategoriaId, onQuincenaUpdated,
+  openEdit,
 }: Props) {
   const { toast } = useToast()
 
@@ -863,9 +865,36 @@ export function PresupuestoAnalisis({
                   const cat = categorias.find(c => c.id === l.categoriaId)
                   const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
                   const name = `${label} (${l.unidad === 'real' ? 'real' : 'ppto'})`
+                  // Un punto de linea agregada mapea 1:1 a una fila Presupuesto real
+                  // (categoria+descripcion normalizada+quincena) -- a diferencia de
+                  // categoriasAgregadas/SERIES_BASE, que suman o derivan de varias
+                  // filas (o ninguna), por eso solo estas lineas son editables.
+                  const editarPunto = (payload: { quincenaId: number }) => {
+                    const row = presupuestos.find(p =>
+                      p.categoriaId === l.categoriaId &&
+                      normalizarDescripcion(p.descripcion) === normalizarDescripcion(l.descripcion) &&
+                      p.quincenaId === payload.quincenaId
+                    )
+                    if (row) openEdit(row)
+                  }
+                  // Forma-funcion (no objeto) para el dot: es la unica que recharts
+                  // tipa con el payload del punto (DotItemDotProps) -- la forma-objeto
+                  // no expone payload en sus tipos aunque en runtime si lo reciba.
+                  // activeDot=false evita que el punto activo (mas grande, sin click)
+                  // quede encima del dot y se trague el click al hacer hover-y-click.
+                  const renderDot = (dotProps: DotItemDotProps) => {
+                    const { cx, cy, payload } = dotProps
+                    if (typeof cx !== 'number' || typeof cy !== 'number') return null
+                    return (
+                      <Dot cx={cx} cy={cy} r={3} fill={l.color} style={{ cursor: 'pointer' }}
+                        onClick={() => editarPunto(payload)} />
+                    )
+                  }
                   return (
                     <Line key={lineaInstanceKey(l.instanceId)} type="monotone" dataKey={lineaInstanceKey(l.instanceId)} name={name}
-                      stroke={l.color} strokeWidth={2} strokeDasharray="4 2" dot={{ r: 3, fill: l.color }} activeDot={{ r: 5 }}
+                      stroke={l.color} strokeWidth={2} strokeDasharray="4 2"
+                      dot={renderDot}
+                      activeDot={false}
                       connectNulls isAnimationActive={false} />
                   )
                 })}
