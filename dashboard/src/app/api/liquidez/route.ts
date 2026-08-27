@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     const {
       fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
       efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      faltaPagar, teorico, notas, validado
+      faltaPagar, pagosQuincena, teorico, notas, validado
     } = body
 
     if (!fechaCorte || !quincenaId) {
@@ -49,6 +49,7 @@ export async function POST(request: Request) {
         otros: otros ? parseFloat(otros) : 0,
         otrosNota: otrosNota ?? null,
         faltaPagar: faltaPagar ? parseFloat(faltaPagar) : 0,
+        pagosQuincena: pagosQuincena ? parseFloat(pagosQuincena) : 0,
         teorico: teorico ? parseFloat(teorico) : null,
         notas,
         validado: validado ?? false,

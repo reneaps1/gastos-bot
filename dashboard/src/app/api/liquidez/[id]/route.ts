@@ -36,7 +36,7 @@ export async function PUT(
     const {
       fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
       efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      faltaPagar, teorico, notas, validado
+      faltaPagar, pagosQuincena, teorico, notas, validado
     } = body
 
     const snapshot = await prisma.liquidezSnapshot.update({
@@ -54,6 +54,7 @@ export async function PUT(
         ...(otros !== undefined && { otros: parseFloat(otros) }),
         ...(otrosNota !== undefined && { otrosNota }),
         ...(faltaPagar !== undefined && { faltaPagar: parseFloat(faltaPagar) }),
+        ...(pagosQuincena !== undefined && { pagosQuincena: parseFloat(pagosQuincena) }),
         ...(teorico !== undefined && { teorico: teorico ? parseFloat(teorico) : null }),
         ...(notas !== undefined && { notas }),
         ...(validado !== undefined && { validado }),

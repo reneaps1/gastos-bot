@@ -15,7 +15,7 @@ interface Presupuesto { montoPresupuestado: number; real: number; pendiente: num
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
   efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; otrosNota: string | null
-  faltaPagar: number; teorico: number | null; validado: boolean; fechaCorte: string
+  faltaPagar: number; pagosQuincena: number; teorico: number | null; validado: boolean; fechaCorte: string
 }
 interface Totales { Gasto: number; Ingreso: number; Ahorro: number; GastoPagado: number; GastoParaLimite: number }
 
@@ -59,6 +59,7 @@ export default function QuincenaResumenPage() {
           ...raw,
           ...normalizeMontos(raw),
           faltaPagar: Number(raw.faltaPagar) || 0,
+          pagosQuincena: Number(raw.pagosQuincena) || 0,
           teorico: raw.teorico != null ? Number(raw.teorico) : null,
         } : null)
         setIngresoReferencia(cfg.ingresoReferencia != null ? Number(cfg.ingresoReferencia) : null)
@@ -103,7 +104,7 @@ export default function QuincenaResumenPage() {
   const gastoParaLimite = totales?.GastoParaLimite ?? 0
   const pctLimite = limiteGastoReferencia != null && limiteGastoReferencia > 0 ? (gastoParaLimite / limiteGastoReferencia) * 100 : null
   const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
-  const liquidezNeta = snapshot ? totalLiquidez - snapshot.faltaPagar : 0
+  const liquidezNeta = snapshot ? totalLiquidez - snapshot.pagosQuincena : 0
 
   const cuentaTiles: { label: string; value: number; title?: string }[] = snapshot ? [
     { label: 'BBVA', value: snapshot.bbva },
@@ -179,9 +180,9 @@ export default function QuincenaResumenPage() {
               </p>
               <div className="text-right">
                 <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</p>
-                {snapshot.faltaPagar > 0 && (
+                {snapshot.pagosQuincena > 0 && (
                   <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                    neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.faltaPagar)} por pagar)</span>
+                    neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.pagosQuincena)} por pagar esta Q)</span>
                   </p>
                 )}
               </div>

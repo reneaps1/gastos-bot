@@ -29,6 +29,7 @@ interface Snapshot {
   otros: number
   otrosNota: string | null
   faltaPagar: number
+  pagosQuincena: number
   teorico: number | null
   notas: string | null
   validado: boolean
@@ -49,6 +50,7 @@ const EMPTY_FORM = {
   otros: '',
   otrosNota: '',
   faltaPagar: '',
+  pagosQuincena: '',
   notas: '',
   validado: false,
 }
@@ -90,6 +92,7 @@ function LiquidezConfigContent() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [faltaLoading, setFaltaLoading] = useState(false)
+  const [pagosQuincenaLoading, setPagosQuincenaLoading] = useState(false)
 
   // Descuadre real: compara el corte mas reciente contra lo que "deberia" haber
   // segun el corte anterior (cualquier quincena) mas los movimientos ya
@@ -126,6 +129,7 @@ function LiquidezConfigContent() {
       ...s,
       ...normalizeMontos(s),
       faltaPagar: Number(s.faltaPagar) || 0,
+      pagosQuincena: Number(s.pagosQuincena) || 0,
       teorico: s.teorico != null ? Number(s.teorico) : null,
     })))
   }, [])
@@ -182,13 +186,38 @@ function LiquidezConfigContent() {
     if (falta != null) setForm(f => ({ ...f, faltaPagar: falta.toString() }))
   }
 
+  // "Pagos que caen esta quincena" = cuanto efectivo va a salir del banco EN
+  // esta quincena (pendientes directos + abonos de credito/TDC programados +
+  // presupuesto sin ejecutar) — a diferencia de "falta por pagar", que mide
+  // ejecucion de presupuesto sin importar cuando sale la caja. Es la fuente
+  // real de "¿me alcanza?".
+  async function fetchPagosQuincena(qId: string): Promise<number | null> {
+    if (!qId) return null
+    try {
+      const res = await fetch(`/api/liquidez/pagos-quincena?quincenaId=${qId}`)
+      if (!res.ok) return null
+      const data = await res.json()
+      return typeof data?.pagosQuincena === 'number' ? data.pagosQuincena : null
+    } catch {
+      return null
+    }
+  }
+
+  async function recalcularPagosQuincena(qId: string) {
+    if (!qId) return
+    setPagosQuincenaLoading(true)
+    const pagos = await fetchPagosQuincena(qId)
+    setPagosQuincenaLoading(false)
+    if (pagos != null) setForm(f => ({ ...f, pagosQuincena: pagos.toString() }))
+  }
+
   // Recalcula al elegir quincena: se usa al crear un snapshot nuevo (foto
   // fresca) y al reasignar la quincena de uno existente. NO se llama al solo
   // reabrir un snapshot para editar — ahi se respeta el valor guardado como
   // fotografia del momento en que se hizo ese corte.
   async function applyQuincena(qId: string) {
     setForm(f => ({ ...f, quincenaId: qId }))
-    await recalcularFalta(qId)
+    await Promise.all([recalcularFalta(qId), recalcularPagosQuincena(qId)])
   }
 
   function openCreate() {
@@ -214,6 +243,7 @@ function LiquidezConfigContent() {
       otros: s.otros.toString(),
       otrosNota: s.otrosNota ?? '',
       faltaPagar: s.faltaPagar.toString(),
+      pagosQuincena: s.pagosQuincena.toString(),
       notas: s.notas ?? '',
       validado: s.validado,
     })
@@ -246,6 +276,7 @@ function LiquidezConfigContent() {
         otros: form.otros || '0',
         otrosNota: form.otrosNota || null,
         faltaPagar: form.faltaPagar || '0',
+        pagosQuincena: form.pagosQuincena || '0',
         teorico: calcTeorico(form).toString(),
         notas: form.notas || null,
         validado: form.validado,
@@ -354,7 +385,8 @@ function LiquidezConfigContent() {
   const latestSnapshot = snapshots[0] ?? null
   const totalLiquido = latestSnapshot ? sumLiquidez(latestSnapshot) : 0
   const faltaPagarLatest = latestSnapshot?.faltaPagar ?? 0
-  const deltaLiquido = totalLiquido - faltaPagarLatest
+  const pagosQuincenaLatest = latestSnapshot?.pagosQuincena ?? 0
+  const deltaLiquido = totalLiquido - pagosQuincenaLatest
   const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
 
   // Corte inmediatamente anterior por fecha (no por quincena) al mas
@@ -421,6 +453,12 @@ function LiquidezConfigContent() {
           />
           <KpiCard
             label="Falta por pagar" value={formatMXN(faltaPagarLatest)}
+            icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
+            color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
+          />
+          <KpiCard
+            label="Pagos que caen esta quincena" value={formatMXN(pagosQuincenaLatest)}
+            subtitle="incluye abonos de tarjeta/MSI"
             icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
@@ -652,6 +690,28 @@ function LiquidezConfigContent() {
               <input id="lq-fp" type="number" min="0" step="0.01" placeholder="0.00" value={form.faltaPagar} onChange={e => set('faltaPagar', e.target.value)} className={fieldClass()} />
               <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
                 {editing ? 'Guardado al momento de este corte; usa "Recalcular" para refrescarlo.' : 'Auto-calculado del presupuesto de la quincena; puedes ajustarlo si hace falta.'}
+              </p>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <Label htmlFor="lq-pq">
+                  Pagos que caen esta quincena
+                  {pagosQuincenaLoading && <span className="ml-1 text-slate-400 dark:text-slate-500 normal-case font-normal">(calculando...)</span>}
+                </Label>
+                {editing && form.quincenaId && (
+                  <button
+                    type="button"
+                    onClick={() => recalcularPagosQuincena(form.quincenaId)}
+                    disabled={pagosQuincenaLoading}
+                    className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50 cursor-pointer flex items-center gap-1 mb-1"
+                  >
+                    <RefreshCw size={11} className={pagosQuincenaLoading ? 'animate-spin' : ''} /> Recalcular
+                  </button>
+                )}
+              </div>
+              <input id="lq-pq" type="number" min="0" step="0.01" placeholder="0.00" value={form.pagosQuincena} onChange={e => set('pagosQuincena', e.target.value)} className={fieldClass()} />
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                Efectivo que realmente sale del banco esta quincena (incluye abonos de tarjeta/MSI que caen aquí). Es lo que alimenta &quot;¿Me alcanza?&quot;.
               </p>
             </div>
           </div>

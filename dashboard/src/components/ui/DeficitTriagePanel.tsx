@@ -83,9 +83,31 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
     } catch { /* silencioso: el usuario puede recalcular manualmente si falla */ }
   }
 
+  // Igual que syncSnapshotFalta pero para "pagos que caen esta quincena" (la
+  // métrica que alimenta "¿me alcanza?"): recortar/mover cambian líneas de
+  // presupuesto, que es una de sus tres fuentes, así que también puede
+  // moverse tras una acción de triage.
+  async function syncSnapshotPagosQuincena() {
+    if (!snapshotId) return
+    try {
+      const res = await fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`)
+      if (!res.ok) return
+      const data = await res.json()
+      if (typeof data?.pagosQuincena !== 'number') return
+      await fetch(`/api/liquidez/${snapshotId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pagosQuincena: data.pagosQuincena.toString() }),
+      })
+    } catch { /* silencioso: el usuario puede recalcular manualmente si falla */ }
+  }
+
   async function afterChange(nextItems: PresupuestoItem[]) {
     setItems(nextItems)
-    await syncSnapshotFalta(calcularFaltaPorPagar(nextItems))
+    await Promise.all([
+      syncSnapshotFalta(calcularFaltaPorPagar(nextItems)),
+      syncSnapshotPagosQuincena(),
+    ])
     onChanged()
   }
 

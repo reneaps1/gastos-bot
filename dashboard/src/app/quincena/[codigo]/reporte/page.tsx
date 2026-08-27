@@ -34,6 +34,7 @@ interface TransaccionRow {
 interface Snapshot extends LiquidezMontos {
   otrosNota: string | null
   faltaPagar: number
+  pagosQuincena: number
   validado: boolean
   fechaCorte: string
 }
@@ -106,7 +107,7 @@ export default function ReporteQuincenaPage() {
           GastoPagado: Number(txJson.totales?.GastoPagado ?? 0),
         })
         const raw = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
-        setSnapshot(raw ? { ...raw, ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0 } : null)
+        setSnapshot(raw ? { ...raw, ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0, pagosQuincena: Number(raw.pagosQuincena) || 0 } : null)
       } finally {
         setLoading(false)
       }
@@ -143,7 +144,8 @@ export default function ReporteQuincenaPage() {
   const pendiente = totales.Gasto - totales.GastoPagado
   const totalLiquido = snapshot ? sumLiquidez(snapshot) : 0
   const faltaPagar = snapshot?.faltaPagar ?? 0
-  const delta = totalLiquido - faltaPagar
+  const pagosQuincena = snapshot?.pagosQuincena ?? 0
+  const delta = totalLiquido - pagosQuincena
   const deltaColor = delta < 0 ? 'text-rose-600' : delta > 0 ? 'text-emerald-600' : 'text-slate-700'
   const fechaReporte = new Intl.DateTimeFormat('es-MX', {
     weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
@@ -268,8 +270,8 @@ export default function ReporteQuincenaPage() {
                   <p className="text-lg font-bold text-slate-900 tabular-nums">{formatMXN(totalLiquido)}</p>
                 </div>
                 <div className="border border-slate-300 rounded-lg p-3 text-center">
-                  <p className="text-xs text-slate-500">Falta por pagar</p>
-                  <p className="text-lg font-bold text-amber-600 tabular-nums">{formatMXN(faltaPagar)}</p>
+                  <p className="text-xs text-slate-500">Pagos que caen esta Q</p>
+                  <p className="text-lg font-bold text-amber-600 tabular-nums">{formatMXN(pagosQuincena)}</p>
                 </div>
                 <div className="border border-slate-300 rounded-lg p-3 text-center">
                   <p className="text-xs text-slate-500">Delta (líquido neto)</p>

@@ -22,6 +22,7 @@ interface Transaccion {
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
   efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; faltaPagar: number
+  pagosQuincena: number
   teorico: number | null; quincena: Quincena
 }
 interface Presupuesto {
@@ -256,6 +257,7 @@ export default function DashboardPage() {
         ...rawSnapshot,
         ...normalizeMontos(rawSnapshot),
         faltaPagar: Number(rawSnapshot.faltaPagar) || 0,
+        pagosQuincena: Number(rawSnapshot.pagosQuincena) || 0,
       } : null)
       setTendencia(Array.isArray(tendData) ? tendData : [])
       setMetricas({
@@ -278,7 +280,7 @@ export default function DashboardPage() {
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
   const periodoActual = granularidad !== 'quincena' ? getPeriodoRange(granularidad, periodoAnchor) : null
   const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
-  const liquidezNeta = snapshot ? totalLiquidez - snapshot.faltaPagar : 0
+  const liquidezNeta = snapshot ? totalLiquidez - snapshot.pagosQuincena : 0
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
@@ -1039,9 +1041,9 @@ export default function DashboardPage() {
                 </Link>
                 <div className="text-right">
                   <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</p>
-                  {snapshot && snapshot.faltaPagar > 0 && (
+                  {snapshot && snapshot.pagosQuincena > 0 && (
                     <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                      neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.faltaPagar)} por pagar)</span>
+                      neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.pagosQuincena)} por pagar esta Q)</span>
                     </p>
                   )}
                 </div>
