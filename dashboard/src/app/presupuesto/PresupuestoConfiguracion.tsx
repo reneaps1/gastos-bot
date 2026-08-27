@@ -16,12 +16,13 @@ interface Props {
   presupuestos: Presupuesto[]
   loading: boolean
   onChanged: () => void
+  openEdit: (p: Presupuesto) => void
 }
 
 const FREQ_LABEL_PERIODO: Record<string, string> = { QUINCENAL: 'Quincenal', SEMANAL: 'Semanal', MENSUAL: 'Mensual' }
 
 export function PresupuestoConfiguracion({
-  quincenas, categorias, today, frecuenciaPagoDefault, presupuestos, loading, onChanged,
+  quincenas, categorias, today, frecuenciaPagoDefault, presupuestos, loading, onChanged, openEdit,
 }: Props) {
   const categoriasActivas = categorias.filter(c => c.activo).length
 
@@ -54,7 +55,7 @@ export function PresupuestoConfiguracion({
           futuras o eliminar la serie completa. */}
       <div>
         <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3">Líneas recurrentes</p>
-        <LineasRecurrentesTable rows={presupuestos} today={today} loading={loading} onChanged={onChanged} />
+        <LineasRecurrentesTable rows={presupuestos} today={today} loading={loading} onChanged={onChanged} onEdit={openEdit} />
       </div>
     </div>
   )

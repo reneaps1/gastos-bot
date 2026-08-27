@@ -644,6 +644,7 @@ export default function PresupuestoPage() {
           frecuenciaPagoDefault={frecuenciaPagoDefault}
           presupuestos={configPresupuestos} loading={configLoading}
           onChanged={() => { fetchConfiguracion(); refetchTrasCambioRecurrente() }}
+          openEdit={openEdit}
         />
       ) : (
         <>

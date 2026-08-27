@@ -1,7 +1,7 @@
 'use client'
 import { useState } from 'react'
 import Link from 'next/link'
-import { ExternalLink, PauseCircle, Trash2, AlertTriangle, Repeat, Layers } from 'lucide-react'
+import { Pencil, ExternalLink, PauseCircle, Trash2, AlertTriangle, Repeat, Layers } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -18,17 +18,23 @@ export interface RecurrenteRow {
   quincena: Quincena
 }
 
-interface Props {
-  rows: RecurrenteRow[]
+interface Props<T extends RecurrenteRow> {
+  rows: T[]
   today: string
   loading: boolean
   onChanged: () => void
+  // Opcional: cuando se pasa, se muestra un botón "Editar" que abre el mismo
+  // modal ya usado en Tabla/Tarjetas/Análisis (mismo patrón, misma prop
+  // `openEdit` de presupuesto/page.tsx). La página standalone no la pasa --
+  // ahí no existe esa infraestructura de edición, y no vale la pena
+  // duplicarla para una ruta secundaria.
+  onEdit?: (row: T) => void
 }
 
-interface GrupoRecurrente {
+interface GrupoRecurrente<T extends RecurrenteRow> {
   grupoId: string; descripcion: string; categoria: Categoria
   frecuencia: string; diaCobro: number | null; numOcurrencias: number | null
-  montoPresupuestado: number; items: RecurrenteRow[]
+  montoPresupuestado: number; items: T[]
   activa: boolean; desde: Quincena; hasta: Quincena
   restantes: number | null
 }
@@ -37,23 +43,24 @@ const FREQ_LABEL: Record<string, string> = { CADA_QUINCENA: 'Cada quincena', MEN
 
 // Fila de referencia de un grupo: la que cubre hoy, o si ninguna, la última
 // ya iniciada. Se usa tanto para "Ver en su quincena" como para anclar el
-// corte de "Pausar futuras" (mismo criterio 'future' que ya usa PUT/DELETE).
-function filaAncla(items: RecurrenteRow[], today: string): RecurrenteRow | null {
+// corte de "Pausar futuras" (mismo criterio 'future' que ya usa PUT/DELETE)
+// y ahora tambien para "Editar".
+function filaAncla<T extends RecurrenteRow>(items: T[], today: string): T | null {
   const actual = items.find(p => p.quincena.fechaInicio <= today && today <= p.quincena.fechaFin)
   if (actual) return actual
   const pasadas = items.filter(p => p.quincena.fechaInicio <= today)
   return pasadas.length > 0 ? pasadas[pasadas.length - 1] : null
 }
 
-function buildGrupos(rows: RecurrenteRow[], today: string): GrupoRecurrente[] {
-  const map = new Map<string, RecurrenteRow[]>()
+function buildGrupos<T extends RecurrenteRow>(rows: T[], today: string): GrupoRecurrente<T>[] {
+  const map = new Map<string, T[]>()
   for (const p of rows) {
     if (!p.recurrente || !p.recurrenciaGrupoId) continue
     const arr = map.get(p.recurrenciaGrupoId) ?? []
     arr.push(p)
     map.set(p.recurrenciaGrupoId, arr)
   }
-  const grupos: GrupoRecurrente[] = []
+  const grupos: GrupoRecurrente<T>[] = []
   for (const [grupoId, itemsRaw] of map) {
     const items = [...itemsRaw].sort((a, b) => a.quincena.fechaInicio.localeCompare(b.quincena.fechaInicio))
     const masReciente = items[items.length - 1]
@@ -69,12 +76,12 @@ function buildGrupos(rows: RecurrenteRow[], today: string): GrupoRecurrente[] {
   return grupos.sort((a, b) => (Number(b.activa) - Number(a.activa)) || b.hasta.fechaInicio.localeCompare(a.hasta.fechaInicio))
 }
 
-export function LineasRecurrentesTable({ rows, today, loading, onChanged }: Props) {
+export function LineasRecurrentesTable<T extends RecurrenteRow>({ rows, today, loading, onChanged, onEdit }: Props<T>) {
   const { toast } = useToast()
   const grupos = buildGrupos(rows, today)
   const categoriasUnicas = Array.from(new Set(grupos.map(g => g.categoria.nombre)))
 
-  const [accion, setAccion] = useState<{ grupo: GrupoRecurrente; tipo: 'pausar' | 'eliminar' } | null>(null)
+  const [accion, setAccion] = useState<{ grupo: GrupoRecurrente<T>; tipo: 'pausar' | 'eliminar' } | null>(null)
   const [ejecutando, setEjecutando] = useState(false)
 
   async function ejecutarAccion() {
@@ -162,6 +169,11 @@ export function LineasRecurrentesTable({ rows, today, loading, onChanged }: Prop
                         <p className="text-xs text-slate-400 dark:text-slate-500 md:hidden mt-0.5">
                           {g.categoria.nombre} · {FREQ_LABEL[g.frecuencia] ?? g.frecuencia}
                         </p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500 md:hidden">
+                          {formatDateStr(g.desde.fechaInicio, { day: '2-digit', month: 'short', year: '2-digit' })}
+                          {' – '}
+                          {formatDateStr(g.hasta.fechaFin, { day: '2-digit', month: 'short', year: '2-digit' })}
+                        </p>
                       </td>
                       <td className="px-4 py-3 hidden md:table-cell">
                         <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
@@ -189,6 +201,12 @@ export function LineasRecurrentesTable({ rows, today, loading, onChanged }: Prop
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1">
+                          {onEdit && (
+                            <button onClick={() => onEdit(ancla ?? g.items[0])}
+                              className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar" title="Editar">
+                              <Pencil size={14} />
+                            </button>
+                          )}
                           <Link href={`/quincena/${relevante.codigo}`}
                             className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg transition-colors" aria-label="Ver en su quincena" title="Ver en su quincena">
                             <ExternalLink size={14} />
