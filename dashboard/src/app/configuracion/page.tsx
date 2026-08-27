@@ -1,4 +1,4 @@
-import { Droplets, Tag, Users, Zap, ClipboardList, CalendarRange, KeyRound } from 'lucide-react'
+import { Droplets, Tag, Users, Repeat, ClipboardList, CalendarRange, KeyRound } from 'lucide-react'
 
 const sections = [
   {
@@ -18,10 +18,10 @@ const sections = [
     bg: 'bg-blue-50',
   },
   {
-    href: '/configuracion/entradas-rapidas',
-    title: 'Conceptos Recurrentes',
-    description: 'Gastos e ingresos frecuentes que se repiten cada quincena.',
-    icon: Zap,
+    href: '/configuracion/lineas-recurrentes',
+    title: 'Líneas recurrentes',
+    description: 'Partidas de presupuesto que se repiten automáticamente. Consulta su frecuencia, pausa u ocurrencias futuras.',
+    icon: Repeat,
     color: 'text-amber-600',
     bg: 'bg-amber-50',
   },
