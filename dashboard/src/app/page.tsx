@@ -1,17 +1,25 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronLeft, ChevronDown, Plus, Loader2, Check } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronLeft, ChevronDown, Plus, Loader2, Check, AlertTriangle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts'
 import Link from 'next/link'
-import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
+import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { KpiCard } from '@/components/ui/KpiCard'
+import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { quincenasPendientesDeCierre, type GrupoCierre } from '@/lib/cierre-quincena'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
+
+interface PresupuestoConQuincena {
+  id: number; descripcion: string; montoPresupuestado: number | string; real: number; pendiente: number
+  estadoLinea: string; categoria: { tipo: string; nombre: string }
+  quincena: { id: number; codigo: string; fechaFin: string; fechaCierre: string | null }
+}
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -80,6 +88,14 @@ export default function DashboardPage() {
   const [tendencia, setTendencia] = useState<TendenciaPoint[]>([])
   const [granularidad, setGranularidad] = useState<Granularidad>('quincena')
   const [periodoAnchor, setPeriodoAnchor] = useState(() => getMexicoDateString())
+  const [pendientesCierre, setPendientesCierre] = useState<GrupoCierre[]>([])
+  const [wizardCierreOpen, setWizardCierreOpen] = useState(false)
+
+  const fetchPendientesCierre = useCallback(async () => {
+    const res = await fetch('/api/presupuestos')
+    const data: PresupuestoConQuincena[] = await res.json()
+    setPendientesCierre(quincenasPendientesDeCierre(data, getMexicoDateString()))
+  }, [])
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -90,7 +106,8 @@ export default function DashboardPage() {
       setIngresoReferencia(cfg.ingresoReferencia != null ? Number(cfg.ingresoReferencia) : null)
       setLimiteGastoReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
     })
-  }, [])
+    fetchPendientesCierre()
+  }, [fetchPendientesCierre])
 
   function selectQuincena(id: string) {
     setQuincenaId(id)
@@ -277,6 +294,10 @@ export default function DashboardPage() {
   const today = getMexicoDateString()
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
+  const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
+  const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
+  const totalPendienteCierre = pendientesCierre.reduce((s, g) => s + g.total, 0)
+  const partidasPendientesCierre = pendientesCierre.reduce((s, g) => s + g.items.length, 0)
   // Override propio de la quincena activa (configurable en Presupuesto →
   // Análisis) si existe, si no el global de Configuración → Períodos de pago.
   const refActual = resolveReferencia(qActual, { ingresoReferencia, limiteGastoReferencia })
@@ -401,6 +422,35 @@ export default function DashboardPage() {
           <span className={`text-sm font-semibold ${sem.text}`}>{sem.label}</span>
         </div>
       </div>
+
+      {/* Quincenas terminadas con partidas de Gasto sin resolver -- aviso
+          persistente pero no bloqueante, no interrumpe el registro de gastos
+          de la quincena actual. Ver dashboard/src/lib/cierre-quincena.ts. */}
+      {pendientesCierre.length > 0 && (
+        <button
+          onClick={() => setWizardCierreOpen(true)}
+          className="w-full flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-xl px-4 py-3 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors cursor-pointer text-left"
+        >
+          <span className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+            <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 shrink-0" />
+            <span>
+              {pendientesCierre.map(g => g.quincena.codigo).join(', ')} quedó{pendientesCierre.length > 1 ? 'ron' : ''} con{' '}
+              <span className="font-semibold tabular-nums">{partidasPendientesCierre}</span> {partidasPendientesCierre === 1 ? 'partida' : 'partidas'} sin resolver ·{' '}
+              <span className="font-semibold tabular-nums">{formatMXN(totalPendienteCierre)}</span>
+            </span>
+          </span>
+          <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 shrink-0">Revisar</span>
+        </button>
+      )}
+
+      <CierreQuincenaWizard
+        open={wizardCierreOpen}
+        onOpenChange={setWizardCierreOpen}
+        grupos={pendientesCierre}
+        quincenaActualId={quincenaActualCierre ? quincenaActualCierre.id : null}
+        quincenaActualCodigo={quincenaActualCierre?.codigo}
+        onResuelto={() => { fetchPendientesCierre(); fetchData() }}
+      />
 
       {/* Zoom: Semana / Quincena / Mes */}
       <div className="flex items-center gap-3 flex-wrap">
