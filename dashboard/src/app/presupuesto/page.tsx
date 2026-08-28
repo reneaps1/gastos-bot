@@ -15,6 +15,8 @@ import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { quincenasPendientesDeCierre } from '@/lib/cierre-quincena'
+import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
 import { PresupuestoAnalisis } from './PresupuestoAnalisis'
@@ -27,13 +29,14 @@ const CAT_DOT: Record<string, string> = {
   Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
 
-interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null; fechaCierre?: string | null }
 interface Categoria { id: number; nombre: string; tipo: string; activo: boolean }
 export interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
   numOcurrencias: number | null; diaCobro: number | null; fechaVencimiento: string | null
+  estadoLinea: string
   categoria: Categoria; quincena: Quincena; real: number; pendiente: number; pct: number; categoriaTotal: number; excedido: number
 }
 
@@ -170,6 +173,7 @@ export default function PresupuestoPage() {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [copying, setCopying] = useState(false)
+  const [wizardCierreOpen, setWizardCierreOpen] = useState(false)
 
   const [busqueda, setBusqueda] = useState('')
   const [pendientePorPagar, setPendientePorPagar] = useState(0)
@@ -552,6 +556,11 @@ export default function PresupuestoPage() {
   // (configurable en Presupuesto → Análisis) si existe, si no el global de
   // Configuración → Períodos de pago.
   const refEfectiva = resolveReferencia(qInfo, { limiteGastoReferencia: limiteReferencia })
+  // Presupuestos ya viene acotado a quincenaId (Tarjetas), asi que esto da a
+  // lo mas un grupo: el de la quincena seleccionada, si le falta cerrar algo.
+  const gruposCierre = quincenasPendientesDeCierre(presupuestos, today)
+  const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
+  const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
 
   return (
     <div className="space-y-6">
@@ -581,6 +590,13 @@ export default function PresupuestoPage() {
               {copying ? 'Copiando...' : 'Copiar anterior'}
             </button>
           )}
+          {gruposCierre.length > 0 && (
+            <button onClick={() => setWizardCierreOpen(true)}
+              className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/40 px-3 py-2 rounded-lg cursor-pointer transition-colors">
+              <AlertTriangle size={14} />
+              Cerrar quincena ({gruposCierre[0].items.length})
+            </button>
+          )}
           <button onClick={handleExportCsv} disabled={presupuestos.length === 0}
             className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
             <Download size={14} /> Descargar CSV
@@ -591,6 +607,15 @@ export default function PresupuestoPage() {
           </button>
         </div>
       </div>
+
+      <CierreQuincenaWizard
+        open={wizardCierreOpen}
+        onOpenChange={setWizardCierreOpen}
+        grupos={gruposCierre}
+        quincenaActualId={quincenaActualCierre ? quincenaActualCierre.id : null}
+        quincenaActualCodigo={quincenaActualCierre?.codigo}
+        onResuelto={() => { fetchPresupuestos(); fetchPresupuestosTabla() }}
+      />
 
       {/* Toggle de vista */}
       <div className="inline-flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
