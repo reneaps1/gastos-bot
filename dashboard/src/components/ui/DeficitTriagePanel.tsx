@@ -20,7 +20,6 @@ interface Props {
   quincenaId: number
   quincenaCodigo: string
   quincenas: Quincena[]
-  snapshotId: number | null
   onChanged: () => void
 }
 
@@ -31,7 +30,7 @@ interface Props {
 // si es ineludible. Reutiliza los mismos endpoints que ya usan el modal de
 // edición de Presupuesto (mover de quincena) y el ajuste de descuadre de
 // Liquidez (registrar transacción), para no duplicar lógica de negocio.
-export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCodigo, quincenas, snapshotId, onChanged }: Props) {
+export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCodigo, quincenas, onChanged }: Props) {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<PresupuestoItem[]>([])
@@ -68,24 +67,11 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))[0] ?? null
   })()
 
-  // Mantiene el "falta por pagar" guardado en el corte de liquidez alineado
-  // con el presupuesto en tiempo real, igual que hace el botón "Recalcular"
-  // del modal de edición de snapshot, pero automático tras cada acción de
-  // triage — si falla, el usuario siempre puede recalcular a mano.
-  async function syncSnapshotFalta(newTotal: number) {
-    if (!snapshotId) return
-    try {
-      await fetch(`/api/liquidez/${snapshotId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ faltaPagar: newTotal.toString() }),
-      })
-    } catch { /* silencioso: el usuario puede recalcular manualmente si falla */ }
-  }
-
-  async function afterChange(nextItems: PresupuestoItem[]) {
+  // "Falta por pagar" del corte de liquidez ya no se guarda como valor
+  // aparte -- el servidor la calcula en vivo contra el presupuesto en cada
+  // lectura, así que un cambio aquí se refleja solo, sin sincronizar nada.
+  function afterChange(nextItems: PresupuestoItem[]) {
     setItems(nextItems)
-    await syncSnapshotFalta(calcularFaltaPorPagar(nextItems))
     onChanged()
   }
 
@@ -114,7 +100,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       const nextItems = items.map(it => it.id === p.id ? { ...it, montoEfectivo: nuevoMonto, pct } : it)
       toast('Presupuesto recortado')
       setEditingId(null)
-      await afterChange(nextItems)
+      afterChange(nextItems)
     } catch {
       toast('Error al recortar', 'error')
     } finally {
@@ -132,7 +118,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       })
       if (!res.ok) throw new Error()
       toast(`Movido a ${nextQuincena.codigo}`)
-      await afterChange(items.filter(it => it.id !== p.id))
+      afterChange(items.filter(it => it.id !== p.id))
     } catch {
       toast('Error al mover de quincena', 'error')
     } finally {
@@ -157,7 +143,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       if (!res.ok) throw new Error()
       toast('Registrado como gasto pagado')
       const nextItems = items.map(it => it.id === p.id ? { ...it, real: it.montoEfectivo, pct: 100 } : it)
-      await afterChange(nextItems)
+      afterChange(nextItems)
     } catch {
       toast('Error al registrar el gasto', 'error')
     } finally {

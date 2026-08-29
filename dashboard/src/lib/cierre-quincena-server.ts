@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { getMexicoDateString } from '@/lib/quincena-selection'
 import { motivoPendiente } from '@/lib/cierre-quincena'
+import { calcularFaltaPorPagar, type PresupuestoParaTotales } from '@/lib/presupuesto-totales'
 
 // Presupuesto Modificado si existe, si no el Original -- el mismo criterio
 // que usa GET /api/presupuestos para pct/excedido. Vive aca (no en
@@ -58,6 +59,42 @@ export async function cerrarSiCorresponde(quincenaId: number, username: string |
   if (!quedaAlgo) {
     await prisma.quincena.update({ where: { id: quincenaId }, data: { fechaCierre: new Date(), cerradaPor: username } })
   }
+}
+
+// Falta por pagar de una quincena, calculada en vivo contra el presupuesto
+// real -- mismo agregado real/pendiente que cerrarSiCorresponde() y el GET
+// de /api/presupuestos, para que un snapshot de liquidez nunca se guarde con
+// una cifra que un endpoint distinto ya sabe que está mal. Se usa al crear o
+// editar un LiquidezSnapshot, en vez de confiar en lo que mande el cliente.
+export async function faltaPorPagarDeQuincena(quincenaId: number): Promise<number> {
+  const lineas = await prisma.presupuesto.findMany({
+    where: { quincenaId },
+    include: { categoria: true },
+  })
+  const ids = lineas.map(l => l.id)
+  const rows = ids.length > 0
+    ? await prisma.transaccion.groupBy({
+        by: ['presupuestoId', 'estatus'],
+        where: { presupuestoId: { in: ids } },
+        _sum: { monto: true },
+      })
+    : []
+  const realMap = new Map<number, number>()
+  const pendMap = new Map<number, number>()
+  for (const r of rows) {
+    const id = r.presupuestoId as number
+    const monto = Number(r._sum.monto ?? 0)
+    realMap.set(id, (realMap.get(id) ?? 0) + monto)
+    if (r.estatus === 'Pendiente') pendMap.set(id, (pendMap.get(id) ?? 0) + monto)
+  }
+  const items: PresupuestoParaTotales[] = lineas.map(l => ({
+    montoEfectivo: montoEfectivoDePrisma(l),
+    real: realMap.get(l.id) ?? 0,
+    pendiente: pendMap.get(l.id) ?? 0,
+    categoria: { tipo: l.categoria.tipo },
+    estadoLinea: l.estadoLinea,
+  }))
+  return calcularFaltaPorPagar(items)
 }
 
 // Encadena una entrada de historial dentro de `notas` en vez de pisarlo --

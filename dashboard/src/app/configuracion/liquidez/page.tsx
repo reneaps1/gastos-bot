@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, RefreshCw, ArrowLeft, ArrowRight, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Droplets, Wallet, Clock, TrendingUp, TrendingDown, Equal, ArrowLeft, ArrowRight, AlertTriangle } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -10,8 +10,8 @@ import { FormModal } from '@/components/ui/FormModal'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { ReporteButton } from '@/components/ReporteButton'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
-import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
-import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { sumLiquidez, normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
+import { calcularFaltaPorPagar, type PresupuestoParaTotales } from '@/lib/presupuesto-totales'
 import { DeficitTriagePanel } from '@/components/ui/DeficitTriagePanel'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
@@ -48,7 +48,6 @@ const EMPTY_FORM = {
   valesGasolina: '',
   otros: '',
   otrosNota: '',
-  faltaPagar: '',
   notas: '',
   validado: false,
 }
@@ -63,11 +62,10 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
   return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
-function calcTeorico(f: typeof EMPTY_FORM) {
+function calcTeorico(f: typeof EMPTY_FORM, faltaVivo: number) {
   const sum = ['bbva', 'banamex', 'uala', 'ualaInversion', 'efectivo', 'valesDespensa', 'valesGasolina', 'otros']
     .reduce((s, k) => s + (parseFloat(f[k as keyof typeof f] as string) || 0), 0)
-  const falta = parseFloat(f.faltaPagar) || 0
-  return sum - falta
+  return sum - faltaVivo
 }
 
 function LiquidezConfigContent() {
@@ -90,6 +88,8 @@ function LiquidezConfigContent() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [faltaLoading, setFaltaLoading] = useState(false)
+  const [faltaModal, setFaltaModal] = useState(0)
+  const [presupuestosQ, setPresupuestosQ] = useState<PresupuestoParaTotales[]>([])
 
   // Descuadre real: compara el corte mas reciente contra lo que "deberia" haber
   // segun el corte anterior (cualquier quincena) mas los movimientos ya
@@ -158,6 +158,22 @@ function LiquidezConfigContent() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  // Presupuesto de la quincena filtrada, para calcular "falta por pagar" en
+  // vivo (nunca confiar en el faltaPagar guardado del snapshot -- ver
+  // calcularEfectivoDisponible en lib/liquidez.ts).
+  const fetchPresupuestosQ = useCallback(async () => {
+    if (!quincenaId) { setPresupuestosQ([]); return }
+    try {
+      const res = await fetch(`/api/presupuestos?quincenaId=${quincenaId}`)
+      const data = await res.json()
+      setPresupuestosQ(Array.isArray(data) ? data : [])
+    } catch {
+      setPresupuestosQ([])
+    }
+  }, [quincenaId])
+
+  useEffect(() => { fetchPresupuestosQ() }, [fetchPresupuestosQ])
+
   // "Falta por pagar" de una quincena = misma formula que Presupuesto/Dashboard
   // (lib/presupuesto-totales.calcularFaltaPorPagar), para que el snapshot de
   // liquidez no quede desincronizado con el presupuesto real.
@@ -179,13 +195,13 @@ function LiquidezConfigContent() {
     setFaltaLoading(true)
     const falta = await fetchFaltaPorPagar(qId)
     setFaltaLoading(false)
-    if (falta != null) setForm(f => ({ ...f, faltaPagar: falta.toString() }))
+    if (falta != null) setFaltaModal(falta)
   }
 
-  // Recalcula al elegir quincena: se usa al crear un snapshot nuevo (foto
-  // fresca) y al reasignar la quincena de uno existente. NO se llama al solo
-  // reabrir un snapshot para editar — ahi se respeta el valor guardado como
-  // fotografia del momento en que se hizo ese corte.
+  // Recalcula al elegir quincena: se usa al crear un snapshot nuevo y al
+  // reasignar la quincena de uno existente. faltaModal alimenta solo la
+  // previsualizacion de "Teorico calculado" -- ya no es un campo del form,
+  // el servidor calcula y guarda el faltaPagar real al hacer submit.
   async function applyQuincena(qId: string) {
     setForm(f => ({ ...f, quincenaId: qId }))
     await recalcularFalta(qId)
@@ -195,6 +211,7 @@ function LiquidezConfigContent() {
     setEditing(null)
     setForm({ ...EMPTY_FORM, quincenaId })
     setFormErrors({})
+    setFaltaModal(0)
     setModalOpen(true)
     if (quincenaId) applyQuincena(quincenaId)
   }
@@ -213,12 +230,12 @@ function LiquidezConfigContent() {
       valesGasolina: s.valesGasolina.toString(),
       otros: s.otros.toString(),
       otrosNota: s.otrosNota ?? '',
-      faltaPagar: s.faltaPagar.toString(),
       notas: s.notas ?? '',
       validado: s.validado,
     })
     setFormErrors({})
     setModalOpen(true)
+    recalcularFalta(s.quincenaId.toString())
   }
 
   function validate() {
@@ -245,8 +262,7 @@ function LiquidezConfigContent() {
         valesGasolina: form.valesGasolina || '0',
         otros: form.otros || '0',
         otrosNota: form.otrosNota || null,
-        faltaPagar: form.faltaPagar || '0',
-        teorico: calcTeorico(form).toString(),
+        teorico: calcTeorico(form, faltaModal).toString(),
         notas: form.notas || null,
         validado: form.validado,
       }
@@ -352,9 +368,7 @@ function LiquidezConfigContent() {
   // La API ordena por fechaCorte desc, asi que el primero es el corte mas
   // reciente de la quincena seleccionada.
   const latestSnapshot = snapshots[0] ?? null
-  const totalLiquido = latestSnapshot ? sumLiquidez(latestSnapshot) : 0
-  const faltaPagarLatest = latestSnapshot?.faltaPagar ?? 0
-  const deltaLiquido = totalLiquido - faltaPagarLatest
+  const efectivo = calcularEfectivoDisponible(latestSnapshot, presupuestosQ)
   const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
 
   // Corte inmediatamente anterior por fecha (no por quincena) al mas
@@ -414,33 +428,34 @@ function LiquidezConfigContent() {
       {!loading && latestSnapshot && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard
-            label="Total líquido" value={formatMXN(totalLiquido)}
+            label="Total líquido" value={formatMXN(efectivo.totalLiquido)}
             subtitle={`corte ${formatDate(latestSnapshot.fechaCorte)}`}
             icon={<Wallet size={20} className="text-blue-600 dark:text-blue-300" />}
             color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
           />
           <KpiCard
-            label="Falta por pagar" value={formatMXN(faltaPagarLatest)}
+            label="Falta por pagar" value={formatMXN(efectivo.faltaPagar)}
+            subtitle="calculado en vivo"
             icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
           <KpiCard
-            label="¿Me alcanza?" value={formatMXN(deltaLiquido)}
-            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : deltaLiquido > 0 ? 'te sobra' : 'alcanza justo'}
+            label="¿Me alcanza?" value={formatMXN(efectivo.disponible)}
+            subtitle={efectivo.disponible < 0 ? 'te falta cubrir' : efectivo.disponible > 0 ? 'te sobra' : 'alcanza justo'}
             icon={
-              deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
-              : deltaLiquido > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
+              efectivo.disponible < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
+              : efectivo.disponible > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
               : <Equal size={20} className="text-slate-500 dark:text-slate-300" />
             }
-            color={deltaLiquido < 0 ? 'text-rose-600 dark:text-rose-400' : deltaLiquido > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}
+            color={efectivo.disponible < 0 ? 'text-rose-600 dark:text-rose-400' : efectivo.disponible > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}
             bg={
-              deltaLiquido < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
-              : deltaLiquido > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
+              efectivo.disponible < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
+              : efectivo.disponible > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
               : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
             }
             action={
               <div className="mt-1.5 flex flex-col items-start gap-1">
-                {deltaLiquido < 0 && currentQuincena && (
+                {efectivo.disponible < 0 && currentQuincena && (
                   <button
                     onClick={() => setTriageOpen(true)}
                     className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
@@ -520,7 +535,9 @@ function LiquidezConfigContent() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                 {snapshots.map(s => {
                   const total = sumLiquidez(s)
-                  const teorico = s.teorico ?? (total - s.faltaPagar)
+                  // Falta por pagar es la misma para todas las filas: es una
+                  // cifra en vivo de la quincena filtrada, no una foto por corte.
+                  const teorico = s.teorico ?? (total - efectivo.faltaPagar)
                   return (
                     <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <td className="px-4 py-3.5">
@@ -534,8 +551,8 @@ function LiquidezConfigContent() {
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.efectivo)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden sm:table-cell">{formatMXN(total)}</td>
                       <td className="px-3 py-3.5 text-right hidden sm:table-cell">
-                        {s.faltaPagar > 0
-                          ? <span className="text-amber-600 dark:text-amber-400">{formatMXN(s.faltaPagar)}</span>
+                        {efectivo.faltaPagar > 0
+                          ? <span className="text-amber-600 dark:text-amber-400">{formatMXN(efectivo.faltaPagar)}</span>
                           : <span className="text-slate-400 dark:text-slate-500">{formatMXN(0)}</span>
                         }
                       </td>
@@ -632,34 +649,19 @@ function LiquidezConfigContent() {
               <Label htmlFor="lq-otros-nota">¿Qué es &quot;Otros&quot;?</Label>
               <input id="lq-otros-nota" type="text" placeholder="Ej. Efectivo en caja chica" value={form.otrosNota} onChange={e => set('otrosNota', e.target.value)} className={fieldClass()} />
             </div>
-            <div>
-              <div className="flex items-center justify-between mb-1">
-                <Label htmlFor="lq-fp">
-                  Falta por pagar
-                  {faltaLoading && <span className="ml-1 text-slate-400 dark:text-slate-500 normal-case font-normal">(calculando...)</span>}
-                </Label>
-                {editing && form.quincenaId && (
-                  <button
-                    type="button"
-                    onClick={() => recalcularFalta(form.quincenaId)}
-                    disabled={faltaLoading}
-                    className="text-[11px] text-indigo-600 dark:text-indigo-400 hover:underline disabled:opacity-50 cursor-pointer flex items-center gap-1 mb-1"
-                  >
-                    <RefreshCw size={11} className={faltaLoading ? 'animate-spin' : ''} /> Recalcular
-                  </button>
-                )}
-              </div>
-              <input id="lq-fp" type="number" min="0" step="0.01" placeholder="0.00" value={form.faltaPagar} onChange={e => set('faltaPagar', e.target.value)} className={fieldClass()} />
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-                {editing ? 'Guardado al momento de este corte; usa "Recalcular" para refrescarlo.' : 'Auto-calculado del presupuesto de la quincena; puedes ajustarlo si hace falta.'}
-              </p>
-            </div>
           </div>
 
-          {/* Teórico calculado */}
-          <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3 flex items-center justify-between">
-            <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Teórico calculado</span>
-            <span className="text-lg font-bold text-slate-800 dark:text-slate-100">{formatMXN(calcTeorico(form))}</span>
+          {/* Teórico calculado -- "falta por pagar" ya no es un campo editable
+              del corte: se calcula en vivo contra el presupuesto real de la
+              quincena y el servidor la guarda al hacer submit. */}
+          <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3 space-y-1">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Teórico calculado</span>
+              <span className="text-lg font-bold text-slate-800 dark:text-slate-100">{formatMXN(calcTeorico(form, faltaModal))}</span>
+            </div>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500">
+              cuentas − {formatMXN(faltaModal)} por pagar{faltaLoading ? ' (actualizando...)' : ' (calculado en vivo del presupuesto)'}
+            </p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -735,8 +737,7 @@ function LiquidezConfigContent() {
           quincenaId={currentQuincena.id}
           quincenaCodigo={currentQuincena.codigo}
           quincenas={quincenas}
-          snapshotId={latestSnapshot?.id ?? null}
-          onChanged={() => { fetchData(); fetchAllSnapshots() }}
+          onChanged={() => { fetchData(); fetchAllSnapshots(); fetchPresupuestosQ() }}
         />
       )}
     </div>

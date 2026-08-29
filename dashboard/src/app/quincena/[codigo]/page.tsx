@@ -7,7 +7,7 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { getMexicoDateString, formatQuincenaRange } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { KpiCard } from '@/components/ui/KpiCard'
-import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
+import { normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
@@ -107,8 +107,7 @@ export default function QuincenaResumenPage() {
   // si existe, si no el global de Configuración → Períodos de pago.
   const refTarget = resolveReferencia(target, { ingresoReferencia, limiteGastoReferencia })
   const pctLimite = refTarget.limiteGastoReferencia != null && refTarget.limiteGastoReferencia > 0 ? (gastoParaLimite / refTarget.limiteGastoReferencia) * 100 : null
-  const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
-  const liquidezNeta = snapshot ? totalLiquidez - snapshot.faltaPagar : 0
+  const efectivo = calcularEfectivoDisponible(snapshot, presupuestos)
 
   const cuentaTiles: { label: string; value: number; title?: string }[] = snapshot ? [
     { label: 'BBVA', value: snapshot.bbva },
@@ -183,10 +182,10 @@ export default function QuincenaResumenPage() {
                 {snapshot.validado && <span className="ml-1.5 text-emerald-600 dark:text-emerald-400 font-medium">· Validado</span>}
               </p>
               <div className="text-right">
-                <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</p>
-                {snapshot.faltaPagar > 0 && (
-                  <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                    neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.faltaPagar)} por pagar)</span>
+                <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(efectivo.totalLiquido)}</p>
+                {efectivo.faltaPagar > 0 && (
+                  <p className={`text-xs tabular-nums font-medium ${efectivo.disponible < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                    neta {formatMXN(efectivo.disponible)} <span className="font-normal">(-{formatMXN(efectivo.faltaPagar)} por pagar)</span>
                   </p>
                 )}
               </div>

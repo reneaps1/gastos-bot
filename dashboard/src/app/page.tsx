@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronLeft, ChevronDown, Plus, Loader2, Check, AlertTriangle } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronLeft, ChevronDown, Plus, Loader2, Check, AlertTriangle, Droplets } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts'
 import Link from 'next/link'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate } from '@/lib/quincena-selection'
@@ -10,8 +10,7 @@ import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
-import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
-import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
 import { quincenasPendientesDeCierre, cuentaParaAgregados, type GrupoCierre } from '@/lib/cierre-quincena'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
@@ -75,6 +74,7 @@ export default function DashboardPage() {
     presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
     gastosNoCubiertos: 0, totalExcedido: 0, ahorroComprometido: 0,
     gastoParaLimite: 0,
+    totalLiquido: 0, disponibleEfectivo: 0,
   })
   const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
   const [limiteGastoReferencia, setLimiteGastoReferencia] = useState<number | null>(null)
@@ -271,18 +271,24 @@ export default function DashboardPage() {
       setPresupuestoPorCategoria(presupuestoCatArr)
       setPresupuestosDisplay([...presupData].filter(p => p.categoria.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
       const rawSnapshot = liqData.length > 0 ? liqData[0] : null
+      const snapshotMontos = rawSnapshot ? normalizeMontos(rawSnapshot) : null
       setSnapshot(rawSnapshot ? {
         ...rawSnapshot,
-        ...normalizeMontos(rawSnapshot),
+        ...snapshotMontos,
         faltaPagar: Number(rawSnapshot.faltaPagar) || 0,
       } : null)
       setTendencia(Array.isArray(tendData) ? tendData : [])
+      // Efectivo disponible = liquidez real del corte menos lo que falta por
+      // pagar, calculado en vivo contra el presupuesto actual (nunca contra
+      // el faltaPagar guardado del snapshot, que puede quedar obsoleto).
+      const efectivo = calcularEfectivoDisponible(snapshotMontos, presupData)
       setMetricas({
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
-        presupTotal, pendientePorPagar: calcularFaltaPorPagar(presupData),
+        presupTotal, pendientePorPagar: efectivo.faltaPagar,
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
         gastosNoCubiertos, totalExcedido, ahorroComprometido,
         gastoParaLimite: Number(totales.GastoParaLimite ?? 0),
+        totalLiquido: efectivo.totalLiquido, disponibleEfectivo: efectivo.disponible,
       })
     } finally { setLoading(false) }
   }, [quincenaId, granularidad, periodoAnchor])
@@ -303,8 +309,6 @@ export default function DashboardPage() {
   // Análisis) si existe, si no el global de Configuración → Períodos de pago.
   const refActual = resolveReferencia(qActual, { ingresoReferencia, limiteGastoReferencia })
   const periodoActual = granularidad !== 'quincena' ? getPeriodoRange(granularidad, periodoAnchor) : null
-  const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
-  const liquidezNeta = snapshot ? totalLiquidez - snapshot.faltaPagar : 0
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
@@ -562,6 +566,22 @@ export default function DashboardPage() {
               Planificación del presupuesto disponible solo en vista Quincena
             </div>
           )}
+          {/* Sin corte de liquidez de esta quincena -- aviso no bloqueante,
+              igual que el de cierre de quincena: sin esto, "Disponible real"
+              no puede reflejar el efectivo de verdad, solo el plan. */}
+          {granularidad === 'quincena' && qActual && !snapshot && (
+            <Link
+              href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+              className="w-full flex items-center justify-between gap-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40 rounded-xl px-4 py-3 hover:bg-blue-100 dark:hover:bg-blue-950/40 transition-colors"
+            >
+              <span className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-300">
+                <Droplets size={16} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                Aún no capturas tu corte de liquidez de esta quincena — &quot;Disponible real&quot; no puede mostrar tu efectivo hasta entonces.
+              </span>
+              <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 shrink-0">Capturar corte</span>
+            </Link>
+          )}
+
           {granularidad === 'quincena' && metricas.ingresos > 0 && (
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
               <div className="flex items-center justify-between mb-3">
@@ -588,20 +608,32 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Disponible real</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">lo que de verdad te queda hoy</p>
-                  <p className={`text-base font-bold tabular-nums mt-0.5 ${disponibleReal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(disponibleReal))}{disponibleReal < 0 ? ' de más' : ''}</p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">
+                    {snapshot ? 'tu efectivo hoy, menos lo que aún debes' : 'captura tu corte de liquidez para verlo'}
+                  </p>
+                  {snapshot ? (
+                    <>
+                      <p className={`text-base font-bold tabular-nums mt-0.5 ${metricas.disponibleEfectivo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {formatMXN(Math.abs(metricas.disponibleEfectivo))}{metricas.disponibleEfectivo < 0 ? ' de más' : ''}
+                      </p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                        {formatMXN(metricas.totalLiquido)} en cuentas − {formatMXN(metricas.pendientePorPagar)} comprometido
+                      </p>
+                    </>
+                  ) : (
+                    <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+                      className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+                      Capturar corte <ArrowRight size={10} />
+                    </Link>
+                  )}
+                  <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    según presupuesto:
+                    <span className={`font-semibold tabular-nums ${disponibleReal < 0 ? 'text-rose-500 dark:text-rose-400' : ''}`}>{formatMXN(disponibleReal)}</span>
+                  </p>
                   {metricas.ahorroComprometido > 0 && (
                     <p className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-md px-1.5 py-0.5 inline-block">
                       incluye {formatMXN(metricas.ahorroComprometido)} de ahorro comprometido
                     </p>
-                  )}
-                  {snapshot && (
-                    <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
-                      className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
-                      tu efectivo real:
-                      <span className={`font-semibold tabular-nums ${liquidezNeta < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>{formatMXN(liquidezNeta)}</span>
-                      <ArrowRight size={10} />
-                    </Link>
                   )}
                 </div>
               </div>
@@ -1101,10 +1133,10 @@ export default function DashboardPage() {
                   Liquidez <ArrowRight size={12} />
                 </Link>
                 <div className="text-right">
-                  <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</p>
-                  {snapshot && snapshot.faltaPagar > 0 && (
-                    <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                      neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.faltaPagar)} por pagar)</span>
+                  <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.totalLiquido)}</p>
+                  {metricas.pendientePorPagar > 0 && (
+                    <p className={`text-xs tabular-nums font-medium ${metricas.disponibleEfectivo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                      neta {formatMXN(metricas.disponibleEfectivo)} <span className="font-normal">(-{formatMXN(metricas.pendientePorPagar)} por pagar)</span>
                     </p>
                   )}
                 </div>

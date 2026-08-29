@@ -1,6 +1,6 @@
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 
-interface PresupuestoParaTotales {
+export interface PresupuestoParaTotales {
   montoEfectivo: number
   real: number
   pendiente: number

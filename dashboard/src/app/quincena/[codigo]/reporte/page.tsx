@@ -6,7 +6,7 @@ import { ArrowLeft, Printer, FileSpreadsheet, SearchX } from 'lucide-react'
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { formatQuincenaRange } from '@/lib/quincena-selection'
-import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
+import { normalizeMontos, calcularEfectivoDisponible, type LiquidezMontos } from '@/lib/liquidez'
 import { downloadReporteExcel } from '@/lib/reporte-excel'
 import { colorForCategoria } from '@/lib/category-colors'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
@@ -134,10 +134,8 @@ export default function ReporteQuincenaPage() {
   }
 
   const pendiente = totales.Gasto - totales.GastoPagado
-  const totalLiquido = snapshot ? sumLiquidez(snapshot) : 0
-  const faltaPagar = snapshot?.faltaPagar ?? 0
-  const delta = totalLiquido - faltaPagar
-  const deltaColor = delta < 0 ? 'text-rose-600' : delta > 0 ? 'text-emerald-600' : 'text-slate-700'
+  const efectivo = calcularEfectivoDisponible(snapshot, presupuestos)
+  const deltaColor = efectivo.disponible < 0 ? 'text-rose-600' : efectivo.disponible > 0 ? 'text-emerald-600' : 'text-slate-700'
   const fechaReporte = new Intl.DateTimeFormat('es-MX', {
     weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }).format(new Date())
@@ -197,7 +195,7 @@ export default function ReporteQuincenaPage() {
           bbva: snapshot.bbva, banamex: snapshot.banamex, uala: snapshot.uala, ualaInversion: snapshot.ualaInversion,
           efectivo: snapshot.efectivo, valesDespensa: snapshot.valesDespensa, valesGasolina: snapshot.valesGasolina,
           otros: snapshot.otros, otrosNota: snapshot.otrosNota,
-          totalLiquido, faltaPagar, delta,
+          totalLiquido: efectivo.totalLiquido, faltaPagar: efectivo.faltaPagar, delta: efectivo.disponible,
         } : null,
       })
     } finally {
@@ -258,15 +256,15 @@ export default function ReporteQuincenaPage() {
               <div className="grid grid-cols-3 gap-3">
                 <div className="border border-slate-300 rounded-lg p-3 text-center">
                   <p className="text-xs text-slate-500">Total líquido</p>
-                  <p className="text-lg font-bold text-slate-900 tabular-nums">{formatMXN(totalLiquido)}</p>
+                  <p className="text-lg font-bold text-slate-900 tabular-nums">{formatMXN(efectivo.totalLiquido)}</p>
                 </div>
                 <div className="border border-slate-300 rounded-lg p-3 text-center">
                   <p className="text-xs text-slate-500">Falta por pagar</p>
-                  <p className="text-lg font-bold text-amber-600 tabular-nums">{formatMXN(faltaPagar)}</p>
+                  <p className="text-lg font-bold text-amber-600 tabular-nums">{formatMXN(efectivo.faltaPagar)}</p>
                 </div>
                 <div className="border border-slate-300 rounded-lg p-3 text-center">
                   <p className="text-xs text-slate-500">Delta (líquido neto)</p>
-                  <p className={`text-lg font-bold tabular-nums ${deltaColor}`}>{formatMXN(delta)}</p>
+                  <p className={`text-lg font-bold tabular-nums ${deltaColor}`}>{formatMXN(efectivo.disponible)}</p>
                 </div>
               </div>
               <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
