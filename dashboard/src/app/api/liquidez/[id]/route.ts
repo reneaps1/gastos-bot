@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { faltaPorPagarDeQuincena } from '@/lib/cierre-quincena-server'
 
 export async function GET(
   request: Request,
@@ -36,14 +37,22 @@ export async function PUT(
     const {
       fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
       efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      faltaPagar, teorico, notas, validado
+      teorico, notas, validado
     } = body
+
+    // faltaPagar nunca se acepta del cliente -- se recalcula en vivo contra
+    // el presupuesto real de la quincena efectiva (la nueva si se reasigna,
+    // si no la que ya tenía el snapshot). Ver cierre-quincena-server.ts.
+    const existing = await prisma.liquidezSnapshot.findUnique({ where: { id } })
+    if (!existing) return NextResponse.json({ error: 'Snapshot not found' }, { status: 404 })
+    const quincenaIdEfectiva = quincenaId ? parseInt(quincenaId) : existing.quincenaId
+    const faltaPagarCalc = await faltaPorPagarDeQuincena(quincenaIdEfectiva)
 
     const snapshot = await prisma.liquidezSnapshot.update({
       where: { id },
       data: {
         ...(fechaCorte && { fechaCorte: new Date(fechaCorte) }),
-        ...(quincenaId && { quincenaId: parseInt(quincenaId) }),
+        ...(quincenaId && { quincenaId: quincenaIdEfectiva }),
         ...(bbva !== undefined && { bbva: parseFloat(bbva) }),
         ...(banamex !== undefined && { banamex: parseFloat(banamex) }),
         ...(uala !== undefined && { uala: parseFloat(uala) }),
@@ -53,7 +62,7 @@ export async function PUT(
         ...(valesGasolina !== undefined && { valesGasolina: parseFloat(valesGasolina) }),
         ...(otros !== undefined && { otros: parseFloat(otros) }),
         ...(otrosNota !== undefined && { otrosNota }),
-        ...(faltaPagar !== undefined && { faltaPagar: parseFloat(faltaPagar) }),
+        faltaPagar: faltaPagarCalc,
         ...(teorico !== undefined && { teorico: teorico ? parseFloat(teorico) : null }),
         ...(notas !== undefined && { notas }),
         ...(validado !== undefined && { validado }),

@@ -1,32 +1,44 @@
 interface PresupuestoParaCierre {
   id: number
   descripcion: string
-  montoPresupuestado: number | string
+  // Presupuesto Modificado si existe, si no el Original -- lo que la linea
+  // esta comprometida a cumplir *hoy*. Nunca el monto original crudo: un
+  // excedente ya cubierto por un traspaso (ver /transferir) deja de contar
+  // como excedido porque el efectivo ya subio para reflejarlo.
+  montoEfectivo: number
   real: number
   pendiente: number
   estadoLinea: string
   categoria: { tipo: string; nombre: string }
 }
 
+// Regla unica de que linea cuenta en un agregado (KPI, total de categoria,
+// falta por pagar, tendencia): Cancelada nunca cuenta -- no hay lectura bajo
+// la cual una linea que "nunca paso" deba sumar en algun lado. Absorbida SI
+// cuenta -- el gasto ocurrio de verdad, solo se acepto la variacion.
+export function cuentaParaAgregados(p: { estadoLinea: string }): boolean {
+  return p.estadoLinea !== 'Cancelada'
+}
+
 export type MotivoPendiente = 'sinRegistro' | 'pendienteDePago' | 'excedido'
 
 // Por que una linea de Gasto todavia necesita una decision antes de poder
 // cerrar su quincena: nunca se registro nada (sinRegistro), quedo algo
-// registrado sin pagar (pendienteDePago), o se gasto de mas (excedido).
-// Ingreso/Ahorro, una linea ya resuelta, o un gasto que cerro dentro de lo
-// presupuestado no necesitan cierre.
+// registrado sin pagar (pendienteDePago), o se gasto de mas sobre lo
+// efectivamente comprometido (excedido). Ingreso/Ahorro, una linea ya
+// resuelta, o un gasto que cerro dentro de lo comprometido no necesitan cierre.
 export function motivoPendiente(p: PresupuestoParaCierre): MotivoPendiente | null {
   if (p.estadoLinea !== 'Abierta') return null
   if (p.categoria.tipo !== 'Gasto') return null
   if (p.real === 0) return 'sinRegistro'
   if (p.pendiente > 0) return 'pendienteDePago'
-  if (p.real > Number(p.montoPresupuestado)) return 'excedido'
+  if (p.real > p.montoEfectivo) return 'excedido'
   return null
 }
 
 export function montoPendiente(p: PresupuestoParaCierre, motivo: MotivoPendiente): number {
-  if (motivo === 'excedido') return p.real - Number(p.montoPresupuestado)
-  return p.pendiente + Math.max(Number(p.montoPresupuestado) - p.real, 0)
+  if (motivo === 'excedido') return p.real - p.montoEfectivo
+  return p.pendiente + Math.max(p.montoEfectivo - p.real, 0)
 }
 
 interface QuincenaParaCierre { id: number; codigo: string; fechaFin: string; fechaCierre?: string | null }

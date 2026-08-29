@@ -9,6 +9,7 @@ import { FilterChip } from '@/components/ui/FilterChip'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { resolveReferencia, normalizeReferencia, type ReferenciaValores } from '@/lib/referencia'
 import { colorForCategoria } from '@/lib/category-colors'
+import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 import type { Presupuesto } from './page'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
@@ -47,9 +48,9 @@ interface BalancePorQ {
 // unicas activas por default; el resto es opt-in para no saturar la grafica.
 interface SerieConfig { key: string; label: string; color: string; dashed?: boolean; tipo?: 'monotone' | 'stepAfter' }
 const SERIES_BASE: SerieConfig[] = [
-  { key: 'ingresos', label: 'Ingresos (presupuestado)', color: '#10b981' },
+  { key: 'ingresos', label: 'Ingresos (plan original)', color: '#10b981' },
   { key: 'ingresosReales', label: 'Ingresos (real)', color: '#047857', dashed: true },
-  { key: 'gastos', label: 'Gastos (presupuestado)', color: '#f43f5e' },
+  { key: 'gastos', label: 'Gastos (plan original)', color: '#f43f5e' },
   { key: 'gastosReales', label: 'Gastos (real)', color: '#be123c', dashed: true },
   { key: 'ma3Gastos', label: 'Tendencia (prom. móvil 3)', color: '#6366f1', dashed: true },
   { key: 'ingresoRef', label: 'Meta ingreso', color: '#10b981', dashed: true, tipo: 'stepAfter' },
@@ -84,6 +85,7 @@ function defaultDesdeHasta(quincenas: Quincena[], today: string): { desde: strin
 function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global: ReferenciaValores, today: string): BalancePorQ[] {
   const byQ = new Map<number, { ingresos: number; ingresosReales: number; gastos: number; gastosReales: number }>()
   for (const p of rows) {
+    if (!cuentaParaAgregados(p)) continue
     const acc = byQ.get(p.quincenaId) ?? { ingresos: 0, ingresosReales: 0, gastos: 0, gastosReales: 0 }
     if (p.categoria.tipo === 'Ingreso') { acc.ingresos += Number(p.montoPresupuestado); acc.ingresosReales += p.real }
     if (p.categoria.tipo === 'Gasto') { acc.gastos += Number(p.montoPresupuestado); acc.gastosReales += p.real }
@@ -276,7 +278,7 @@ function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: Balance
   const idsRecientes = new Set(cerradasRecientes.slice(-6).map(q => q.quincenaId))
   const porCategoria = new Map<string, Map<number, { real: number; presupuestado: number }>>()
   for (const p of rows) {
-    if (p.categoria.tipo !== 'Gasto' || !idsRecientes.has(p.quincenaId)) continue
+    if (p.categoria.tipo !== 'Gasto' || !idsRecientes.has(p.quincenaId) || !cuentaParaAgregados(p)) continue
     if (!porCategoria.has(p.categoria.nombre)) porCategoria.set(p.categoria.nombre, new Map())
     const porQ = porCategoria.get(p.categoria.nombre)!
     const acc = porQ.get(p.quincenaId) ?? { real: 0, presupuestado: 0 }
@@ -752,8 +754,8 @@ export function PresupuestoAnalisis({
                   {cat.nombre}
                   <button type="button" onClick={() => toggleUnidadCategoria(c.instanceId)}
                     className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/25 hover:bg-white/40 cursor-pointer"
-                    title="Cambiar entre real y presupuestado">
-                    {c.unidad === 'real' ? 'real' : 'ppto'}
+                    title="Cambiar entre real y plan original">
+                    {c.unidad === 'real' ? 'real' : 'original'}
                   </button>
                   <button type="button" onClick={() => duplicarCategoria(c.instanceId)} className="hover:opacity-70 cursor-pointer"
                     aria-label={`Duplicar ${cat.nombre} para comparar real vs. presupuestado`} title="Duplicar (comparar real vs. presupuestado)">
@@ -776,8 +778,8 @@ export function PresupuestoAnalisis({
                   <button type="button" onClick={() => toggleUnidadLinea(l.instanceId)}
                     className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white hover:opacity-80 cursor-pointer"
                     style={{ backgroundColor: l.color }}
-                    title="Cambiar entre real y presupuestado">
-                    {l.unidad === 'real' ? 'real' : 'ppto'}
+                    title="Cambiar entre real y plan original">
+                    {l.unidad === 'real' ? 'real' : 'original'}
                   </button>
                   <button type="button" onClick={() => duplicarLinea(l.instanceId)} className="hover:opacity-70 cursor-pointer"
                     aria-label={`Duplicar ${label} para comparar real vs. presupuestado`} title="Duplicar (comparar real vs. presupuestado)">
@@ -854,7 +856,7 @@ export function PresupuestoAnalisis({
                   const cat = categorias.find(x => x.id === c.categoriaId)
                   if (!cat) return null
                   const color = colorForCategoria(cat.nombre, i)
-                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'ppto'})`
+                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'original'})`
                   return (
                     <Line key={categoriaInstanceKey(c.instanceId)} type="monotone" dataKey={categoriaInstanceKey(c.instanceId)} name={name}
                       stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
@@ -864,7 +866,7 @@ export function PresupuestoAnalisis({
                 {lineasAgregadas.map(l => {
                   const cat = categorias.find(c => c.id === l.categoriaId)
                   const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
-                  const name = `${label} (${l.unidad === 'real' ? 'real' : 'ppto'})`
+                  const name = `${label} (${l.unidad === 'real' ? 'real' : 'original'})`
                   // Un punto de linea agregada mapea 1:1 a una fila Presupuesto real
                   // (categoria+descripcion normalizada+quincena) -- a diferencia de
                   // categoriasAgregadas/SERIES_BASE, que suman o derivan de varias

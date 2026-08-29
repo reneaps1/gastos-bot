@@ -5,6 +5,7 @@ import { formatMXN } from '@/lib/utils'
 import { formatQuincenaRange, getMexicoDateString } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { downloadResumenExcel } from '@/lib/reporte-excel'
 import { downloadElementAsImage, downloadElementAsPdf } from '@/lib/capture-export'
 import { toCsv, downloadCsv } from '@/lib/csv'
@@ -14,9 +15,10 @@ interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: 
 interface PresupuestoRow {
   id: number
   descripcion: string
-  montoPresupuestado: number | string
+  montoEfectivo: number
   real: number
   pendiente: number
+  estadoLinea: string
   categoria: { nombre: string; tipo: string }
 }
 interface Fila extends PresupuestoRow {
@@ -91,13 +93,13 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   // segun lo que se muestre en la tabla), pero la tabla en si solo lista lo
   // que todavia no esta cubierto -- lo ya pagado al 100% no aporta nada a un
   // reporte que existe para ver que falta.
-  const totalPresupuestado = rows.reduce((s, r) => s + Number(r.montoPresupuestado), 0)
-  const totalPagado = rows.reduce((s, r) => s + r.pagado, 0)
+  const totalPresupuestado = rows.filter(cuentaParaAgregados).reduce((s, r) => s + Number(r.montoEfectivo), 0)
+  const totalPagado = rows.filter(cuentaParaAgregados).reduce((s, r) => s + r.pagado, 0)
   const totalFalta = calcularFaltaPorPagar(rows)
   const filasPorCubrir = rows.filter(r => r.estado !== 'Cubierto')
   // El pie de la tabla suma solo lo que se ve en la tabla (lo pendiente), no
   // la quincena completa -- si no, no cuadraria con las filas visibles.
-  const totalPresupuestadoPendiente = filasPorCubrir.reduce((s, r) => s + Number(r.montoPresupuestado), 0)
+  const totalPresupuestadoPendiente = filasPorCubrir.reduce((s, r) => s + Number(r.montoEfectivo), 0)
   const totalPagadoPendiente = filasPorCubrir.reduce((s, r) => s + r.pagado, 0)
   const totalFaltaPendiente = calcularFaltaPorPagar(filasPorCubrir)
 
@@ -117,7 +119,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           totalPresupuestadoPendiente, totalPagadoPendiente, totalFaltaPendiente,
           rows: filasPorCubrir.map(r => ({
             categoria: r.categoria.nombre, descripcion: r.descripcion,
-            presupuestado: Number(r.montoPresupuestado), pagado: r.pagado, falta: r.falta, estado: r.estado,
+            presupuestado: Number(r.montoEfectivo), pagado: r.pagado, falta: r.falta, estado: r.estado,
           })),
         })
       } else if (kind === 'csv') {
@@ -125,13 +127,13 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           ...filasPorCubrir,
           {
             id: -1, descripcion: 'TOTAL PENDIENTE', categoria: { nombre: '', tipo: '' },
-            montoPresupuestado: totalPresupuestadoPendiente, real: 0, pendiente: 0,
+            montoEfectivo: totalPresupuestadoPendiente, real: 0, pendiente: 0,
             pagado: totalPagadoPendiente, falta: totalFaltaPendiente, estado: 'Cubierto' as const,
           },
         ], [
           { key: 'categoria', label: 'Categoría', value: r => r.categoria.nombre },
           { key: 'descripcion', label: 'Descripción', value: r => r.descripcion },
-          { key: 'presupuestado', label: 'Presupuestado', value: r => Number(r.montoPresupuestado).toFixed(2) },
+          { key: 'presupuestado', label: 'Presupuestado', value: r => Number(r.montoEfectivo).toFixed(2) },
           { key: 'pagado', label: 'Pagado', value: r => r.pagado.toFixed(2) },
           { key: 'falta', label: 'Falta por pagar', value: r => r.falta.toFixed(2) },
           { key: 'estado', label: 'Estado', value: r => r.estado },
@@ -216,7 +218,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
                     <tr key={r.id} style={{ borderTop: `1px solid ${C.slate200}`, backgroundColor: i % 2 === 1 ? C.slate50 : C.white }}>
                       <td className="py-1 px-2.5" style={{ color: C.slate700 }}>{r.categoria.nombre}</td>
                       <td className="py-1 px-2.5" style={{ color: C.slate700 }}>{r.descripcion}</td>
-                      <td className="py-1 px-2.5 text-right tabular-nums" style={{ color: C.slate700 }}>{formatMXN(Number(r.montoPresupuestado))}</td>
+                      <td className="py-1 px-2.5 text-right tabular-nums" style={{ color: C.slate700 }}>{formatMXN(Number(r.montoEfectivo))}</td>
                       <td className="py-1 px-2.5 text-right tabular-nums" style={{ color: C.slate700 }}>{formatMXN(r.pagado)}</td>
                       <td className="py-1 px-2.5 text-right tabular-nums" style={{ color: C.slate700 }}>{formatMXN(r.falta)}</td>
                       <td className="py-1 px-2.5">

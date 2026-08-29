@@ -210,6 +210,12 @@ model Presupuesto {
   diaCobro           Int?                @map("dia_cobro")
   fechaRegistro      DateTime            @default(now()) @map("fecha_registro") @db.Timestamptz()
   estadoLinea        EstadoLineaPresupuesto @default(Abierta) @map("estado_linea")
+  // Presupuesto Modificado (terminologia de presupuesto publico: Original ->
+  // Modificado -> Ejercido). NULL = sin revisar, el efectivo es
+  // montoPresupuestado. Solo se mueve via traspaso explicito (ver
+  // POST /api/presupuestos/[id]/transferir) -- montoPresupuestado (el
+  // compromiso original) nunca se toca despues de creado.
+  montoRevisado      Decimal?            @map("monto_revisado") @db.Decimal(12, 2)
 
   quincena      Quincena      @relation(fields: [quincenaId], references: [id])
   categoria     Categoria     @relation(fields: [categoriaId], references: [id])

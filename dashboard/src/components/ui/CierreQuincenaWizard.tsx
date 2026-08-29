@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
-import { CheckCircle2, ArrowRightCircle, XCircle, Scale, Loader2 } from 'lucide-react'
+import { CheckCircle2, ArrowRightCircle, XCircle, Scale, ArrowLeftRight, Loader2 } from 'lucide-react'
 import { formatMXN } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { FormModal } from '@/components/ui/FormModal'
@@ -22,6 +22,7 @@ const MENSAJE_OK: Record<string, string> = {
   mover: 'Movido a la quincena actual',
   cancelar: 'Marcado como cancelado',
   absorber: 'Variación aceptada',
+  cubrir: 'Excedente cubierto',
 }
 
 const MOTIVO_STYLE: Record<MotivoPendiente, string> = {
@@ -30,7 +31,10 @@ const MOTIVO_STYLE: Record<MotivoPendiente, string> = {
   excedido: 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-800/50 dark:bg-rose-950/30 dark:text-rose-400',
 }
 
-type AccionForm = 'registrar_pagado' | 'cancelar' | 'absorber'
+type AccionForm = 'registrar_pagado' | 'cancelar' | 'absorber' | 'cubrir'
+
+interface DonanteOption { id: number; descripcion: string; disponible: number }
+const SIN_ASIGNAR = 'sinAsignar'
 
 // Resuelve, una por una, las lineas de Gasto que quedaron sin resolver en
 // quincenas que ya terminaron. No bloquea nada del resto de la app -- es la
@@ -44,6 +48,9 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
   const [montoForm, setMontoForm] = useState('')
   const [fechaForm, setFechaForm] = useState(getMexicoDateString())
   const [notaForm, setNotaForm] = useState('')
+  const [origenSel, setOrigenSel] = useState(SIN_ASIGNAR)
+  const [donantesPorQuincena, setDonantesPorQuincena] = useState<Record<number, DonanteOption[]>>({})
+  const [cargandoDonantes, setCargandoDonantes] = useState(false)
 
   useEffect(() => { if (open) setGruposLocal(grupos) }, [open, grupos])
 
@@ -53,6 +60,24 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
     setMontoForm(item.monto.toFixed(2))
     setFechaForm(getMexicoDateString())
     setNotaForm('')
+    setOrigenSel(SIN_ASIGNAR)
+  }
+
+  async function abrirCubrir(item: LineaPendiente) {
+    startForm(item, 'cubrir')
+    if (donantesPorQuincena[item.quincena.id]) return
+    setCargandoDonantes(true)
+    try {
+      const res = await fetch(`/api/presupuestos?quincenaId=${item.quincena.id}`)
+      const data: Array<{ id: number; descripcion: string; categoria: { tipo: string }; montoEfectivo: number; real: number }> = await res.json()
+      const opciones = data
+        .filter(p => p.id !== item.id && p.categoria.tipo === 'Gasto')
+        .map(p => ({ id: p.id, descripcion: p.descripcion, disponible: Number((p.montoEfectivo - p.real).toFixed(2)) }))
+        .filter(o => o.disponible > 0)
+      setDonantesPorQuincena(prev => ({ ...prev, [item.quincena.id]: opciones }))
+    } finally {
+      setCargandoDonantes(false)
+    }
   }
 
   function cancelForm() {
@@ -60,15 +85,18 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
     setEditingAccion(null)
   }
 
-  async function ejecutar(item: LineaPendiente, accion: string, extra?: Record<string, unknown>) {
+  async function ejecutar(item: LineaPendiente, endpoint: 'resolver' | 'transferir', body: Record<string, unknown>, mensajeOk: string) {
     setBusyId(item.id)
     try {
-      const res = await fetch(`/api/presupuestos/${item.id}/resolver`, {
+      const res = await fetch(`/api/presupuestos/${item.id}/${endpoint}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accion, ...extra }),
+        body: JSON.stringify(body),
       })
-      if (!res.ok) throw new Error()
-      toast(MENSAJE_OK[accion] ?? 'Resuelto')
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error ?? 'Error al resolver')
+      }
+      toast(mensajeOk)
       cancelForm()
       setGruposLocal(prev => prev
         .map(g => g.quincena.id === item.quincena.id
@@ -76,8 +104,8 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
           : g)
         .filter(g => g.items.length > 0))
       onResuelto()
-    } catch {
-      toast('Error al resolver', 'error')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Error al resolver', 'error')
     } finally {
       setBusyId(null)
     }
@@ -120,6 +148,7 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
                   {grupo.items.map(item => {
                     const isBusy = busyId === item.id
                     const isEditing = editingId === item.id
+                    const donantes = donantesPorQuincena[item.quincena.id] ?? []
                     return (
                       <div key={item.id} className="border border-slate-200 dark:border-slate-700 rounded-xl p-3">
                         <div className="flex items-center justify-between gap-3 mb-2">
@@ -134,23 +163,49 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
 
                         {isEditing ? (
                           <div className="space-y-2">
-                            {editingAccion === 'registrar_pagado' ? (
+                            {editingAccion === 'registrar_pagado' && (
                               <div className="flex flex-wrap items-center gap-2">
                                 <input type="date" value={fechaForm} onChange={e => setFechaForm(e.target.value)}
                                   className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
                                 <input type="number" step="0.01" min="0" value={montoForm} onChange={e => setMontoForm(e.target.value)}
                                   className="w-28 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
                               </div>
-                            ) : (
+                            )}
+                            {(editingAccion === 'cancelar' || editingAccion === 'absorber') && (
                               <input type="text" placeholder="Nota opcional" value={notaForm} onChange={e => setNotaForm(e.target.value)}
                                 className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
                             )}
+                            {editingAccion === 'cubrir' && (
+                              <div className="space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <select value={origenSel} onChange={e => setOrigenSel(e.target.value)} disabled={cargandoDonantes}
+                                    className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 max-w-[220px]">
+                                    <option value={SIN_ASIGNAR}>Sin asignar (no afecta otras líneas)</option>
+                                    {donantes.map(d => (
+                                      <option key={d.id} value={d.id}>{d.descripcion} · disp. {formatMXN(d.disponible)}</option>
+                                    ))}
+                                  </select>
+                                  <input type="number" step="0.01" min="0" value={montoForm} onChange={e => setMontoForm(e.target.value)}
+                                    className="w-28 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                                </div>
+                                {cargandoDonantes && <p className="text-xs text-slate-400 dark:text-slate-500">Buscando líneas con saldo disponible…</p>}
+                              </div>
+                            )}
                             <div className="flex items-center gap-2">
                               <button
-                                onClick={() => editingAccion === 'registrar_pagado'
-                                  ? ejecutar(item, 'registrar_pagado', { fecha: fechaForm, monto: montoForm })
-                                  : ejecutar(item, editingAccion!, { nota: notaForm || undefined })}
-                                disabled={isBusy || (editingAccion === 'registrar_pagado' && (!montoForm || !fechaForm))}
+                                onClick={() => {
+                                  if (editingAccion === 'registrar_pagado') {
+                                    ejecutar(item, 'resolver', { accion: 'registrar_pagado', fecha: fechaForm, monto: montoForm }, MENSAJE_OK.registrar_pagado)
+                                  } else if (editingAccion === 'cubrir') {
+                                    ejecutar(item, 'transferir', {
+                                      monto: montoForm,
+                                      origenId: origenSel === SIN_ASIGNAR ? undefined : origenSel,
+                                    }, MENSAJE_OK.cubrir)
+                                  } else {
+                                    ejecutar(item, 'resolver', { accion: editingAccion, nota: notaForm || undefined }, MENSAJE_OK[editingAccion!])
+                                  }
+                                }}
+                                disabled={isBusy || cargandoDonantes || !montoForm || (editingAccion === 'registrar_pagado' && !fechaForm)}
                                 className="flex items-center gap-1 text-xs px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer disabled:opacity-50">
                                 {isBusy && <Loader2 size={11} className="animate-spin" />} Confirmar
                               </button>
@@ -169,13 +224,13 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
                               </button>
                             )}
                             {item.motivo === 'pendienteDePago' && (
-                              <button onClick={() => ejecutar(item, 'pagar_existente')} disabled={isBusy}
+                              <button onClick={() => ejecutar(item, 'resolver', { accion: 'pagar_existente' }, MENSAJE_OK.pagar_existente)} disabled={isBusy}
                                 className="flex items-center gap-1 text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
                                 {isBusy ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />} Marcar como pagado
                               </button>
                             )}
                             {(item.motivo === 'sinRegistro' || item.motivo === 'pendienteDePago') && (
-                              <button onClick={() => ejecutar(item, 'mover', { targetQuincenaId: quincenaActualId })}
+                              <button onClick={() => ejecutar(item, 'resolver', { accion: 'mover', targetQuincenaId: quincenaActualId }, MENSAJE_OK.mover)}
                                 disabled={isBusy || !quincenaActualId}
                                 title={!quincenaActualId ? 'No hay quincena actual configurada' : undefined}
                                 className="flex items-center gap-1 text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
@@ -186,6 +241,12 @@ export function CierreQuincenaWizard({ open, onOpenChange, grupos, quincenaActua
                               <button onClick={() => startForm(item, 'cancelar')} disabled={isBusy}
                                 className="flex items-center gap-1 text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
                                 <XCircle size={11} /> Cancelar / no aplicó
+                              </button>
+                            )}
+                            {item.motivo === 'excedido' && (
+                              <button onClick={() => abrirCubrir(item)} disabled={isBusy}
+                                className="flex items-center gap-1 text-xs px-2.5 py-1.5 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
+                                <ArrowLeftRight size={11} /> Cubrir desde otra línea
                               </button>
                             )}
                             {item.motivo === 'excedido' && (

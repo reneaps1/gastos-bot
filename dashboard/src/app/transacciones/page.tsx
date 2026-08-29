@@ -29,7 +29,7 @@ interface User { id: number; nombre: string }
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface MetodoPago { id: number; nombre: string }
 interface Credito { id: number; nombre: string; tipoCredito: string; acreedor: string; activo: boolean; diaPago: number | null }
-interface PresupuestoOption { id: number; descripcion: string; montoPresupuestado: number }
+interface PresupuestoOption { id: number; descripcion: string; montoEfectivo: number }
 interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: 'Gasto' | 'Ingreso' | 'Ahorro'
   monto: number; estatus: 'Pagado' | 'Pendiente'; notas: string | null
@@ -725,7 +725,7 @@ export default function TransaccionesPage() {
               <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.categoriaId || !form.quincenaId}>
                 <option value="">Sin asignar</option>
                 {presupuestoOpciones.map(p => (
-                  <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(Number(p.montoPresupuestado))})</option>
+                  <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(p.montoEfectivo)})</option>
                 ))}
               </select>
               {form.categoriaId && form.quincenaId && presupuestoOpciones.length === 0 && (

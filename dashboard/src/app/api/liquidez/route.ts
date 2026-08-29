@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { faltaPorPagarDeQuincena } from '@/lib/cierre-quincena-server'
 
 export async function GET(request: Request) {
   try {
@@ -28,17 +29,23 @@ export async function POST(request: Request) {
     const {
       fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
       efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      faltaPagar, teorico, notas, validado
+      teorico, notas, validado
     } = body
 
     if (!fechaCorte || !quincenaId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    const quincenaIdNum = parseInt(quincenaId)
+    // faltaPagar nunca se acepta del cliente -- se calcula en vivo contra el
+    // presupuesto real de la quincena, para que un snapshot nunca nazca ya
+    // desactualizado. Ver dashboard/src/lib/cierre-quincena-server.ts.
+    const faltaPagarCalc = await faltaPorPagarDeQuincena(quincenaIdNum)
+
     const snapshot = await prisma.liquidezSnapshot.create({
       data: {
         fechaCorte: new Date(fechaCorte),
-        quincenaId: parseInt(quincenaId),
+        quincenaId: quincenaIdNum,
         bbva: bbva ? parseFloat(bbva) : 0,
         banamex: banamex ? parseFloat(banamex) : 0,
         uala: uala ? parseFloat(uala) : 0,
@@ -48,7 +55,7 @@ export async function POST(request: Request) {
         valesGasolina: valesGasolina ? parseFloat(valesGasolina) : 0,
         otros: otros ? parseFloat(otros) : 0,
         otrosNota: otrosNota ?? null,
-        faltaPagar: faltaPagar ? parseFloat(faltaPagar) : 0,
+        faltaPagar: faltaPagarCalc,
         teorico: teorico ? parseFloat(teorico) : null,
         notas,
         validado: validado ?? false,

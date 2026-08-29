@@ -24,9 +24,14 @@ export async function GET(request: Request) {
         where: { quincenaId: { in: sliceIds } },
         _sum: { monto: true },
       }),
+      // Se queda en montoPresupuestado (el plan original) a propósito -- esta
+      // es la misma pregunta de tendencia histórica que PresupuestoAnalisis
+      // ("qué tan bien planeo, quincena tras quincena"), no la operativa. Sí
+      // se excluye Cancelada: una línea que nunca pasó no debe inflar el
+      // plan de un periodo para siempre.
       prisma.presupuesto.groupBy({
         by: ['quincenaId'],
-        where: { quincenaId: { in: sliceIds }, categoria: { tipo: 'Gasto' } },
+        where: { quincenaId: { in: sliceIds }, categoria: { tipo: 'Gasto' }, estadoLinea: { not: 'Cancelada' } },
         _sum: { montoPresupuestado: true },
       }),
     ])
