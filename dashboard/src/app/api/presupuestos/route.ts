@@ -19,11 +19,17 @@ export async function GET(request: Request) {
       orderBy: [{ quincena: { fechaInicio: 'desc' } }, { categoria: { nombre: 'asc' } }],
     })
 
-    // Total presupuestado por grupo (quincenaId, categoriaId), para el rollup de categoría en la UI
+    // Presupuesto Modificado si existe, si no el Original -- lo comprometido
+    // *hoy* contra lo que se compara pct/excedido. montoPresupuestado (el
+    // original crudo) sigue viajando sin tocar via el spread de abajo.
+    const montoEfectivo = (p: { montoPresupuestado: unknown; montoRevisado: unknown }) =>
+      p.montoRevisado != null ? Number(p.montoRevisado) : Number(p.montoPresupuestado)
+
+    // Total efectivo por grupo (quincenaId, categoriaId), para el rollup de categoría en la UI
     const groupTotals = new Map<string, number>()
     for (const p of presupuestos) {
       const key = `${p.quincenaId}-${p.categoriaId}`
-      groupTotals.set(key, (groupTotals.get(key) ?? 0) + Number(p.montoPresupuestado))
+      groupTotals.set(key, (groupTotals.get(key) ?? 0) + montoEfectivo(p))
     }
 
     // Monto real por línea específica (presupuestoId) — una sola query agrupada en vez de N aggregates.
@@ -51,12 +57,12 @@ export async function GET(request: Request) {
     const presupuestosConGasto = presupuestos.map(p => {
       const real = gastoMap.get(p.id) ?? 0
       const pendiente = pendienteMap.get(p.id) ?? 0
-      const presup = Number(p.montoPresupuestado)
-      const pct = presup > 0 ? (real / presup) * 100 : 0
+      const efectivo = montoEfectivo(p)
+      const pct = efectivo > 0 ? (real / efectivo) * 100 : 0
       const key = `${p.quincenaId}-${p.categoriaId}`
-      const categoriaTotal = groupTotals.get(key) ?? presup
-      const excedido = real > presup ? Number((real - presup).toFixed(2)) : 0
-      return { ...p, real, pendiente, pct, categoriaTotal, excedido }
+      const categoriaTotal = groupTotals.get(key) ?? efectivo
+      const excedido = real > efectivo ? Number((real - efectivo).toFixed(2)) : 0
+      return { ...p, real, pendiente, pct, categoriaTotal, excedido, montoEfectivo: efectivo }
     })
 
     return NextResponse.json(presupuestosConGasto)

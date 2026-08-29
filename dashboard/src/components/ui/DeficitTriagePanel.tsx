@@ -10,7 +10,7 @@ import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
 interface PresupuestoItem {
-  id: number; descripcion: string; montoPresupuestado: number | string; categoriaId: number
+  id: number; descripcion: string; montoEfectivo: number; categoriaId: number
   quincenaId: number; categoria: Categoria; real: number; pendiente: number; pct: number
 }
 
@@ -91,7 +91,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
 
   function startEdit(p: PresupuestoItem) {
     setEditingId(p.id)
-    setEditValue(Number(p.montoPresupuestado).toString())
+    setEditValue(p.montoEfectivo.toString())
   }
 
   async function saveRecorte(p: PresupuestoItem) {
@@ -102,13 +102,16 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
     }
     setBusyId(p.id)
     try {
+      // Ajusta el Presupuesto Modificado, nunca el Original -- asi el
+      // compromiso que te fijaste al inicio de la quincena sigue viendose
+      // despues, junto con el recorte que decidiste sobre la marcha.
       const res = await fetch(`/api/presupuestos/${p.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ montoPresupuestado: nuevoMonto }),
+        body: JSON.stringify({ montoRevisado: nuevoMonto }),
       })
       if (!res.ok) throw new Error()
       const pct = nuevoMonto > 0 ? (p.real / nuevoMonto) * 100 : 0
-      const nextItems = items.map(it => it.id === p.id ? { ...it, montoPresupuestado: nuevoMonto, pct } : it)
+      const nextItems = items.map(it => it.id === p.id ? { ...it, montoEfectivo: nuevoMonto, pct } : it)
       toast('Presupuesto recortado')
       setEditingId(null)
       await afterChange(nextItems)
@@ -138,7 +141,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
   }
 
   async function registrarComoGasto(p: PresupuestoItem) {
-    const restante = Number((Number(p.montoPresupuestado) - p.real).toFixed(2))
+    const restante = Number((p.montoEfectivo - p.real).toFixed(2))
     if (restante <= 0) return
     setBusyId(p.id)
     try {
@@ -153,7 +156,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       })
       if (!res.ok) throw new Error()
       toast('Registrado como gasto pagado')
-      const nextItems = items.map(it => it.id === p.id ? { ...it, real: Number(it.montoPresupuestado), pct: 100 } : it)
+      const nextItems = items.map(it => it.id === p.id ? { ...it, real: it.montoEfectivo, pct: 100 } : it)
       await afterChange(nextItems)
     } catch {
       toast('Error al registrar el gasto', 'error')
@@ -184,7 +187,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
         ) : (
           <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
             {candidatos.map(p => {
-              const monto = Number(p.montoPresupuestado)
+              const monto = p.montoEfectivo
               const restante = Math.max(monto - p.real, 0)
               const isBusy = busyId === p.id
               const isEditing = editingId === p.id

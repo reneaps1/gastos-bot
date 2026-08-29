@@ -12,7 +12,7 @@ import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
-interface Presupuesto { montoPresupuestado: number; real: number; pendiente: number; categoria: { tipo: string } }
+interface Presupuesto { montoEfectivo: number; real: number; pendiente: number; categoria: { tipo: string } }
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
   efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; otrosNota: string | null

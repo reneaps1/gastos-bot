@@ -36,7 +36,7 @@ export interface Presupuesto {
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
   numOcurrencias: number | null; diaCobro: number | null; fechaVencimiento: string | null
-  estadoLinea: string
+  estadoLinea: string; montoRevisado: number | string | null; montoEfectivo: number
   categoria: Categoria; quincena: Quincena; real: number; pendiente: number; pct: number; categoriaTotal: number; excedido: number
 }
 
@@ -143,7 +143,7 @@ function getSortValue(p: Presupuesto, key: SortKey): string | number {
     case 'presupuestado': return Number(p.montoPresupuestado)
     case 'real': return p.real
     case 'pct': return p.pct
-    case 'restante': return Number(p.montoPresupuestado) - p.real
+    case 'restante': return p.montoEfectivo - p.real
     case 'recurrente': return p.recurrente ? 1 : 0
     case 'vence': return p.fechaVencimiento ?? ''
   }
@@ -518,7 +518,7 @@ export default function PresupuestoPage() {
       { key: 'presupuestado', label: 'Presupuestado', value: p => Number(p.montoPresupuestado).toFixed(2) },
       { key: 'real', label: 'Real', value: p => Number(p.real).toFixed(2) },
       { key: 'pct', label: '% Usado', value: p => p.pct.toFixed(0) },
-      { key: 'restante', label: 'Restante', value: p => Number(Math.max(p.montoPresupuestado - p.real, 0)).toFixed(2) },
+      { key: 'restante', label: 'Restante', value: p => Number(Math.max(p.montoEfectivo - p.real, 0)).toFixed(2) },
       { key: 'excedido', label: 'Excedido', value: p => Number(p.excedido).toFixed(2) },
       { key: 'recurrente', label: 'Recurrente', value: p => p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : 'No' },
       { key: 'vence', label: 'Vence', value: p => p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short', year: 'numeric' }) : '' },
@@ -809,7 +809,7 @@ export default function PresupuestoPage() {
                                         <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</p>
                                         <p className="text-[11px] text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
                                       </div>
-                                      <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(Number(p.montoPresupuestado))}</span>
+                                      <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(p.montoEfectivo)}</span>
                                     </button>
                                   )) : (
                                     <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas de {tx.tipo.toLowerCase()} en esta quincena</p>
@@ -1039,7 +1039,7 @@ export default function PresupuestoPage() {
                                 aria-label={`Ver movimientos de ${item.descripcion}`}>
                                 {formatMXN(item.real)}
                               </button>
-                              <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(Number(item.montoPresupuestado))}</span>
+                              <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(item.montoEfectivo)}</span>
                             </span>
                             <button onClick={() => openEdit(item)}
                               className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
@@ -1596,7 +1596,7 @@ function PresupuestoTabla({
   const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto')
 
   // Dynamic totals over the filtered Gasto rows — recompute on every filter change
-  const totalPresupuestado = gastoFilasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalPresupuestado = gastoFilasTabla.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalReal = gastoFilasTabla.reduce((s, p) => s + p.real, 0)
   const totalPendiente = gastoFilasTabla.reduce((s, p) => s + p.pendiente, 0)
   const totalPct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
@@ -1613,10 +1613,10 @@ function PresupuestoTabla({
   // lo notara, y ese numero dejaba de ser comparable con el "Sobrante neto"
   // del Dashboard (que siempre es de la quincena completa).
   const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso')
-  const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalIngresoRealFijo = ingresoFilasFijo.reduce((s, p) => s + p.real, 0)
   const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto')
-  const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalRealFijo = gastoFilasFijo.reduce((s, p) => s + p.real, 0)
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
   const balanceReal = totalIngresoRealFijo - totalRealFijo
@@ -1757,11 +1757,11 @@ function PresupuestoTabla({
                         aria-label={`Ver movimientos de ${p.descripcion}`}>
                         {formatMXN(p.real)}
                       </button>
-                      {' '}de {formatMXN(Number(p.montoPresupuestado))}
+                      {' '}de {formatMXN(p.montoEfectivo)}
                     </span>
                     {p.excedido > 0
                       ? <span className="text-rose-600 dark:text-rose-400 font-semibold tabular-nums">+{formatMXN(p.excedido)}</span>
-                      : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(Number(p.montoPresupuestado) - p.real)}</span>}
+                      : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(p.montoEfectivo - p.real)}</span>}
                   </div>
                   {p.pendiente > 0 && (
                     <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pendiente de pago</p>
@@ -1849,7 +1849,7 @@ function PresupuestoTabla({
                       </td>
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</td>
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${p.excedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                        {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(Number(p.montoPresupuestado) - p.real)}
+                        {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(p.montoEfectivo - p.real)}
                       </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                         {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}

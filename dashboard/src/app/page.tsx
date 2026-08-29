@@ -16,7 +16,7 @@ import { quincenasPendientesDeCierre, type GrupoCierre } from '@/lib/cierre-quin
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
 interface PresupuestoConQuincena {
-  id: number; descripcion: string; montoPresupuestado: number | string; real: number; pendiente: number
+  id: number; descripcion: string; montoEfectivo: number; real: number; pendiente: number
   estadoLinea: string; categoria: { tipo: string; nombre: string }
   quincena: { id: number; codigo: string; fechaFin: string; fechaCierre: string | null }
 }
@@ -34,7 +34,7 @@ interface Snapshot {
   teorico: number | null; quincena: Quincena
 }
 interface Presupuesto {
-  id: number; descripcion: string; montoPresupuestado: number; tipo: string
+  id: number; descripcion: string; montoPresupuestado: number; montoRevisado?: number | string | null; montoEfectivo: number; tipo: string
   diaCobro?: number | null; fechaVencimiento?: string | null
   categoria: Categoria; real: number; pendiente: number; pct: number; excedido?: number
 }
@@ -352,7 +352,8 @@ export default function DashboardPage() {
   }
 
   const budgetCardBody = (p: Presupuesto) => {
-    const restante = Number(p.montoPresupuestado) - p.real
+    const restante = p.montoEfectivo - p.real
+    const fueRevisado = p.montoRevisado != null && Number(p.montoRevisado) !== Number(p.montoPresupuestado)
     const isExcedido = (p.excedido ?? 0) > 0
     const barColor = isExcedido ? 'bg-rose-500' : p.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
     const statusColor = isExcedido ? 'text-rose-600 dark:text-rose-400' : p.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
@@ -375,7 +376,10 @@ export default function DashboardPage() {
         <div className="flex items-end justify-between gap-3 mb-2">
           <div>
             <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">presupuesto {formatMXN(Number(p.montoPresupuestado))}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              presupuesto {formatMXN(p.montoEfectivo)}
+              {fueRevisado && <span className="text-slate-400 dark:text-slate-500"> (original {formatMXN(Number(p.montoPresupuestado))})</span>}
+            </p>
           </div>
           <div className="text-right">
             <p className={`text-sm font-semibold tabular-nums ${restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>

@@ -43,7 +43,7 @@ export async function PUT(
 
     const body = await request.json()
     const {
-      quincenaId, descripcion, categoriaId, montoPresupuestado, clasificacion, tipo, notas,
+      quincenaId, descripcion, categoriaId, montoPresupuestado, montoRevisado, clasificacion, tipo, notas,
       diaCobro, fechaVencimiento, recurrente, frecuencia, numOcurrencias, scope,
     } = body
 
@@ -62,6 +62,7 @@ export async function PUT(
       ...(descripcion && { descripcion }),
       ...(categoriaId && { categoriaId: parseInt(categoriaId) }),
       ...(montoPresupuestado !== undefined && { montoPresupuestado: parseFloat(montoPresupuestado) }),
+      ...(montoRevisado !== undefined && { montoRevisado: montoRevisado !== null && montoRevisado !== '' ? parseFloat(montoRevisado) : null }),
       ...(clasificacion !== undefined && { clasificacion }),
       ...(tipo && { tipo }),
       ...(notas !== undefined && { notas }),
