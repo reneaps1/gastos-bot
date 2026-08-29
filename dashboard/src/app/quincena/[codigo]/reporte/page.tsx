@@ -9,6 +9,7 @@ import { formatQuincenaRange } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { downloadReporteExcel } from '@/lib/reporte-excel'
 import { colorForCategoria } from '@/lib/category-colors'
+import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface PresupuestoRow {
@@ -16,6 +17,8 @@ interface PresupuestoRow {
   descripcion: string
   tipo: string
   montoPresupuestado: number | string
+  montoEfectivo: number
+  estadoLinea: string
   real: number
   pendiente: number
   categoria: { nombre: string; tipo: string }
@@ -140,7 +143,7 @@ export default function ReporteQuincenaPage() {
   }).format(new Date())
 
   // Datos para las graficas del resumen
-  const gastoRows = presupuestos.filter(p => tipoDe(p) === 'Gasto')
+  const gastoRows = presupuestos.filter(p => tipoDe(p) === 'Gasto' && cuentaParaAgregados(p))
   const gastoPorCategoriaRaw = groupByCategoria(gastoRows)
     .map(([nombre, rows]) => ({ nombre, real: rows.reduce((s, p) => s + p.real, 0) }))
     .filter(c => c.real > 0)
@@ -154,10 +157,10 @@ export default function ReporteQuincenaPage() {
     : gastoPorCategoriaRaw
 
   const tipoComparativo = TIPOS.map(tipo => {
-    const rows = presupuestos.filter(p => tipoDe(p) === tipo)
+    const rows = presupuestos.filter(p => tipoDe(p) === tipo && cuentaParaAgregados(p))
     return {
       tipo,
-      Presupuestado: rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0),
+      Presupuestado: rows.reduce((s, p) => s + p.montoEfectivo, 0),
       Real: rows.reduce((s, p) => s + p.real, 0),
     }
   }).filter(t => t.Presupuestado > 0 || t.Real > 0)
@@ -169,11 +172,11 @@ export default function ReporteQuincenaPage() {
       await downloadReporteExcel({
         quincena: target,
         totales: { ingreso: totales.Ingreso, gasto: totales.Gasto, pagado: totales.GastoPagado, pendiente },
-        presupuesto: presupuestos.map(p => ({
+        presupuesto: presupuestos.filter(cuentaParaAgregados).map(p => ({
           tipo: tipoDe(p),
           categoria: p.categoria?.nombre ?? 'Sin categoría',
           descripcion: p.descripcion,
-          montoPresupuestado: Number(p.montoPresupuestado),
+          montoEfectivo: p.montoEfectivo,
           real: p.real,
           pendiente: p.pendiente,
         })),
@@ -356,8 +359,8 @@ export default function ReporteQuincenaPage() {
           {TIPOS.map(tipo => {
             const rows = presupuestos.filter(p => tipoDe(p) === tipo)
             if (rows.length === 0) return null
-            const totalPresup = rows.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
-            const totalRealTipo = rows.reduce((s, p) => s + p.real, 0)
+            const totalPresup = rows.filter(cuentaParaAgregados).reduce((s, p) => s + p.montoEfectivo, 0)
+            const totalRealTipo = rows.filter(cuentaParaAgregados).reduce((s, p) => s + p.real, 0)
             return (
               <div key={tipo}>
                 <p className="text-sm font-semibold text-slate-700 mb-2 break-after-avoid-page">
@@ -380,11 +383,15 @@ export default function ReporteQuincenaPage() {
                         <tbody>
                           {catRows.map(p => (
                             <tr key={p.id} className="border-t border-slate-200 even:bg-slate-50/70 break-inside-avoid">
-                              <td className="py-1.5 px-3 text-slate-700">{p.descripcion}</td>
-                              <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(p.montoPresupuestado)}</td>
+                              <td className="py-1.5 px-3 text-slate-700">
+                                {p.descripcion}
+                                {p.estadoLinea === 'Cancelada' && <span className="text-slate-400"> (cancelada, no cuenta en el total)</span>}
+                                {p.estadoLinea === 'Absorbida' && <span className="text-slate-400"> (variación aceptada)</span>}
+                              </td>
+                              <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(p.montoEfectivo)}</td>
                               <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(p.real)}</td>
                               <td className="py-1.5 px-3 text-right tabular-nums text-amber-600">{formatMXN(p.pendiente)}</td>
-                              <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(Number(p.montoPresupuestado) - p.real)}</td>
+                              <td className="py-1.5 px-3 text-right tabular-nums text-slate-700">{formatMXN(p.montoEfectivo - p.real)}</td>
                             </tr>
                           ))}
                         </tbody>

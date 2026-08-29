@@ -15,7 +15,7 @@ import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
-import { quincenasPendientesDeCierre } from '@/lib/cierre-quincena'
+import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
@@ -61,7 +61,7 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
     }
     const g = map.get(k)!
     g.items.push(p)
-    g.real += p.real
+    if (cuentaParaAgregados(p)) g.real += p.real
   }
   for (const g of map.values()) {
     g.pct = g.montoPresupuestado > 0 ? (g.real / g.montoPresupuestado) * 100 : 0
@@ -140,7 +140,7 @@ function getSortValue(p: Presupuesto, key: SortKey): string | number {
     case 'quincena': return p.quincena.fechaInicio
     case 'categoria': return p.categoria.nombre
     case 'descripcion': return p.descripcion
-    case 'presupuestado': return Number(p.montoPresupuestado)
+    case 'presupuestado': return p.montoEfectivo
     case 'real': return p.real
     case 'pct': return p.pct
     case 'restante': return p.montoEfectivo - p.real
@@ -159,6 +159,19 @@ function montoTipoColor(tipo: string) {
   if (tipo === 'Ingreso') return 'text-emerald-600 dark:text-emerald-400'
   if (tipo === 'Ahorro') return 'text-blue-600 dark:text-blue-400'
   return 'text-rose-600 dark:text-rose-400' // Gasto
+}
+
+// Insignia para una linea ya resuelta desde el cierre de quincena -- para que
+// no se vea identica a una linea Abierta normal en Tarjetas/Tabla. Abierta y
+// Cumplida no llevan insignia (Cumplida ya se ve reflejada en real/pct).
+function estadoLineaBadge(estadoLinea: string) {
+  if (estadoLinea === 'Cancelada') {
+    return <span className="inline-flex items-center text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 px-1 py-0.5 rounded-full shrink-0">Cancelada</span>
+  }
+  if (estadoLinea === 'Absorbida') {
+    return <span className="inline-flex items-center text-[10px] font-medium text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 px-1 py-0.5 rounded-full shrink-0">Variación aceptada</span>
+  }
+  return null
 }
 
 export default function PresupuestoPage() {
@@ -515,7 +528,7 @@ export default function PresupuestoPage() {
     const csv = toCsv(presupuestos, [
       { key: 'categoria', label: 'Categoría', value: p => p.categoria?.nombre ?? '' },
       { key: 'descripcion', label: 'Descripción', value: p => p.descripcion },
-      { key: 'presupuestado', label: 'Presupuestado', value: p => Number(p.montoPresupuestado).toFixed(2) },
+      { key: 'presupuestado', label: 'Presupuestado', value: p => p.montoEfectivo.toFixed(2) },
       { key: 'real', label: 'Real', value: p => Number(p.real).toFixed(2) },
       { key: 'pct', label: '% Usado', value: p => p.pct.toFixed(0) },
       { key: 'restante', label: 'Restante', value: p => Number(Math.max(p.montoEfectivo - p.real, 0)).toFixed(2) },
@@ -561,6 +574,10 @@ export default function PresupuestoPage() {
   const gruposCierre = quincenasPendientesDeCierre(presupuestos, today)
   const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
   const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
+  // El compromiso original ya no se toca a mano una vez que la linea esta en
+  // curso (algo real registrado, o ya se le hizo un traspaso) -- de ahi en
+  // adelante el ajuste pasa por Recortar/traspaso, que dejan rastro en notas.
+  const montoOriginalBloqueado = editingP != null && (editingP.real > 0 || editingP.montoRevisado != null)
 
   return (
     <div className="space-y-6">
@@ -1019,6 +1036,7 @@ export default function PresupuestoPage() {
                                     {item.frecuencia === 'MENSUAL' ? (item.diaCobro ? `día ${item.diaCobro}` : 'mensual') : 'quincenal'}
                                   </span>
                                 )}
+                                {estadoLineaBadge(item.estadoLinea)}
                               </div>
                               {item.fechaVencimiento && (() => {
                                 const d = new Date(`${item.fechaVencimiento.split('T')[0]}T00:00:00`)
@@ -1103,8 +1121,11 @@ export default function PresupuestoPage() {
             <div className="col-span-2">
               <Label htmlFor="p-monto">Monto (MXN) *</Label>
               <input id="p-monto" type="number" min="0" step="0.01" placeholder="0.00" value={form.montoPresupuestado}
-                onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))} className={fieldClass(formErrors.montoPresupuestado)} />
+                disabled={montoOriginalBloqueado}
+                title={montoOriginalBloqueado ? 'Esta línea ya está en curso -- usa Recortar (Configuración → Liquidez) o un traspaso para ajustarla sin perder el monto original.' : undefined}
+                onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))} className={`${fieldClass(formErrors.montoPresupuestado)} disabled:opacity-60 disabled:cursor-not-allowed`} />
               {formErrors.montoPresupuestado && <p className="text-xs text-rose-500 mt-1">{formErrors.montoPresupuestado}</p>}
+              {montoOriginalBloqueado && <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Ya está en curso -- usa Recortar o un traspaso para ajustarla.</p>}
             </div>
             <div>
               <label htmlFor="p-fechavenc" className="flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
@@ -1380,6 +1401,8 @@ export default function PresupuestoPage() {
               id: detalleP.id,
               descripcion: detalleP.descripcion,
               montoPresupuestado: detalleP.montoPresupuestado,
+              montoRevisado: detalleP.montoRevisado,
+              montoEfectivo: detalleP.montoEfectivo,
               real: detalleP.real,
               categoriaNombre: detalleP.categoria.nombre,
               quincenaCodigo: detalleP.quincena.codigo,
@@ -1593,7 +1616,7 @@ function PresupuestoTabla({
   // una línea "Salario") nunca se suman a un total de gasto. Mismo criterio que la
   // vista Tarjetas (gastoGrupos). Las filas siguen mostrándose todas; solo se excluyen
   // de las sumas.
-  const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto')
+  const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
 
   // Dynamic totals over the filtered Gasto rows — recompute on every filter change
   const totalPresupuestado = gastoFilasTabla.reduce((s, p) => s + p.montoEfectivo, 0)
@@ -1612,10 +1635,10 @@ function PresupuestoTabla({
   // Balance los hacia caer a $0 o a un subtotal parcial sin que el usuario
   // lo notara, y ese numero dejaba de ser comparable con el "Sobrante neto"
   // del Dashboard (que siempre es de la quincena completa).
-  const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso')
+  const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso' && cuentaParaAgregados(p))
   const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalIngresoRealFijo = ingresoFilasFijo.reduce((s, p) => s + p.real, 0)
-  const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto')
+  const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
   const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalRealFijo = gastoFilasFijo.reduce((s, p) => s + p.real, 0)
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
@@ -1745,7 +1768,10 @@ function PresupuestoTabla({
                 <div key={p.id} className="px-4 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
+                        {estadoLineaBadge(p.estadoLinea)}
+                      </div>
                       <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre} · {p.quincena.codigo}</p>
                     </div>
                     <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</span>
@@ -1834,9 +1860,14 @@ function PresupuestoTabla({
                           {p.categoria.nombre}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px] truncate">{p.descripcion}</td>
+                      <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate">{p.descripcion}</span>
+                          {estadoLineaBadge(p.estadoLinea)}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
-                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(Number(p.montoPresupuestado))}</td>
+                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(p.montoEfectivo)}</td>
                       <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
                         <button onClick={() => setDetalleP(p)}
                           className="hover:underline hover:opacity-80 cursor-pointer transition-colors"

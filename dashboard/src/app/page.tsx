@@ -12,7 +12,7 @@ import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
-import { quincenasPendientesDeCierre, type GrupoCierre } from '@/lib/cierre-quincena'
+import { quincenasPendientesDeCierre, cuentaParaAgregados, type GrupoCierre } from '@/lib/cierre-quincena'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
 interface PresupuestoConQuincena {
@@ -35,6 +35,7 @@ interface Snapshot {
 }
 interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; montoRevisado?: number | string | null; montoEfectivo: number; tipo: string
+  estadoLinea: string
   diaCobro?: number | null; fechaVencimiento?: string | null
   categoria: Categoria; real: number; pendiente: number; pct: number; excedido?: number
 }
@@ -213,12 +214,12 @@ export default function DashboardPage() {
       const ingresos = totales.Ingreso
       const gastos = totales.Gasto
       const ahorros = totales.Ahorro
-      const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
+      const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p)).reduce((s: number, p: Presupuesto) => s + p.montoEfectivo, 0)
 
       // El ahorro presupuestado (o registrado sin presupuesto) es dinero comprometido,
       // no disponible — se resta aparte de "No comprometido"/"Sobrante neto" sin mezclarse
       // con los totales "por categoría de gasto" (que deben seguir siendo solo Gasto).
-      const ahorroPresupuestado = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Ahorro').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
+      const ahorroPresupuestado = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Ahorro' && cuentaParaAgregados(p)).reduce((s: number, p: Presupuesto) => s + p.montoEfectivo, 0)
 
       const gastosCat = txs.filter(t => t.tipo === 'Gasto').reduce((acc, t) => {
         acc[t.categoria.nombre] = (acc[t.categoria.nombre] ?? 0) + Number(t.monto)
@@ -229,10 +230,10 @@ export default function DashboardPage() {
         .sort((a, b) => b.monto - a.monto)
 
       const presupCat = presupData
-        .filter(p => p.categoria.tipo === 'Gasto')
+        .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
         .reduce((acc, p) => {
           const nombre = p.categoria.nombre
-          acc[nombre] = (acc[nombre] ?? 0) + Number(p.montoPresupuestado)
+          acc[nombre] = (acc[nombre] ?? 0) + p.montoEfectivo
           return acc
         }, {} as Record<string, number>)
       const presupuestoCatArr = Object.entries(presupCat)
@@ -258,8 +259,8 @@ export default function DashboardPage() {
       const ahorroComprometido = ahorroPresupuestado
 
       const totalExcedido = presupData
-        .filter(p => p.categoria.tipo === 'Gasto')
-        .reduce((s, p) => s + Math.max(0, p.real - Number(p.montoPresupuestado)), 0)
+        .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+        .reduce((s, p) => s + (p.excedido ?? 0), 0)
 
       setTransacciones(txs.slice(0, 8))
       setTxSinPresupuesto(txs.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null))
@@ -546,7 +547,7 @@ export default function DashboardPage() {
                     <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
                     <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
                     {granularidad === 'quincena' && (
-                      <Line type="monotone" dataKey="presupuestado" name="Presupuestado" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, fill: '#8b5cf6' }} activeDot={{ r: 5 }} />
+                      <Line type="monotone" dataKey="presupuestado" name="Plan original" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, fill: '#8b5cf6' }} activeDot={{ r: 5 }} />
                     )}
                   </LineChart>
                 </ResponsiveContainer>
@@ -769,7 +770,7 @@ export default function DashboardPage() {
                                                   <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</p>
                                                   <p className="text-[11px] text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
                                                 </div>
-                                                <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(Number(p.montoPresupuestado))}</span>
+                                                <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(p.montoEfectivo)}</span>
                                               </button>
                                             )) : (
                                               <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas en esta quincena</p>

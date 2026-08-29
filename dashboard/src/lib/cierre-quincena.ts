@@ -12,6 +12,14 @@ interface PresupuestoParaCierre {
   categoria: { tipo: string; nombre: string }
 }
 
+// Regla unica de que linea cuenta en un agregado (KPI, total de categoria,
+// falta por pagar, tendencia): Cancelada nunca cuenta -- no hay lectura bajo
+// la cual una linea que "nunca paso" deba sumar en algun lado. Absorbida SI
+// cuenta -- el gasto ocurrio de verdad, solo se acepto la variacion.
+export function cuentaParaAgregados(p: { estadoLinea: string }): boolean {
+  return p.estadoLinea !== 'Cancelada'
+}
+
 export type MotivoPendiente = 'sinRegistro' | 'pendienteDePago' | 'excedido'
 
 // Por que una linea de Gasto todavia necesita una decision antes de poder

@@ -5,6 +5,7 @@ import { formatMXN } from '@/lib/utils'
 import { formatQuincenaRange, getMexicoDateString } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { downloadResumenExcel } from '@/lib/reporte-excel'
 import { downloadElementAsImage, downloadElementAsPdf } from '@/lib/capture-export'
 import { toCsv, downloadCsv } from '@/lib/csv'
@@ -17,6 +18,7 @@ interface PresupuestoRow {
   montoEfectivo: number
   real: number
   pendiente: number
+  estadoLinea: string
   categoria: { nombre: string; tipo: string }
 }
 interface Fila extends PresupuestoRow {
@@ -91,8 +93,8 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   // segun lo que se muestre en la tabla), pero la tabla en si solo lista lo
   // que todavia no esta cubierto -- lo ya pagado al 100% no aporta nada a un
   // reporte que existe para ver que falta.
-  const totalPresupuestado = rows.reduce((s, r) => s + Number(r.montoEfectivo), 0)
-  const totalPagado = rows.reduce((s, r) => s + r.pagado, 0)
+  const totalPresupuestado = rows.filter(cuentaParaAgregados).reduce((s, r) => s + Number(r.montoEfectivo), 0)
+  const totalPagado = rows.filter(cuentaParaAgregados).reduce((s, r) => s + r.pagado, 0)
   const totalFalta = calcularFaltaPorPagar(rows)
   const filasPorCubrir = rows.filter(r => r.estado !== 'Cubierto')
   // El pie de la tabla suma solo lo que se ve en la tabla (lo pendiente), no

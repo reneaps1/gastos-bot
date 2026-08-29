@@ -12,7 +12,7 @@ import { colorForCategoria } from '@/lib/category-colors'
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
 export interface RecurrenteRow {
-  id: number; descripcion: string; montoPresupuestado: number | string
+  id: number; descripcion: string; montoPresupuestado: number | string; montoEfectivo: number
   categoriaId: number; categoria: Categoria
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
   numOcurrencias: number | null; diaCobro: number | null
@@ -102,7 +102,7 @@ function buildGrupos<T extends RecurrenteRow>(rows: T[], today: string): GrupoRe
     grupos.push({
       grupoId, descripcion: masReciente.descripcion, categoria: masReciente.categoria,
       frecuencia: masReciente.frecuencia ?? 'CADA_QUINCENA', diaCobro: masReciente.diaCobro,
-      numOcurrencias: masReciente.numOcurrencias, montoPresupuestado: Number(masReciente.montoPresupuestado),
+      numOcurrencias: masReciente.numOcurrencias, montoPresupuestado: masReciente.montoEfectivo,
       items, activa: items.some(p => p.quincena.fechaFin >= today),
       desde: items[0].quincena, hasta: items[items.length - 1].quincena, restantes,
     })

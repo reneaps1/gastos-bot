@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
+import { conNota } from '@/lib/cierre-quincena-server'
 
 export async function GET(
   request: Request,
@@ -68,6 +69,13 @@ export async function PUT(
       ...(notas !== undefined && { notas }),
       ...(diaCobro !== undefined && { diaCobro: diaCobro_ }),
       ...(fechaVencimiento !== undefined && { fechaVencimiento: fechaVencimiento ? new Date(fechaVencimiento) : null }),
+    }
+
+    // Una edicion manual de montoRevisado deja el mismo rastro que /resolver
+    // y /transferir -- se encadena sobre el valor de notas que ya iba a
+    // quedar (el que trae el body, si lo trae; si no, el que ya tenia la fila).
+    if (montoRevisado !== undefined) {
+      ownData.notas = conNota(ownData.notas ?? current.notas, 'Presupuesto revisado manualmente')
     }
 
     // Final values (body override, falling back to the current record) — used to
@@ -185,9 +193,13 @@ export async function PUT(
       }
     }
 
-    if (scope === 'all' && pasadas.length > 0) {
+    // Una fila pasada ya resuelta (Cumplida/Cancelada/Absorbida via cierre de
+    // quincena) no se toca con un edit "propagar a toda la serie" -- si no,
+    // esto pisaria el rastro de conNota() que ya tenia esa fila en notas.
+    const pasadasEditables = pasadas.filter(p => p.estadoLinea === 'Abierta')
+    if (scope === 'all' && pasadasEditables.length > 0) {
       await prisma.presupuesto.updateMany({
-        where: { id: { in: pasadas.map(p => p.id) } },
+        where: { id: { in: pasadasEditables.map(p => p.id) } },
         data: {
           descripcion: finalDescripcion,
           categoriaId: finalCategoriaId,

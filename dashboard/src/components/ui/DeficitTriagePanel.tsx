@@ -11,7 +11,7 @@ interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: 
 interface Categoria { id: number; nombre: string; tipo: string }
 interface PresupuestoItem {
   id: number; descripcion: string; montoEfectivo: number; categoriaId: number
-  quincenaId: number; categoria: Categoria; real: number; pendiente: number; pct: number
+  quincenaId: number; categoria: Categoria; real: number; pendiente: number; pct: number; estadoLinea: string
 }
 
 interface Props {
@@ -58,7 +58,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
   // Candidatos: partidas de Gasto que no se han terminado de ejecutar (pct <
   // 100). Las que ya llegaron o pasaron su presupuesto no tienen margen para
   // recortar ni sentido para postergar.
-  const candidatos = [...items].filter(p => p.pct < 100).sort((a, b) => a.pct - b.pct)
+  const candidatos = [...items].filter(p => p.pct < 100 && p.estadoLinea === 'Abierta').sort((a, b) => a.pct - b.pct)
 
   const nextQuincena = (() => {
     const current = quincenas.find(q => q.id === quincenaId)

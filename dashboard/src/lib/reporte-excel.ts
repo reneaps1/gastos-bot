@@ -12,7 +12,7 @@ export interface ReportePresupuestoRow {
   tipo: string
   categoria: string
   descripcion: string
-  montoPresupuestado: number
+  montoEfectivo: number
   real: number
   pendiente: number
 }
@@ -105,7 +105,7 @@ export async function downloadReporteExcel(data: ReporteData) {
     { header: 'Tipo', key: 'tipo', width: 12 },
     { header: 'Categoría', key: 'categoria', width: 22 },
     { header: 'Descripción', key: 'descripcion', width: 32 },
-    { header: 'Presupuestado', key: 'montoPresupuestado', width: 16, style: { numFmt: moneyFmt } },
+    { header: 'Presupuestado', key: 'montoEfectivo', width: 16, style: { numFmt: moneyFmt } },
     { header: 'Real', key: 'real', width: 16, style: { numFmt: moneyFmt } },
     { header: 'Pendiente', key: 'pendiente', width: 16, style: { numFmt: moneyFmt } },
     { header: 'Restante', key: 'restante', width: 16, style: { numFmt: moneyFmt } },
@@ -116,10 +116,10 @@ export async function downloadReporteExcel(data: ReporteData) {
       tipo: row.tipo,
       categoria: row.categoria,
       descripcion: row.descripcion,
-      montoPresupuestado: money(row.montoPresupuestado),
+      montoEfectivo: money(row.montoEfectivo),
       real: money(row.real),
       pendiente: money(row.pendiente),
-      restante: money(row.montoPresupuestado - row.real),
+      restante: money(row.montoEfectivo - row.real),
     })
   }
 

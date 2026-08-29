@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
+import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 
 export async function GET(request: Request) {
   try {
@@ -25,9 +26,12 @@ export async function GET(request: Request) {
     const montoEfectivo = (p: { montoPresupuestado: unknown; montoRevisado: unknown }) =>
       p.montoRevisado != null ? Number(p.montoRevisado) : Number(p.montoPresupuestado)
 
-    // Total efectivo por grupo (quincenaId, categoriaId), para el rollup de categoría en la UI
+    // Total efectivo por grupo (quincenaId, categoriaId), para el rollup de categoría en la UI.
+    // Cancelada nunca cuenta -- una linea que "nunca paso" no debe inflar el
+    // total de su categoria para siempre.
     const groupTotals = new Map<string, number>()
     for (const p of presupuestos) {
+      if (!cuentaParaAgregados(p)) continue
       const key = `${p.quincenaId}-${p.categoriaId}`
       groupTotals.set(key, (groupTotals.get(key) ?? 0) + montoEfectivo(p))
     }
