@@ -104,7 +104,7 @@ async function getSystemContext(prisma) {
 
       const [presupData, pendientes] = await Promise.all([
         prisma.presupuesto.findMany({
-          where: { quincenaId, categoria: { tipo: 'Gasto' } },
+          where: { quincenaId, categoria: { tipo: 'Gasto' }, estadoLinea: 'Abierta' },
           include: { categoria: true },
           orderBy: { montoPresupuestado: 'desc' },
         }),
@@ -148,7 +148,14 @@ async function getSystemContext(prisma) {
       resumen: { ...resumen, gastadoPorCategoria },
       ultimos,
       categorias: categoriasResumen,
-      presupuestos: presupuestos.map(p => ({ descripcion: p.descripcion, categoria: p.categoria?.nombre || 'Sin categoria', monto: Number(p.montoPresupuestado), tipo: p.tipo })),
+      presupuestos: presupuestos.map(p => ({
+        descripcion: p.descripcion,
+        categoria: p.categoria?.nombre || 'Sin categoria',
+        // Presupuesto Modificado si existe, si no el Original -- lo mismo
+        // que ya usa el dashboard (montoEfectivoDePrisma).
+        monto: p.montoRevisado != null ? Number(p.montoRevisado) : Number(p.montoPresupuestado),
+        tipo: p.tipo,
+      })),
       gastosPendientes: gastosPendientes.map(p => ({ descripcion: p.descripcion, categoria: p.categoria?.nombre || '', monto: Number(p.monto), fecha: p.fecha.toISOString().slice(0, 10) })),
       deudasActivas: deudasActivas.map(d => ({ acreedor: d.acreedor, deudaOriginal: Number(d.deudaOriginal), abonoMensual: d.abonoMensual ? Number(d.abonoMensual) : null })),
     }

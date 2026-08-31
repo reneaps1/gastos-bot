@@ -13,6 +13,8 @@ export interface PartidaDetalle {
   id: number
   descripcion: string
   montoPresupuestado: number | string
+  montoRevisado: number | string | null
+  montoEfectivo: number
   real: number
   categoriaNombre: string
   quincenaCodigo: string
@@ -65,7 +67,8 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
     return () => { cancelado = true }
   }, [partida.id])
 
-  const presupuestado = Number(partida.montoPresupuestado)
+  const presupuestado = partida.montoEfectivo
+  const fueRevisado = partida.montoRevisado != null && Number(partida.montoRevisado) !== Number(partida.montoPresupuestado)
   const restante = presupuestado - partida.real
   // El total que devuelve la API es la suma no paginada con el mismo filtro que
   // usa /api/presupuestos, asi que deberia coincidir con `real`. Si no coincide
@@ -78,6 +81,7 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
         <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
           <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Presupuestado</p>
           <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(presupuestado)}</p>
+          {fueRevisado && <p className="text-[10px] text-slate-400 dark:text-slate-500">original {formatMXN(Number(partida.montoPresupuestado))}</p>}
         </div>
         <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
           <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Gastado</p>

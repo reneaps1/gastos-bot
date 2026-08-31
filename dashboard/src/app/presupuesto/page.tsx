@@ -15,6 +15,8 @@ import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
+import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
 import { PresupuestoAnalisis } from './PresupuestoAnalisis'
@@ -27,13 +29,14 @@ const CAT_DOT: Record<string, string> = {
   Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
 
-interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null; fechaCierre?: string | null }
 interface Categoria { id: number; nombre: string; tipo: string; activo: boolean }
 export interface Presupuesto {
   id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
   tipo: string; notas: string | null; quincenaId: number; categoriaId: number
   recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
   numOcurrencias: number | null; diaCobro: number | null; fechaVencimiento: string | null
+  estadoLinea: string; montoRevisado: number | string | null; montoEfectivo: number
   categoria: Categoria; quincena: Quincena; real: number; pendiente: number; pct: number; categoriaTotal: number; excedido: number
 }
 
@@ -58,7 +61,7 @@ function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
     }
     const g = map.get(k)!
     g.items.push(p)
-    g.real += p.real
+    if (cuentaParaAgregados(p)) g.real += p.real
   }
   for (const g of map.values()) {
     g.pct = g.montoPresupuestado > 0 ? (g.real / g.montoPresupuestado) * 100 : 0
@@ -137,10 +140,10 @@ function getSortValue(p: Presupuesto, key: SortKey): string | number {
     case 'quincena': return p.quincena.fechaInicio
     case 'categoria': return p.categoria.nombre
     case 'descripcion': return p.descripcion
-    case 'presupuestado': return Number(p.montoPresupuestado)
+    case 'presupuestado': return p.montoEfectivo
     case 'real': return p.real
     case 'pct': return p.pct
-    case 'restante': return Number(p.montoPresupuestado) - p.real
+    case 'restante': return p.montoEfectivo - p.real
     case 'recurrente': return p.recurrente ? 1 : 0
     case 'vence': return p.fechaVencimiento ?? ''
   }
@@ -158,6 +161,19 @@ function montoTipoColor(tipo: string) {
   return 'text-rose-600 dark:text-rose-400' // Gasto
 }
 
+// Insignia para una linea ya resuelta desde el cierre de quincena -- para que
+// no se vea identica a una linea Abierta normal en Tarjetas/Tabla. Abierta y
+// Cumplida no llevan insignia (Cumplida ya se ve reflejada en real/pct).
+function estadoLineaBadge(estadoLinea: string) {
+  if (estadoLinea === 'Cancelada') {
+    return <span className="inline-flex items-center text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 px-1 py-0.5 rounded-full shrink-0">Cancelada</span>
+  }
+  if (estadoLinea === 'Absorbida') {
+    return <span className="inline-flex items-center text-[10px] font-medium text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 px-1 py-0.5 rounded-full shrink-0">Variación aceptada</span>
+  }
+  return null
+}
+
 export default function PresupuestoPage() {
   const { toast } = useToast()
 
@@ -170,6 +186,7 @@ export default function PresupuestoPage() {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [copying, setCopying] = useState(false)
+  const [wizardCierreOpen, setWizardCierreOpen] = useState(false)
 
   const [busqueda, setBusqueda] = useState('')
   const [pendientePorPagar, setPendientePorPagar] = useState(0)
@@ -511,10 +528,10 @@ export default function PresupuestoPage() {
     const csv = toCsv(presupuestos, [
       { key: 'categoria', label: 'Categoría', value: p => p.categoria?.nombre ?? '' },
       { key: 'descripcion', label: 'Descripción', value: p => p.descripcion },
-      { key: 'presupuestado', label: 'Presupuestado', value: p => Number(p.montoPresupuestado).toFixed(2) },
+      { key: 'presupuestado', label: 'Presupuestado', value: p => p.montoEfectivo.toFixed(2) },
       { key: 'real', label: 'Real', value: p => Number(p.real).toFixed(2) },
       { key: 'pct', label: '% Usado', value: p => p.pct.toFixed(0) },
-      { key: 'restante', label: 'Restante', value: p => Number(Math.max(p.montoPresupuestado - p.real, 0)).toFixed(2) },
+      { key: 'restante', label: 'Restante', value: p => Number(Math.max(p.montoEfectivo - p.real, 0)).toFixed(2) },
       { key: 'excedido', label: 'Excedido', value: p => Number(p.excedido).toFixed(2) },
       { key: 'recurrente', label: 'Recurrente', value: p => p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : 'No' },
       { key: 'vence', label: 'Vence', value: p => p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short', year: 'numeric' }) : '' },
@@ -552,6 +569,15 @@ export default function PresupuestoPage() {
   // (configurable en Presupuesto → Análisis) si existe, si no el global de
   // Configuración → Períodos de pago.
   const refEfectiva = resolveReferencia(qInfo, { limiteGastoReferencia: limiteReferencia })
+  // Presupuestos ya viene acotado a quincenaId (Tarjetas), asi que esto da a
+  // lo mas un grupo: el de la quincena seleccionada, si le falta cerrar algo.
+  const gruposCierre = quincenasPendientesDeCierre(presupuestos, today)
+  const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
+  const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
+  // El compromiso original ya no se toca a mano una vez que la linea esta en
+  // curso (algo real registrado, o ya se le hizo un traspaso) -- de ahi en
+  // adelante el ajuste pasa por Recortar/traspaso, que dejan rastro en notas.
+  const montoOriginalBloqueado = editingP != null && (editingP.real > 0 || editingP.montoRevisado != null)
 
   return (
     <div className="space-y-6">
@@ -581,6 +607,13 @@ export default function PresupuestoPage() {
               {copying ? 'Copiando...' : 'Copiar anterior'}
             </button>
           )}
+          {gruposCierre.length > 0 && (
+            <button onClick={() => setWizardCierreOpen(true)}
+              className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/40 px-3 py-2 rounded-lg cursor-pointer transition-colors">
+              <AlertTriangle size={14} />
+              Cerrar quincena ({gruposCierre[0].items.length})
+            </button>
+          )}
           <button onClick={handleExportCsv} disabled={presupuestos.length === 0}
             className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
             <Download size={14} /> Descargar CSV
@@ -591,6 +624,15 @@ export default function PresupuestoPage() {
           </button>
         </div>
       </div>
+
+      <CierreQuincenaWizard
+        open={wizardCierreOpen}
+        onOpenChange={setWizardCierreOpen}
+        grupos={gruposCierre}
+        quincenaActualId={quincenaActualCierre ? quincenaActualCierre.id : null}
+        quincenaActualCodigo={quincenaActualCierre?.codigo}
+        onResuelto={() => { fetchPresupuestos(); fetchPresupuestosTabla() }}
+      />
 
       {/* Toggle de vista */}
       <div className="inline-flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
@@ -784,7 +826,7 @@ export default function PresupuestoPage() {
                                         <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</p>
                                         <p className="text-[11px] text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
                                       </div>
-                                      <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(Number(p.montoPresupuestado))}</span>
+                                      <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(p.montoEfectivo)}</span>
                                     </button>
                                   )) : (
                                     <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas de {tx.tipo.toLowerCase()} en esta quincena</p>
@@ -994,6 +1036,7 @@ export default function PresupuestoPage() {
                                     {item.frecuencia === 'MENSUAL' ? (item.diaCobro ? `día ${item.diaCobro}` : 'mensual') : 'quincenal'}
                                   </span>
                                 )}
+                                {estadoLineaBadge(item.estadoLinea)}
                               </div>
                               {item.fechaVencimiento && (() => {
                                 const d = new Date(`${item.fechaVencimiento.split('T')[0]}T00:00:00`)
@@ -1014,7 +1057,7 @@ export default function PresupuestoPage() {
                                 aria-label={`Ver movimientos de ${item.descripcion}`}>
                                 {formatMXN(item.real)}
                               </button>
-                              <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(Number(item.montoPresupuestado))}</span>
+                              <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(item.montoEfectivo)}</span>
                             </span>
                             <button onClick={() => openEdit(item)}
                               className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
@@ -1078,8 +1121,11 @@ export default function PresupuestoPage() {
             <div className="col-span-2">
               <Label htmlFor="p-monto">Monto (MXN) *</Label>
               <input id="p-monto" type="number" min="0" step="0.01" placeholder="0.00" value={form.montoPresupuestado}
-                onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))} className={fieldClass(formErrors.montoPresupuestado)} />
+                disabled={montoOriginalBloqueado}
+                title={montoOriginalBloqueado ? 'Esta línea ya está en curso -- usa Recortar (Configuración → Liquidez) o un traspaso para ajustarla sin perder el monto original.' : undefined}
+                onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))} className={`${fieldClass(formErrors.montoPresupuestado)} disabled:opacity-60 disabled:cursor-not-allowed`} />
               {formErrors.montoPresupuestado && <p className="text-xs text-rose-500 mt-1">{formErrors.montoPresupuestado}</p>}
+              {montoOriginalBloqueado && <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Ya está en curso -- usa Recortar o un traspaso para ajustarla.</p>}
             </div>
             <div>
               <label htmlFor="p-fechavenc" className="flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
@@ -1355,6 +1401,8 @@ export default function PresupuestoPage() {
               id: detalleP.id,
               descripcion: detalleP.descripcion,
               montoPresupuestado: detalleP.montoPresupuestado,
+              montoRevisado: detalleP.montoRevisado,
+              montoEfectivo: detalleP.montoEfectivo,
               real: detalleP.real,
               categoriaNombre: detalleP.categoria.nombre,
               quincenaCodigo: detalleP.quincena.codigo,
@@ -1568,10 +1616,10 @@ function PresupuestoTabla({
   // una línea "Salario") nunca se suman a un total de gasto. Mismo criterio que la
   // vista Tarjetas (gastoGrupos). Las filas siguen mostrándose todas; solo se excluyen
   // de las sumas.
-  const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto')
+  const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
 
   // Dynamic totals over the filtered Gasto rows — recompute on every filter change
-  const totalPresupuestado = gastoFilasTabla.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const totalPresupuestado = gastoFilasTabla.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalReal = gastoFilasTabla.reduce((s, p) => s + p.real, 0)
   const totalPendiente = gastoFilasTabla.reduce((s, p) => s + p.pendiente, 0)
   const totalPct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
@@ -1587,11 +1635,11 @@ function PresupuestoTabla({
   // Balance los hacia caer a $0 o a un subtotal parcial sin que el usuario
   // lo notara, y ese numero dejaba de ser comparable con el "Sobrante neto"
   // del Dashboard (que siempre es de la quincena completa).
-  const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso')
-  const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso' && cuentaParaAgregados(p))
+  const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalIngresoRealFijo = ingresoFilasFijo.reduce((s, p) => s + p.real, 0)
-  const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto')
-  const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + Number(p.montoPresupuestado), 0)
+  const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+  const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalRealFijo = gastoFilasFijo.reduce((s, p) => s + p.real, 0)
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
   const balanceReal = totalIngresoRealFijo - totalRealFijo
@@ -1720,7 +1768,10 @@ function PresupuestoTabla({
                 <div key={p.id} className="px-4 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
+                        {estadoLineaBadge(p.estadoLinea)}
+                      </div>
                       <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre} · {p.quincena.codigo}</p>
                     </div>
                     <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</span>
@@ -1732,11 +1783,11 @@ function PresupuestoTabla({
                         aria-label={`Ver movimientos de ${p.descripcion}`}>
                         {formatMXN(p.real)}
                       </button>
-                      {' '}de {formatMXN(Number(p.montoPresupuestado))}
+                      {' '}de {formatMXN(p.montoEfectivo)}
                     </span>
                     {p.excedido > 0
                       ? <span className="text-rose-600 dark:text-rose-400 font-semibold tabular-nums">+{formatMXN(p.excedido)}</span>
-                      : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(Number(p.montoPresupuestado) - p.real)}</span>}
+                      : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(p.montoEfectivo - p.real)}</span>}
                   </div>
                   {p.pendiente > 0 && (
                     <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pendiente de pago</p>
@@ -1809,9 +1860,14 @@ function PresupuestoTabla({
                           {p.categoria.nombre}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px] truncate">{p.descripcion}</td>
+                      <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate">{p.descripcion}</span>
+                          {estadoLineaBadge(p.estadoLinea)}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
-                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(Number(p.montoPresupuestado))}</td>
+                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(p.montoEfectivo)}</td>
                       <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
                         <button onClick={() => setDetalleP(p)}
                           className="hover:underline hover:opacity-80 cursor-pointer transition-colors"
@@ -1824,7 +1880,7 @@ function PresupuestoTabla({
                       </td>
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</td>
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${p.excedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                        {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(Number(p.montoPresupuestado) - p.real)}
+                        {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(p.montoEfectivo - p.real)}
                       </td>
                       <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
                         {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}

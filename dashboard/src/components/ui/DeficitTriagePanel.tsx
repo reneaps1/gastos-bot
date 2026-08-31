@@ -10,8 +10,8 @@ import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
 interface PresupuestoItem {
-  id: number; descripcion: string; montoPresupuestado: number | string; categoriaId: number
-  quincenaId: number; categoria: Categoria; real: number; pendiente: number; pct: number
+  id: number; descripcion: string; montoEfectivo: number; categoriaId: number
+  quincenaId: number; categoria: Categoria; real: number; pendiente: number; pct: number; estadoLinea: string
 }
 
 interface Props {
@@ -20,7 +20,6 @@ interface Props {
   quincenaId: number
   quincenaCodigo: string
   quincenas: Quincena[]
-  snapshotId: number | null
   onChanged: () => void
 }
 
@@ -31,7 +30,7 @@ interface Props {
 // si es ineludible. Reutiliza los mismos endpoints que ya usan el modal de
 // edición de Presupuesto (mover de quincena) y el ajuste de descuadre de
 // Liquidez (registrar transacción), para no duplicar lógica de negocio.
-export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCodigo, quincenas, snapshotId, onChanged }: Props) {
+export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCodigo, quincenas, onChanged }: Props) {
   const { toast } = useToast()
   const [loading, setLoading] = useState(true)
   const [items, setItems] = useState<PresupuestoItem[]>([])
@@ -58,7 +57,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
   // Candidatos: partidas de Gasto que no se han terminado de ejecutar (pct <
   // 100). Las que ya llegaron o pasaron su presupuesto no tienen margen para
   // recortar ni sentido para postergar.
-  const candidatos = [...items].filter(p => p.pct < 100).sort((a, b) => a.pct - b.pct)
+  const candidatos = [...items].filter(p => p.pct < 100 && p.estadoLinea === 'Abierta').sort((a, b) => a.pct - b.pct)
 
   const nextQuincena = (() => {
     const current = quincenas.find(q => q.id === quincenaId)
@@ -68,52 +67,19 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))[0] ?? null
   })()
 
-  // Mantiene el "falta por pagar" guardado en el corte de liquidez alineado
-  // con el presupuesto en tiempo real, igual que hace el botón "Recalcular"
-  // del modal de edición de snapshot, pero automático tras cada acción de
-  // triage — si falla, el usuario siempre puede recalcular a mano.
-  async function syncSnapshotFalta(newTotal: number) {
-    if (!snapshotId) return
-    try {
-      await fetch(`/api/liquidez/${snapshotId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ faltaPagar: newTotal.toString() }),
-      })
-    } catch { /* silencioso: el usuario puede recalcular manualmente si falla */ }
-  }
-
-  // Igual que syncSnapshotFalta pero para "pagos que caen esta quincena" (la
-  // métrica que alimenta "¿me alcanza?"): recortar/mover cambian líneas de
-  // presupuesto, que es una de sus tres fuentes, así que también puede
-  // moverse tras una acción de triage.
-  async function syncSnapshotPagosQuincena() {
-    if (!snapshotId) return
-    try {
-      const res = await fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`)
-      if (!res.ok) return
-      const data = await res.json()
-      if (typeof data?.pagosQuincena !== 'number') return
-      await fetch(`/api/liquidez/${snapshotId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pagosQuincena: data.pagosQuincena.toString() }),
-      })
-    } catch { /* silencioso: el usuario puede recalcular manualmente si falla */ }
-  }
-
-  async function afterChange(nextItems: PresupuestoItem[]) {
+  // "Falta por pagar" y "pagos que caen esta quincena" del corte de liquidez
+  // ya no se guardan como valor aparte -- el servidor los calcula en vivo
+  // contra el presupuesto/creditos en cada lectura (ver /api/liquidez y
+  // /api/liquidez/pagos-quincena), así que un cambio aquí se refleja solo
+  // vía onChanged, sin sincronizar nada.
+  function afterChange(nextItems: PresupuestoItem[]) {
     setItems(nextItems)
-    await Promise.all([
-      syncSnapshotFalta(calcularFaltaPorPagar(nextItems)),
-      syncSnapshotPagosQuincena(),
-    ])
     onChanged()
   }
 
   function startEdit(p: PresupuestoItem) {
     setEditingId(p.id)
-    setEditValue(Number(p.montoPresupuestado).toString())
+    setEditValue(p.montoEfectivo.toString())
   }
 
   async function saveRecorte(p: PresupuestoItem) {
@@ -124,16 +90,19 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
     }
     setBusyId(p.id)
     try {
+      // Ajusta el Presupuesto Modificado, nunca el Original -- asi el
+      // compromiso que te fijaste al inicio de la quincena sigue viendose
+      // despues, junto con el recorte que decidiste sobre la marcha.
       const res = await fetch(`/api/presupuestos/${p.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ montoPresupuestado: nuevoMonto }),
+        body: JSON.stringify({ montoRevisado: nuevoMonto }),
       })
       if (!res.ok) throw new Error()
       const pct = nuevoMonto > 0 ? (p.real / nuevoMonto) * 100 : 0
-      const nextItems = items.map(it => it.id === p.id ? { ...it, montoPresupuestado: nuevoMonto, pct } : it)
+      const nextItems = items.map(it => it.id === p.id ? { ...it, montoEfectivo: nuevoMonto, pct } : it)
       toast('Presupuesto recortado')
       setEditingId(null)
-      await afterChange(nextItems)
+      afterChange(nextItems)
     } catch {
       toast('Error al recortar', 'error')
     } finally {
@@ -151,7 +120,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       })
       if (!res.ok) throw new Error()
       toast(`Movido a ${nextQuincena.codigo}`)
-      await afterChange(items.filter(it => it.id !== p.id))
+      afterChange(items.filter(it => it.id !== p.id))
     } catch {
       toast('Error al mover de quincena', 'error')
     } finally {
@@ -160,7 +129,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
   }
 
   async function registrarComoGasto(p: PresupuestoItem) {
-    const restante = Number((Number(p.montoPresupuestado) - p.real).toFixed(2))
+    const restante = Number((p.montoEfectivo - p.real).toFixed(2))
     if (restante <= 0) return
     setBusyId(p.id)
     try {
@@ -175,8 +144,8 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       })
       if (!res.ok) throw new Error()
       toast('Registrado como gasto pagado')
-      const nextItems = items.map(it => it.id === p.id ? { ...it, real: Number(it.montoPresupuestado), pct: 100 } : it)
-      await afterChange(nextItems)
+      const nextItems = items.map(it => it.id === p.id ? { ...it, real: it.montoEfectivo, pct: 100 } : it)
+      afterChange(nextItems)
     } catch {
       toast('Error al registrar el gasto', 'error')
     } finally {
@@ -206,7 +175,7 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
         ) : (
           <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
             {candidatos.map(p => {
-              const monto = Number(p.montoPresupuestado)
+              const monto = p.montoEfectivo
               const restante = Math.max(monto - p.real, 0)
               const isBusy = busyId === p.id
               const isEditing = editingId === p.id

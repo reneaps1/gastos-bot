@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { faltaPorPagarDeQuincena } from '@/lib/cierre-quincena-server'
+import { calcularPagosQuincena } from '@/lib/pagos-quincena'
 
 export async function GET(
   request: Request,
@@ -36,14 +38,26 @@ export async function PUT(
     const {
       fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
       efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      faltaPagar, pagosQuincena, teorico, notas, validado
+      teorico, notas, validado
     } = body
+
+    // faltaPagar y pagosQuincena nunca se aceptan del cliente -- se recalculan
+    // en vivo contra el presupuesto/creditos reales de la quincena efectiva (la
+    // nueva si se reasigna, si no la que ya tenía el snapshot). Ver
+    // cierre-quincena-server.ts y lib/pagos-quincena.ts.
+    const existing = await prisma.liquidezSnapshot.findUnique({ where: { id } })
+    if (!existing) return NextResponse.json({ error: 'Snapshot not found' }, { status: 404 })
+    const quincenaIdEfectiva = quincenaId ? parseInt(quincenaId) : existing.quincenaId
+    const [faltaPagarCalc, pagosQuincenaCalc] = await Promise.all([
+      faltaPorPagarDeQuincena(quincenaIdEfectiva),
+      calcularPagosQuincena(quincenaIdEfectiva),
+    ])
 
     const snapshot = await prisma.liquidezSnapshot.update({
       where: { id },
       data: {
         ...(fechaCorte && { fechaCorte: new Date(fechaCorte) }),
-        ...(quincenaId && { quincenaId: parseInt(quincenaId) }),
+        ...(quincenaId && { quincenaId: quincenaIdEfectiva }),
         ...(bbva !== undefined && { bbva: parseFloat(bbva) }),
         ...(banamex !== undefined && { banamex: parseFloat(banamex) }),
         ...(uala !== undefined && { uala: parseFloat(uala) }),
@@ -53,8 +67,8 @@ export async function PUT(
         ...(valesGasolina !== undefined && { valesGasolina: parseFloat(valesGasolina) }),
         ...(otros !== undefined && { otros: parseFloat(otros) }),
         ...(otrosNota !== undefined && { otrosNota }),
-        ...(faltaPagar !== undefined && { faltaPagar: parseFloat(faltaPagar) }),
-        ...(pagosQuincena !== undefined && { pagosQuincena: parseFloat(pagosQuincena) }),
+        faltaPagar: faltaPagarCalc,
+        pagosQuincena: pagosQuincenaCalc.pagosQuincena,
         ...(teorico !== undefined && { teorico: teorico ? parseFloat(teorico) : null }),
         ...(notas !== undefined && { notas }),
         ...(validado !== undefined && { validado }),

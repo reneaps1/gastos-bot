@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { faltaPorPagarDeQuincena } from '@/lib/cierre-quincena-server'
+import { calcularPagosQuincena } from '@/lib/pagos-quincena'
 
 export async function GET(request: Request) {
   try {
@@ -28,17 +30,27 @@ export async function POST(request: Request) {
     const {
       fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
       efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      faltaPagar, pagosQuincena, teorico, notas, validado
+      teorico, notas, validado
     } = body
 
     if (!fechaCorte || !quincenaId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    const quincenaIdNum = parseInt(quincenaId)
+    // faltaPagar y pagosQuincena nunca se aceptan del cliente -- se calculan en
+    // vivo contra el presupuesto/creditos reales de la quincena, para que un
+    // snapshot nunca nazca ya desactualizado. Ver
+    // dashboard/src/lib/cierre-quincena-server.ts y lib/pagos-quincena.ts.
+    const [faltaPagarCalc, pagosQuincenaCalc] = await Promise.all([
+      faltaPorPagarDeQuincena(quincenaIdNum),
+      calcularPagosQuincena(quincenaIdNum),
+    ])
+
     const snapshot = await prisma.liquidezSnapshot.create({
       data: {
         fechaCorte: new Date(fechaCorte),
-        quincenaId: parseInt(quincenaId),
+        quincenaId: quincenaIdNum,
         bbva: bbva ? parseFloat(bbva) : 0,
         banamex: banamex ? parseFloat(banamex) : 0,
         uala: uala ? parseFloat(uala) : 0,
@@ -48,8 +60,8 @@ export async function POST(request: Request) {
         valesGasolina: valesGasolina ? parseFloat(valesGasolina) : 0,
         otros: otros ? parseFloat(otros) : 0,
         otrosNota: otrosNota ?? null,
-        faltaPagar: faltaPagar ? parseFloat(faltaPagar) : 0,
-        pagosQuincena: pagosQuincena ? parseFloat(pagosQuincena) : 0,
+        faltaPagar: faltaPagarCalc,
+        pagosQuincena: pagosQuincenaCalc.pagosQuincena,
         teorico: teorico ? parseFloat(teorico) : null,
         notas,
         validado: validado ?? false,

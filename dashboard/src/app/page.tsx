@@ -1,17 +1,24 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import { formatMXN, formatDate, formatDateStr } from '@/lib/utils'
-import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronLeft, ChevronDown, Plus, Loader2, Check } from 'lucide-react'
+import { TrendingUp, TrendingDown, PiggyBank, ArrowRight, ChevronRight, ChevronLeft, ChevronDown, Plus, Loader2, Check, AlertTriangle, Droplets } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts'
 import Link from 'next/link'
-import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
+import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { KpiCard } from '@/components/ui/KpiCard'
+import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
-import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
-import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
+import { quincenasPendientesDeCierre, cuentaParaAgregados, type GrupoCierre } from '@/lib/cierre-quincena'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
+
+interface PresupuestoConQuincena {
+  id: number; descripcion: string; montoEfectivo: number; real: number; pendiente: number
+  estadoLinea: string; categoria: { tipo: string; nombre: string }
+  quincena: { id: number; codigo: string; fechaFin: string; fechaCierre: string | null }
+}
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -27,7 +34,8 @@ interface Snapshot {
   teorico: number | null; quincena: Quincena
 }
 interface Presupuesto {
-  id: number; descripcion: string; montoPresupuestado: number; tipo: string
+  id: number; descripcion: string; montoPresupuestado: number; montoRevisado?: number | string | null; montoEfectivo: number; tipo: string
+  estadoLinea: string
   diaCobro?: number | null; fechaVencimiento?: string | null
   categoria: Categoria; real: number; pendiente: number; pct: number; excedido?: number
 }
@@ -67,6 +75,7 @@ export default function DashboardPage() {
     presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
     gastosNoCubiertos: 0, totalExcedido: 0, ahorroComprometido: 0,
     gastoParaLimite: 0,
+    totalLiquido: 0, disponibleEfectivo: 0, pagosQuincena: 0,
   })
   const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
   const [limiteGastoReferencia, setLimiteGastoReferencia] = useState<number | null>(null)
@@ -81,6 +90,14 @@ export default function DashboardPage() {
   const [tendencia, setTendencia] = useState<TendenciaPoint[]>([])
   const [granularidad, setGranularidad] = useState<Granularidad>('quincena')
   const [periodoAnchor, setPeriodoAnchor] = useState(() => getMexicoDateString())
+  const [pendientesCierre, setPendientesCierre] = useState<GrupoCierre[]>([])
+  const [wizardCierreOpen, setWizardCierreOpen] = useState(false)
+
+  const fetchPendientesCierre = useCallback(async () => {
+    const res = await fetch('/api/presupuestos')
+    const data: PresupuestoConQuincena[] = await res.json()
+    setPendientesCierre(quincenasPendientesDeCierre(data, getMexicoDateString()))
+  }, [])
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -91,7 +108,8 @@ export default function DashboardPage() {
       setIngresoReferencia(cfg.ingresoReferencia != null ? Number(cfg.ingresoReferencia) : null)
       setLimiteGastoReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
     })
-  }, [])
+    fetchPendientesCierre()
+  }, [fetchPendientesCierre])
 
   function selectQuincena(id: string) {
     setQuincenaId(id)
@@ -176,18 +194,21 @@ export default function DashboardPage() {
         ? `/api/transacciones?quincenaId=${quincenaId}&limit=200`
         : `/api/transacciones?fechaDesde=${periodo!.desde}&fechaHasta=${periodo!.hasta}&limit=500`
 
-      const [txRes, presupRes, liqRes, tendRes] = await Promise.all([
+      const [txRes, presupRes, liqRes, tendRes, pagosRes] = await Promise.all([
         fetch(txUrl),
         quincenaMode ? fetch(`/api/presupuestos?quincenaId=${quincenaId}`) : Promise.resolve(null),
         quincenaMode ? fetch(`/api/liquidez?quincenaId=${quincenaId}`) : Promise.resolve(null),
         quincenaMode
           ? fetch(`/api/tendencia?quincenaId=${quincenaId}&range=3`)
           : fetch(`/api/tendencia-periodo?granularidad=${granularidad}&anchor=${periodoAnchor}&range=3`),
+        quincenaMode ? fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`) : Promise.resolve(null),
       ])
       const txJson = await txRes.json()
       const presupData: Presupuesto[] = presupRes ? await presupRes.json() : []
       const liqData: Snapshot[] = liqRes ? await liqRes.json() : []
       const tendData = await tendRes.json()
+      const pagosJson = pagosRes ? await pagosRes.json() : null
+      const pagosQuincenaVivo = typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0
 
       const txs: Transaccion[] = txJson.data ?? []
       const totales = txJson.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, GastoParaLimite: 0 }
@@ -197,12 +218,12 @@ export default function DashboardPage() {
       const ingresos = totales.Ingreso
       const gastos = totales.Gasto
       const ahorros = totales.Ahorro
-      const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
+      const presupTotal = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p)).reduce((s: number, p: Presupuesto) => s + p.montoEfectivo, 0)
 
       // El ahorro presupuestado (o registrado sin presupuesto) es dinero comprometido,
       // no disponible — se resta aparte de "No comprometido"/"Sobrante neto" sin mezclarse
       // con los totales "por categoría de gasto" (que deben seguir siendo solo Gasto).
-      const ahorroPresupuestado = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Ahorro').reduce((s: number, p: Presupuesto) => s + Number(p.montoPresupuestado), 0)
+      const ahorroPresupuestado = presupData.filter((p: Presupuesto) => p.categoria.tipo === 'Ahorro' && cuentaParaAgregados(p)).reduce((s: number, p: Presupuesto) => s + p.montoEfectivo, 0)
 
       const gastosCat = txs.filter(t => t.tipo === 'Gasto').reduce((acc, t) => {
         acc[t.categoria.nombre] = (acc[t.categoria.nombre] ?? 0) + Number(t.monto)
@@ -213,10 +234,10 @@ export default function DashboardPage() {
         .sort((a, b) => b.monto - a.monto)
 
       const presupCat = presupData
-        .filter(p => p.categoria.tipo === 'Gasto')
+        .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
         .reduce((acc, p) => {
           const nombre = p.categoria.nombre
-          acc[nombre] = (acc[nombre] ?? 0) + Number(p.montoPresupuestado)
+          acc[nombre] = (acc[nombre] ?? 0) + p.montoEfectivo
           return acc
         }, {} as Record<string, number>)
       const presupuestoCatArr = Object.entries(presupCat)
@@ -242,8 +263,8 @@ export default function DashboardPage() {
       const ahorroComprometido = ahorroPresupuestado
 
       const totalExcedido = presupData
-        .filter(p => p.categoria.tipo === 'Gasto')
-        .reduce((s, p) => s + Math.max(0, p.real - Number(p.montoPresupuestado)), 0)
+        .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+        .reduce((s, p) => s + (p.excedido ?? 0), 0)
 
       setTransacciones(txs.slice(0, 8))
       setTxSinPresupuesto(txs.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null))
@@ -254,19 +275,26 @@ export default function DashboardPage() {
       setPresupuestoPorCategoria(presupuestoCatArr)
       setPresupuestosDisplay([...presupData].filter(p => p.categoria.tipo === 'Gasto').sort((a, b) => b.pct - a.pct))
       const rawSnapshot = liqData.length > 0 ? liqData[0] : null
+      const snapshotMontos = rawSnapshot ? normalizeMontos(rawSnapshot) : null
       setSnapshot(rawSnapshot ? {
         ...rawSnapshot,
-        ...normalizeMontos(rawSnapshot),
+        ...snapshotMontos,
         faltaPagar: Number(rawSnapshot.faltaPagar) || 0,
         pagosQuincena: Number(rawSnapshot.pagosQuincena) || 0,
       } : null)
       setTendencia(Array.isArray(tendData) ? tendData : [])
+      // Efectivo disponible = liquidez real del corte menos lo que falta por
+      // pagar, calculado en vivo contra el presupuesto actual (nunca contra
+      // el faltaPagar guardado del snapshot, que puede quedar obsoleto).
+      const efectivo = calcularEfectivoDisponible(snapshotMontos, presupData)
       setMetricas({
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
-        presupTotal, pendientePorPagar: calcularFaltaPorPagar(presupData),
+        presupTotal, pendientePorPagar: efectivo.faltaPagar,
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
         gastosNoCubiertos, totalExcedido, ahorroComprometido,
         gastoParaLimite: Number(totales.GastoParaLimite ?? 0),
+        totalLiquido: efectivo.totalLiquido, disponibleEfectivo: efectivo.disponible,
+        pagosQuincena: pagosQuincenaVivo,
       })
     } finally { setLoading(false) }
   }, [quincenaId, granularidad, periodoAnchor])
@@ -279,12 +307,17 @@ export default function DashboardPage() {
   const today = getMexicoDateString()
   const sem = getSemaforo(metricas.margen, metricas.ingresos)
   const qActual = quincenas.find(q => q.id.toString() === quincenaId)
+  const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
+  const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
+  const totalPendienteCierre = pendientesCierre.reduce((s, g) => s + g.total, 0)
+  const partidasPendientesCierre = pendientesCierre.reduce((s, g) => s + g.items.length, 0)
   // Override propio de la quincena activa (configurable en Presupuesto →
   // Análisis) si existe, si no el global de Configuración → Períodos de pago.
   const refActual = resolveReferencia(qActual, { ingresoReferencia, limiteGastoReferencia })
   const periodoActual = granularidad !== 'quincena' ? getPeriodoRange(granularidad, periodoAnchor) : null
-  const totalLiquidez = snapshot ? sumLiquidez(snapshot) : 0
-  const liquidezNeta = snapshot ? totalLiquidez - snapshot.pagosQuincena : 0
+  // "Neta" usa metricas.pagosQuincena (cash real de esta quincena), no
+  // metricas.pendientePorPagar (ejecucion de presupuesto) -- ver lib/pagos-quincena.ts.
+  const liquidezNeta = metricas.totalLiquido - metricas.pagosQuincena
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
@@ -333,7 +366,8 @@ export default function DashboardPage() {
   }
 
   const budgetCardBody = (p: Presupuesto) => {
-    const restante = Number(p.montoPresupuestado) - p.real
+    const restante = p.montoEfectivo - p.real
+    const fueRevisado = p.montoRevisado != null && Number(p.montoRevisado) !== Number(p.montoPresupuestado)
     const isExcedido = (p.excedido ?? 0) > 0
     const barColor = isExcedido ? 'bg-rose-500' : p.pct > 80 ? 'bg-amber-500' : 'bg-emerald-500'
     const statusColor = isExcedido ? 'text-rose-600 dark:text-rose-400' : p.pct > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
@@ -356,7 +390,10 @@ export default function DashboardPage() {
         <div className="flex items-end justify-between gap-3 mb-2">
           <div>
             <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(p.real)}</p>
-            <p className="text-xs text-slate-500 dark:text-slate-400">presupuesto {formatMXN(Number(p.montoPresupuestado))}</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              presupuesto {formatMXN(p.montoEfectivo)}
+              {fueRevisado && <span className="text-slate-400 dark:text-slate-500"> (original {formatMXN(Number(p.montoPresupuestado))})</span>}
+            </p>
           </div>
           <div className="text-right">
             <p className={`text-sm font-semibold tabular-nums ${restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-600 dark:text-slate-300'}`}>
@@ -403,6 +440,35 @@ export default function DashboardPage() {
           <span className={`text-sm font-semibold ${sem.text}`}>{sem.label}</span>
         </div>
       </div>
+
+      {/* Quincenas terminadas con partidas de Gasto sin resolver -- aviso
+          persistente pero no bloqueante, no interrumpe el registro de gastos
+          de la quincena actual. Ver dashboard/src/lib/cierre-quincena.ts. */}
+      {pendientesCierre.length > 0 && (
+        <button
+          onClick={() => setWizardCierreOpen(true)}
+          className="w-full flex items-center justify-between gap-2 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-xl px-4 py-3 hover:bg-amber-100 dark:hover:bg-amber-950/40 transition-colors cursor-pointer text-left"
+        >
+          <span className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-300">
+            <AlertTriangle size={16} className="text-amber-600 dark:text-amber-400 shrink-0" />
+            <span>
+              {pendientesCierre.map(g => g.quincena.codigo).join(', ')} quedó{pendientesCierre.length > 1 ? 'ron' : ''} con{' '}
+              <span className="font-semibold tabular-nums">{partidasPendientesCierre}</span> {partidasPendientesCierre === 1 ? 'partida' : 'partidas'} sin resolver ·{' '}
+              <span className="font-semibold tabular-nums">{formatMXN(totalPendienteCierre)}</span>
+            </span>
+          </span>
+          <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 shrink-0">Revisar</span>
+        </button>
+      )}
+
+      <CierreQuincenaWizard
+        open={wizardCierreOpen}
+        onOpenChange={setWizardCierreOpen}
+        grupos={pendientesCierre}
+        quincenaActualId={quincenaActualCierre ? quincenaActualCierre.id : null}
+        quincenaActualCodigo={quincenaActualCierre?.codigo}
+        onResuelto={() => { fetchPendientesCierre(); fetchData() }}
+      />
 
       {/* Zoom: Semana / Quincena / Mes */}
       <div className="flex items-center gap-3 flex-wrap">
@@ -494,7 +560,7 @@ export default function DashboardPage() {
                     <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
                     <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
                     {granularidad === 'quincena' && (
-                      <Line type="monotone" dataKey="presupuestado" name="Presupuestado" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, fill: '#8b5cf6' }} activeDot={{ r: 5 }} />
+                      <Line type="monotone" dataKey="presupuestado" name="Plan original" stroke="#8b5cf6" strokeWidth={2} strokeDasharray="5 3" dot={{ r: 3, fill: '#8b5cf6' }} activeDot={{ r: 5 }} />
                     )}
                   </LineChart>
                 </ResponsiveContainer>
@@ -509,6 +575,22 @@ export default function DashboardPage() {
               Planificación del presupuesto disponible solo en vista Quincena
             </div>
           )}
+          {/* Sin corte de liquidez de esta quincena -- aviso no bloqueante,
+              igual que el de cierre de quincena: sin esto, "Disponible real"
+              no puede reflejar el efectivo de verdad, solo el plan. */}
+          {granularidad === 'quincena' && qActual && !snapshot && (
+            <Link
+              href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+              className="w-full flex items-center justify-between gap-2 bg-blue-50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-800/40 rounded-xl px-4 py-3 hover:bg-blue-100 dark:hover:bg-blue-950/40 transition-colors"
+            >
+              <span className="flex items-center gap-2 text-sm text-blue-800 dark:text-blue-300">
+                <Droplets size={16} className="text-blue-600 dark:text-blue-400 shrink-0" />
+                Aún no capturas tu corte de liquidez de esta quincena — &quot;Disponible real&quot; no puede mostrar tu efectivo hasta entonces.
+              </span>
+              <span className="text-xs font-semibold text-blue-700 dark:text-blue-400 shrink-0">Capturar corte</span>
+            </Link>
+          )}
+
           {granularidad === 'quincena' && metricas.ingresos > 0 && (
             <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
               <div className="flex items-center justify-between mb-3">
@@ -535,20 +617,32 @@ export default function DashboardPage() {
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Disponible real</p>
-                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">lo que de verdad te queda hoy</p>
-                  <p className={`text-base font-bold tabular-nums mt-0.5 ${disponibleReal < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(disponibleReal))}{disponibleReal < 0 ? ' de más' : ''}</p>
+                  <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">
+                    {snapshot ? 'tu efectivo hoy, menos lo que aún debes' : 'captura tu corte de liquidez para verlo'}
+                  </p>
+                  {snapshot ? (
+                    <>
+                      <p className={`text-base font-bold tabular-nums mt-0.5 ${metricas.disponibleEfectivo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {formatMXN(Math.abs(metricas.disponibleEfectivo))}{metricas.disponibleEfectivo < 0 ? ' de más' : ''}
+                      </p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                        {formatMXN(metricas.totalLiquido)} en cuentas − {formatMXN(metricas.pendientePorPagar)} comprometido
+                      </p>
+                    </>
+                  ) : (
+                    <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+                      className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+                      Capturar corte <ArrowRight size={10} />
+                    </Link>
+                  )}
+                  <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
+                    según presupuesto:
+                    <span className={`font-semibold tabular-nums ${disponibleReal < 0 ? 'text-rose-500 dark:text-rose-400' : ''}`}>{formatMXN(disponibleReal)}</span>
+                  </p>
                   {metricas.ahorroComprometido > 0 && (
                     <p className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-md px-1.5 py-0.5 inline-block">
                       incluye {formatMXN(metricas.ahorroComprometido)} de ahorro comprometido
                     </p>
-                  )}
-                  {snapshot && (
-                    <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
-                      className="mt-1 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
-                      tu efectivo real:
-                      <span className={`font-semibold tabular-nums ${liquidezNeta < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>{formatMXN(liquidezNeta)}</span>
-                      <ArrowRight size={10} />
-                    </Link>
                   )}
                 </div>
               </div>
@@ -717,7 +811,7 @@ export default function DashboardPage() {
                                                   <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</p>
                                                   <p className="text-[11px] text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
                                                 </div>
-                                                <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(Number(p.montoPresupuestado))}</span>
+                                                <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(p.montoEfectivo)}</span>
                                               </button>
                                             )) : (
                                               <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas en esta quincena</p>
@@ -1048,10 +1142,10 @@ export default function DashboardPage() {
                   Liquidez <ArrowRight size={12} />
                 </Link>
                 <div className="text-right">
-                  <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalLiquidez)}</p>
-                  {snapshot && snapshot.pagosQuincena > 0 && (
+                  <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.totalLiquido)}</p>
+                  {metricas.pagosQuincena > 0 && (
                     <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                      neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(snapshot.pagosQuincena)} por pagar esta Q)</span>
+                      neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(metricas.pagosQuincena)} por pagar esta Q)</span>
                     </p>
                   )}
                 </div>

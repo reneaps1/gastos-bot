@@ -45,6 +45,17 @@ enum TipoPeriodo {
   MENSUAL
 }
 
+// Disposicion de una linea de Gasto que sigue "Abierta" cuando su quincena ya
+// termino: Cumplida (se registro/enlazo la transaccion real), Cancelada (no
+// aplico, nunca va a registrarse), Absorbida (se acepta la variacion, gastado
+// != presupuestado, sin mas accion). Ver dashboard/src/lib/cierre-quincena.ts.
+enum EstadoLineaPresupuesto {
+  Abierta
+  Cumplida
+  Cancelada
+  Absorbida
+}
+
 model User {
   id            Int      @id @default(autoincrement())
   nombre        String   @unique @db.VarChar(50)
@@ -97,6 +108,12 @@ model Quincena {
   // (el default) significa "usa el global" — ver lib/referencia.ts (dashboard) resolveReferencia().
   ingresoReferencia     Decimal? @map("ingreso_referencia") @db.Decimal(12, 2)
   limiteGastoReferencia Decimal? @map("limite_gasto_referencia") @db.Decimal(12, 2)
+  // NULL = la quincena todavia no se cierra (aunque fechaFin ya haya pasado).
+  // Se marca sola desde el endpoint de cierre cuando ya no queda ninguna
+  // linea de Gasto "Abierta" pendiente. cerradaPor guarda el username de la
+  // sesion (dashboard/src/lib/auth.ts), no un FK a users.
+  fechaCierre DateTime? @map("fecha_cierre") @db.Timestamptz()
+  cerradaPor  String?   @map("cerrada_por") @db.VarChar(50)
 
   transacciones        Transaccion[]      @relation("TransaccionImpacto")
   transaccionesConsumo Transaccion[]      @relation("TransaccionConsumo")
@@ -195,6 +212,13 @@ model Presupuesto {
   diaCobro           Int?                @map("dia_cobro")
   fechaVencimiento   DateTime?           @map("fecha_vencimiento") @db.Date
   fechaRegistro      DateTime            @default(now()) @map("fecha_registro") @db.Timestamptz()
+  estadoLinea        EstadoLineaPresupuesto @default(Abierta) @map("estado_linea")
+  // Presupuesto Modificado (terminologia de presupuesto publico: Original ->
+  // Modificado -> Ejercido). NULL = sin revisar, el efectivo es
+  // montoPresupuestado. Solo se mueve via traspaso explicito (ver
+  // POST /api/presupuestos/[id]/transferir) -- montoPresupuestado (el
+  // compromiso original) nunca se toca despues de creado.
+  montoRevisado      Decimal?            @map("monto_revisado") @db.Decimal(12, 2)
 
   quincena      Quincena      @relation(fields: [quincenaId], references: [id])
   categoria     Categoria     @relation(fields: [categoriaId], references: [id])
