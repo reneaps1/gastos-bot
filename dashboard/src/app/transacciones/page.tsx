@@ -441,22 +441,21 @@ export default function TransaccionesPage() {
                       <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
                       {tx.categoria?.nombre}
                     </span>
-                    {tx.tipo === 'Gasto' ? (
-                      tx.presupuestoId ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
-                          <Check size={11} /> Asignada
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                          <AlertCircle size={11} /> Sin asignar
-                        </span>
-                      )
-                    ) : (
+                    {tx.tipo !== 'Gasto' && (
                       <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
                         tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                       }`}>
                         {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : <Wallet size={11} />}
                         {tx.tipo}
+                      </span>
+                    )}
+                    {tx.presupuestoId ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
+                        <Check size={11} /> Asignada
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                        <AlertCircle size={11} /> Sin asignar
                       </span>
                     )}
                     <button
@@ -504,18 +503,14 @@ export default function TransaccionesPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3.5 text-center">
-                        {tx.tipo === 'Gasto' ? (
-                          tx.presupuestoId ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400" title={tx.presupuesto?.descripcion}>
-                              <Check size={10} /> Asignada
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                              <AlertCircle size={10} /> Sin asignar
-                            </span>
-                          )
+                        {tx.presupuestoId ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400" title={tx.presupuesto?.descripcion}>
+                            <Check size={10} /> Asignada
+                          </span>
                         ) : (
-                          <span className="text-slate-300 dark:text-slate-600 text-xs">—</span>
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                            <AlertCircle size={10} /> Sin asignar
+                          </span>
                         )}
                       </td>
                       <td className="px-4 py-3.5">
@@ -603,13 +598,11 @@ export default function TransaccionesPage() {
                   <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{detailTx.quincena.codigo}</span>
                 } />
                 <DetailRow icon={<div className={`w-2 h-2 rounded-full ${(CAT_COLORS[detailTx.categoria?.nombre] ?? DEFAULT_CAT_COLOR).dot}`} />} label="Categoría" value={detailTx.categoria?.nombre} />
-                {detailTx.tipo === 'Gasto' && (
-                  <DetailRow icon={<Wallet size={16} />} label="Partida de presupuesto" value={
-                    detailTx.presupuesto
-                      ? <span className="text-indigo-600 dark:text-indigo-400">{detailTx.presupuesto.descripcion}</span>
-                      : <span className="text-amber-600 dark:text-amber-400">Sin asignar</span>
-                  } />
-                )}
+                <DetailRow icon={<Wallet size={16} />} label="Partida de presupuesto" value={
+                  detailTx.presupuesto
+                    ? <span className="text-indigo-600 dark:text-indigo-400">{detailTx.presupuesto.descripcion}</span>
+                    : <span className="text-amber-600 dark:text-amber-400">Sin asignar</span>
+                } />
                 <DetailRow icon={<User size={16} />} label="Usuario" value={detailTx.user?.nombre ?? 'Sin asignar'} />
                 {detailTx.metodoPago && (
                   <DetailRow icon={<CreditCard size={16} />} label="Método de pago" value={detailTx.metodoPago.nombre} />
@@ -712,27 +705,25 @@ export default function TransaccionesPage() {
             </div>
             <div>
               <Label htmlFor="tx-tipo">Tipo *</Label>
-              <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value, presupuestoId: e.target.value === 'Gasto' ? f.presupuestoId : '' }))} className={fieldClass(formErrors.tipo)}>
+              <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} className={fieldClass(formErrors.tipo)}>
                 <option value="Gasto">Gasto</option>
                 <option value="Ingreso">Ingreso</option>
                 <option value="Ahorro">Ahorro</option>
               </select>
             </div>
           </div>
-          {form.tipo === 'Gasto' && (
-            <div>
-              <Label htmlFor="tx-presupuesto">Línea de presupuesto</Label>
-              <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.categoriaId || !form.quincenaId}>
-                <option value="">Sin asignar</option>
-                {presupuestoOpciones.map(p => (
-                  <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(p.montoEfectivo)})</option>
-                ))}
-              </select>
-              {form.categoriaId && form.quincenaId && presupuestoOpciones.length === 0 && (
-                <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Esta categoría no tiene partidas de presupuesto en esta quincena.</p>
-              )}
-            </div>
-          )}
+          <div>
+            <Label htmlFor="tx-presupuesto">Línea de presupuesto</Label>
+            <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.categoriaId || !form.quincenaId}>
+              <option value="">Sin asignar</option>
+              {presupuestoOpciones.map(p => (
+                <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(p.montoEfectivo)})</option>
+              ))}
+            </select>
+            {form.categoriaId && form.quincenaId && presupuestoOpciones.length === 0 && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Esta categoría no tiene partidas de presupuesto en esta quincena.</p>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="tx-monto">Monto (MXN) *</Label>

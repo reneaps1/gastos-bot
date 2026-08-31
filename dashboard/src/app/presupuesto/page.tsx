@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRightLeft } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
@@ -19,6 +19,7 @@ import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-q
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
+import { TraspasoModal } from '@/components/ui/TraspasoModal'
 import { PresupuestoAnalisis } from './PresupuestoAnalisis'
 import { PresupuestoConfiguracion } from './PresupuestoConfiguracion'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
@@ -237,6 +238,8 @@ export default function PresupuestoPage() {
   const [editScopeBody, setEditScopeBody] = useState<Record<string, unknown> | null>(null)
   // Partida cuyo detalle de gasto se esta viendo en la ventana flotante
   const [detalleP, setDetalleP] = useState<Presupuesto | null>(null)
+  // Partida de Gasto con saldo libre desde la que se esta traspasando hacia otra linea
+  const [traspasoOrigen, setTraspasoOrigen] = useState<Presupuesto | null>(null)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -668,7 +671,7 @@ export default function PresupuestoPage() {
           tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
-          openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP}
+          openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP} setTraspasoOrigen={setTraspasoOrigen}
         />
       ) : vista === 'analisis' ? (
         <PresupuestoAnalisis
@@ -992,6 +995,12 @@ export default function PresupuestoPage() {
                       </div>
                       {!isMulti && (
                         <>
+                          {singleItem.categoria.tipo === 'Gasto' && singleItem.montoEfectivo - singleItem.real > 0 && (
+                            <button onClick={() => setTraspasoOrigen(singleItem)}
+                              className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                              <ArrowRightLeft size={14} />
+                            </button>
+                          )}
                           <button onClick={() => openEdit(singleItem)}
                             className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                             <Pencil size={14} />
@@ -1059,6 +1068,12 @@ export default function PresupuestoPage() {
                               </button>
                               <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(item.montoEfectivo)}</span>
                             </span>
+                            {item.categoria.tipo === 'Gasto' && item.montoEfectivo - item.real > 0 && (
+                              <button onClick={() => setTraspasoOrigen(item)}
+                                className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                                <ArrowRightLeft size={13} />
+                              </button>
+                            )}
                             <button onClick={() => openEdit(item)}
                               className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                               <Pencil size={13} />
@@ -1411,6 +1426,13 @@ export default function PresupuestoPage() {
         )}
       </FormModal>
 
+      <TraspasoModal
+        open={traspasoOrigen != null}
+        onOpenChange={open => !open && setTraspasoOrigen(null)}
+        origen={traspasoOrigen && { id: traspasoOrigen.id, descripcion: traspasoOrigen.descripcion, quincenaId: traspasoOrigen.quincenaId, disponible: traspasoOrigen.montoEfectivo - traspasoOrigen.real }}
+        onDone={() => { fetchPresupuestos(); fetchPresupuestosTabla() }}
+      />
+
       {/* Non-recurring delete — simple confirm */}
       <ConfirmDialog
         open={deleteTarget != null && !deleteTarget.p.recurrenciaGrupoId}
@@ -1590,6 +1612,7 @@ interface PresupuestoTablaProps {
   openEdit: (p: Presupuesto) => void
   setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
   setDetalleP: (p: Presupuesto | null) => void
+  setTraspasoOrigen: (p: Presupuesto | null) => void
 }
 
 function PresupuestoTabla({
@@ -1600,7 +1623,7 @@ function PresupuestoTabla({
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
-  openEdit, setDeleteTarget, setDetalleP,
+  openEdit, setDeleteTarget, setDetalleP, setTraspasoOrigen,
 }: PresupuestoTablaProps) {
   const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
@@ -1793,6 +1816,12 @@ function PresupuestoTabla({
                     <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pendiente de pago</p>
                   )}
                   <div className="mt-2 flex items-center justify-end gap-1">
+                    {p.categoria.tipo === 'Gasto' && p.montoEfectivo - p.real > 0 && (
+                      <button onClick={() => setTraspasoOrigen(p)} aria-label="Traspasar saldo libre"
+                        className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors">
+                        <ArrowRightLeft size={13} />
+                      </button>
+                    )}
                     <button onClick={() => openEdit(p)} aria-label="Editar"
                       className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors">
                       <Pencil size={13} />
@@ -1890,6 +1919,12 @@ function PresupuestoTabla({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
+                          {p.categoria.tipo === 'Gasto' && p.montoEfectivo - p.real > 0 && (
+                            <button onClick={() => setTraspasoOrigen(p)}
+                              className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                              <ArrowRightLeft size={14} />
+                            </button>
+                          )}
                           <button onClick={() => openEdit(p)}
                             className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                             <Pencil size={14} />
