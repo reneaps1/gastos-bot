@@ -1,4 +1,6 @@
 import { prisma } from '@/lib/prisma'
+import { cuentaParaAgregados } from '@/lib/cierre-quincena'
+import { montoEfectivoDePrisma } from '@/lib/cierre-quincena-server'
 
 // Server-only: usa Prisma directamente, así que solo lo debe importar código
 // de servidor (API routes). No lo importes desde un componente de cliente —
@@ -58,8 +60,8 @@ export async function calcularPagosQuincena(quincenaId: number): Promise<PagosQu
   for (const g of gastoRows) realMap.set(g.presupuestoId as number, Number(g._sum.monto ?? 0))
 
   const presupuestoNoEjecutado = presupuestos
-    .filter(p => p.categoria.tipo === 'Gasto')
-    .reduce((s, p) => s + Math.max(Number(p.montoPresupuestado) - (realMap.get(p.id) ?? 0), 0), 0)
+    .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+    .reduce((s, p) => s + Math.max(montoEfectivoDePrisma(p) - (realMap.get(p.id) ?? 0), 0), 0)
 
   return {
     pagosQuincena: pendientesDirectos + abonosCredito + presupuestoNoEjecutado,
