@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { faltaPorPagarDeQuincena } from '@/lib/cierre-quincena-server'
+import { calcularPagosQuincena } from '@/lib/pagos-quincena'
 
 export async function GET(request: Request) {
   try {
@@ -37,10 +38,14 @@ export async function POST(request: Request) {
     }
 
     const quincenaIdNum = parseInt(quincenaId)
-    // faltaPagar nunca se acepta del cliente -- se calcula en vivo contra el
-    // presupuesto real de la quincena, para que un snapshot nunca nazca ya
-    // desactualizado. Ver dashboard/src/lib/cierre-quincena-server.ts.
-    const faltaPagarCalc = await faltaPorPagarDeQuincena(quincenaIdNum)
+    // faltaPagar y pagosQuincena nunca se aceptan del cliente -- se calculan en
+    // vivo contra el presupuesto/creditos reales de la quincena, para que un
+    // snapshot nunca nazca ya desactualizado. Ver
+    // dashboard/src/lib/cierre-quincena-server.ts y lib/pagos-quincena.ts.
+    const [faltaPagarCalc, pagosQuincenaCalc] = await Promise.all([
+      faltaPorPagarDeQuincena(quincenaIdNum),
+      calcularPagosQuincena(quincenaIdNum),
+    ])
 
     const snapshot = await prisma.liquidezSnapshot.create({
       data: {
@@ -56,6 +61,7 @@ export async function POST(request: Request) {
         otros: otros ? parseFloat(otros) : 0,
         otrosNota: otrosNota ?? null,
         faltaPagar: faltaPagarCalc,
+        pagosQuincena: pagosQuincenaCalc.pagosQuincena,
         teorico: teorico ? parseFloat(teorico) : null,
         notas,
         validado: validado ?? false,

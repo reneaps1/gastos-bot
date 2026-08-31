@@ -38,6 +38,7 @@ interface TransaccionRow {
 interface Snapshot extends LiquidezMontos {
   otrosNota: string | null
   faltaPagar: number
+  pagosQuincena: number
   validado: boolean
   fechaCorte: string
 }
@@ -72,6 +73,7 @@ export default function ReporteQuincenaPage() {
   const [totales, setTotales] = useState({ Ingreso: 0, Gasto: 0, GastoPagado: 0 })
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [exporting, setExporting] = useState(false)
+  const [pagosQuincenaVivo, setPagosQuincenaVivo] = useState(0)
 
   useEffect(() => {
     async function load() {
@@ -82,14 +84,16 @@ export default function ReporteQuincenaPage() {
         setTarget(found)
         if (!found) return
 
-        const [presupRes, txRes, liqRes] = await Promise.all([
+        const [presupRes, txRes, liqRes, pagosRes] = await Promise.all([
           fetch(`/api/presupuestos?quincenaId=${found.id}`),
           fetch(`/api/transacciones?quincenaId=${found.id}&limit=1000`),
           fetch(`/api/liquidez?quincenaId=${found.id}`),
+          fetch(`/api/liquidez/pagos-quincena?quincenaId=${found.id}`),
         ])
         const presupData: PresupuestoRow[] = await presupRes.json()
         const txJson = await txRes.json()
         const liqData = await liqRes.json()
+        const pagosJson = await pagosRes.json()
 
         setPresupuestos(presupData)
         setTransacciones(txJson.data ?? [])
@@ -99,7 +103,8 @@ export default function ReporteQuincenaPage() {
           GastoPagado: Number(txJson.totales?.GastoPagado ?? 0),
         })
         const raw = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
-        setSnapshot(raw ? { ...raw, ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0 } : null)
+        setSnapshot(raw ? { ...raw, ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0, pagosQuincena: Number(raw.pagosQuincena) || 0 } : null)
+        setPagosQuincenaVivo(typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0)
       } finally {
         setLoading(false)
       }
@@ -135,7 +140,10 @@ export default function ReporteQuincenaPage() {
 
   const pendiente = totales.Gasto - totales.GastoPagado
   const efectivo = calcularEfectivoDisponible(snapshot, presupuestos)
-  const deltaColor = efectivo.disponible < 0 ? 'text-rose-600' : efectivo.disponible > 0 ? 'text-emerald-600' : 'text-slate-700'
+  // Delta usa pagosQuincenaVivo (cash real de esta quincena), no
+  // efectivo.faltaPagar (ejecucion de presupuesto) -- ver lib/pagos-quincena.ts.
+  const delta = efectivo.totalLiquido - pagosQuincenaVivo
+  const deltaColor = delta < 0 ? 'text-rose-600' : delta > 0 ? 'text-emerald-600' : 'text-slate-700'
   const fechaReporte = new Intl.DateTimeFormat('es-MX', {
     weekday: 'long', day: '2-digit', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit',
   }).format(new Date())
@@ -259,12 +267,12 @@ export default function ReporteQuincenaPage() {
                   <p className="text-lg font-bold text-slate-900 tabular-nums">{formatMXN(efectivo.totalLiquido)}</p>
                 </div>
                 <div className="border border-slate-300 rounded-lg p-3 text-center">
-                  <p className="text-xs text-slate-500">Falta por pagar</p>
-                  <p className="text-lg font-bold text-amber-600 tabular-nums">{formatMXN(efectivo.faltaPagar)}</p>
+                  <p className="text-xs text-slate-500">Pagos que caen esta Q</p>
+                  <p className="text-lg font-bold text-amber-600 tabular-nums">{formatMXN(pagosQuincenaVivo)}</p>
                 </div>
                 <div className="border border-slate-300 rounded-lg p-3 text-center">
                   <p className="text-xs text-slate-500">Delta (líquido neto)</p>
-                  <p className={`text-lg font-bold tabular-nums ${deltaColor}`}>{formatMXN(efectivo.disponible)}</p>
+                  <p className={`text-lg font-bold tabular-nums ${deltaColor}`}>{formatMXN(delta)}</p>
                 </div>
               </div>
               <div className="grid grid-cols-3 md:grid-cols-5 gap-3">

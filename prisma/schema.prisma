@@ -408,6 +408,7 @@ model LiquidezSnapshot {
   otros         Decimal  @default(0) @db.Decimal(12, 2)
   otrosNota     String?  @map("otros_nota")
   faltaPagar    Decimal  @default(0) @map("falta_pagar") @db.Decimal(12, 2)
+  pagosQuincena Decimal  @default(0) @map("pagos_quincena") @db.Decimal(12, 2)
   teorico       Decimal? @db.Decimal(12, 2)
   notas         String?
   validado      Boolean  @default(false)

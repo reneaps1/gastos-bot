@@ -30,6 +30,7 @@ interface Transaccion {
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
   efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; faltaPagar: number
+  pagosQuincena: number
   teorico: number | null; quincena: Quincena
 }
 interface Presupuesto {
@@ -74,7 +75,7 @@ export default function DashboardPage() {
     presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
     gastosNoCubiertos: 0, totalExcedido: 0, ahorroComprometido: 0,
     gastoParaLimite: 0,
-    totalLiquido: 0, disponibleEfectivo: 0,
+    totalLiquido: 0, disponibleEfectivo: 0, pagosQuincena: 0,
   })
   const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
   const [limiteGastoReferencia, setLimiteGastoReferencia] = useState<number | null>(null)
@@ -193,18 +194,21 @@ export default function DashboardPage() {
         ? `/api/transacciones?quincenaId=${quincenaId}&limit=200`
         : `/api/transacciones?fechaDesde=${periodo!.desde}&fechaHasta=${periodo!.hasta}&limit=500`
 
-      const [txRes, presupRes, liqRes, tendRes] = await Promise.all([
+      const [txRes, presupRes, liqRes, tendRes, pagosRes] = await Promise.all([
         fetch(txUrl),
         quincenaMode ? fetch(`/api/presupuestos?quincenaId=${quincenaId}`) : Promise.resolve(null),
         quincenaMode ? fetch(`/api/liquidez?quincenaId=${quincenaId}`) : Promise.resolve(null),
         quincenaMode
           ? fetch(`/api/tendencia?quincenaId=${quincenaId}&range=3`)
           : fetch(`/api/tendencia-periodo?granularidad=${granularidad}&anchor=${periodoAnchor}&range=3`),
+        quincenaMode ? fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`) : Promise.resolve(null),
       ])
       const txJson = await txRes.json()
       const presupData: Presupuesto[] = presupRes ? await presupRes.json() : []
       const liqData: Snapshot[] = liqRes ? await liqRes.json() : []
       const tendData = await tendRes.json()
+      const pagosJson = pagosRes ? await pagosRes.json() : null
+      const pagosQuincenaVivo = typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0
 
       const txs: Transaccion[] = txJson.data ?? []
       const totales = txJson.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, GastoParaLimite: 0 }
@@ -276,6 +280,7 @@ export default function DashboardPage() {
         ...rawSnapshot,
         ...snapshotMontos,
         faltaPagar: Number(rawSnapshot.faltaPagar) || 0,
+        pagosQuincena: Number(rawSnapshot.pagosQuincena) || 0,
       } : null)
       setTendencia(Array.isArray(tendData) ? tendData : [])
       // Efectivo disponible = liquidez real del corte menos lo que falta por
@@ -289,6 +294,7 @@ export default function DashboardPage() {
         gastosNoCubiertos, totalExcedido, ahorroComprometido,
         gastoParaLimite: Number(totales.GastoParaLimite ?? 0),
         totalLiquido: efectivo.totalLiquido, disponibleEfectivo: efectivo.disponible,
+        pagosQuincena: pagosQuincenaVivo,
       })
     } finally { setLoading(false) }
   }, [quincenaId, granularidad, periodoAnchor])
@@ -309,6 +315,9 @@ export default function DashboardPage() {
   // Análisis) si existe, si no el global de Configuración → Períodos de pago.
   const refActual = resolveReferencia(qActual, { ingresoReferencia, limiteGastoReferencia })
   const periodoActual = granularidad !== 'quincena' ? getPeriodoRange(granularidad, periodoAnchor) : null
+  // "Neta" usa metricas.pagosQuincena (cash real de esta quincena), no
+  // metricas.pendientePorPagar (ejecucion de presupuesto) -- ver lib/pagos-quincena.ts.
+  const liquidezNeta = metricas.totalLiquido - metricas.pagosQuincena
   const totalPresupuestoCategorias = presupuestoPorCategoria.reduce((s, c) => s + c.presupuestado, 0)
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
@@ -1134,9 +1143,9 @@ export default function DashboardPage() {
                 </Link>
                 <div className="text-right">
                   <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(metricas.totalLiquido)}</p>
-                  {metricas.pendientePorPagar > 0 && (
-                    <p className={`text-xs tabular-nums font-medium ${metricas.disponibleEfectivo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                      neta {formatMXN(metricas.disponibleEfectivo)} <span className="font-normal">(-{formatMXN(metricas.pendientePorPagar)} por pagar)</span>
+                  {metricas.pagosQuincena > 0 && (
+                    <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                      neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(metricas.pagosQuincena)} por pagar esta Q)</span>
                     </p>
                   )}
                 </div>

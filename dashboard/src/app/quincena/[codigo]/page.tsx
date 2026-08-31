@@ -16,7 +16,7 @@ interface Presupuesto { montoEfectivo: number; real: number; pendiente: number; 
 interface Snapshot {
   id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
   efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; otrosNota: string | null
-  faltaPagar: number; teorico: number | null; validado: boolean; fechaCorte: string
+  faltaPagar: number; pagosQuincena: number; teorico: number | null; validado: boolean; fechaCorte: string
 }
 interface Totales { Gasto: number; Ingreso: number; Ahorro: number; GastoPagado: number; GastoParaLimite: number }
 
@@ -31,6 +31,7 @@ export default function QuincenaResumenPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [ingresoReferencia, setIngresoReferencia] = useState<number | null>(null)
   const [limiteGastoReferencia, setLimiteGastoReferencia] = useState<number | null>(null)
+  const [pagosQuincenaVivo, setPagosQuincenaVivo] = useState(0)
 
   useEffect(() => {
     async function load() {
@@ -43,16 +44,18 @@ export default function QuincenaResumenPage() {
         setTarget(found)
         if (!found) return
 
-        const [txRes, presupRes, liqRes, cfgRes] = await Promise.all([
+        const [txRes, presupRes, liqRes, cfgRes, pagosRes] = await Promise.all([
           fetch(`/api/transacciones?quincenaId=${found.id}&limit=1`),
           fetch(`/api/presupuestos?quincenaId=${found.id}`),
           fetch(`/api/liquidez?quincenaId=${found.id}`),
           fetch('/api/configuracion'),
+          fetch(`/api/liquidez/pagos-quincena?quincenaId=${found.id}`),
         ])
         const txJson = await txRes.json()
         const presupData: Presupuesto[] = await presupRes.json()
         const liqData = await liqRes.json()
         const cfg = await cfgRes.json()
+        const pagosJson = await pagosRes.json()
 
         setTotales(txJson.totales ?? null)
         setPresupuestos(presupData)
@@ -61,8 +64,10 @@ export default function QuincenaResumenPage() {
           ...raw,
           ...normalizeMontos(raw),
           faltaPagar: Number(raw.faltaPagar) || 0,
+          pagosQuincena: Number(raw.pagosQuincena) || 0,
           teorico: raw.teorico != null ? Number(raw.teorico) : null,
         } : null)
+        setPagosQuincenaVivo(typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0)
         setIngresoReferencia(cfg.ingresoReferencia != null ? Number(cfg.ingresoReferencia) : null)
         setLimiteGastoReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
       } finally {
@@ -108,6 +113,9 @@ export default function QuincenaResumenPage() {
   const refTarget = resolveReferencia(target, { ingresoReferencia, limiteGastoReferencia })
   const pctLimite = refTarget.limiteGastoReferencia != null && refTarget.limiteGastoReferencia > 0 ? (gastoParaLimite / refTarget.limiteGastoReferencia) * 100 : null
   const efectivo = calcularEfectivoDisponible(snapshot, presupuestos)
+  // "Neta" usa pagosQuincenaVivo (cash real de esta quincena), no
+  // efectivo.faltaPagar (ejecucion de presupuesto) -- ver lib/pagos-quincena.ts.
+  const liquidezNeta = efectivo.totalLiquido - pagosQuincenaVivo
 
   const cuentaTiles: { label: string; value: number; title?: string }[] = snapshot ? [
     { label: 'BBVA', value: snapshot.bbva },
@@ -183,9 +191,9 @@ export default function QuincenaResumenPage() {
               </p>
               <div className="text-right">
                 <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(efectivo.totalLiquido)}</p>
-                {efectivo.faltaPagar > 0 && (
-                  <p className={`text-xs tabular-nums font-medium ${efectivo.disponible < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
-                    neta {formatMXN(efectivo.disponible)} <span className="font-normal">(-{formatMXN(efectivo.faltaPagar)} por pagar)</span>
+                {pagosQuincenaVivo > 0 && (
+                  <p className={`text-xs tabular-nums font-medium ${liquidezNeta < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                    neta {formatMXN(liquidezNeta)} <span className="font-normal">(-{formatMXN(pagosQuincenaVivo)} por pagar esta Q)</span>
                   </p>
                 )}
               </div>

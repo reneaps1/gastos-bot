@@ -67,9 +67,11 @@ export function DeficitTriagePanel({ open, onOpenChange, quincenaId, quincenaCod
       .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))[0] ?? null
   })()
 
-  // "Falta por pagar" del corte de liquidez ya no se guarda como valor
-  // aparte -- el servidor la calcula en vivo contra el presupuesto en cada
-  // lectura, así que un cambio aquí se refleja solo, sin sincronizar nada.
+  // "Falta por pagar" y "pagos que caen esta quincena" del corte de liquidez
+  // ya no se guardan como valor aparte -- el servidor los calcula en vivo
+  // contra el presupuesto/creditos en cada lectura (ver /api/liquidez y
+  // /api/liquidez/pagos-quincena), así que un cambio aquí se refleja solo
+  // vía onChanged, sin sincronizar nada.
   function afterChange(nextItems: PresupuestoItem[]) {
     setItems(nextItems)
     onChanged()

@@ -29,6 +29,7 @@ interface Snapshot {
   otros: number
   otrosNota: string | null
   faltaPagar: number
+  pagosQuincena: number
   teorico: number | null
   notas: string | null
   validado: boolean
@@ -90,6 +91,7 @@ function LiquidezConfigContent() {
   const [faltaLoading, setFaltaLoading] = useState(false)
   const [faltaModal, setFaltaModal] = useState(0)
   const [presupuestosQ, setPresupuestosQ] = useState<PresupuestoParaTotales[]>([])
+  const [pagosQuincenaVivo, setPagosQuincenaVivo] = useState(0)
 
   // Descuadre real: compara el corte mas reciente contra lo que "deberia" haber
   // segun el corte anterior (cualquier quincena) mas los movimientos ya
@@ -126,6 +128,7 @@ function LiquidezConfigContent() {
       ...s,
       ...normalizeMontos(s),
       faltaPagar: Number(s.faltaPagar) || 0,
+      pagosQuincena: Number(s.pagosQuincena) || 0,
       teorico: s.teorico != null ? Number(s.teorico) : null,
     })))
   }, [])
@@ -201,11 +204,33 @@ function LiquidezConfigContent() {
   // Recalcula al elegir quincena: se usa al crear un snapshot nuevo y al
   // reasignar la quincena de uno existente. faltaModal alimenta solo la
   // previsualizacion de "Teorico calculado" -- ya no es un campo del form,
-  // el servidor calcula y guarda el faltaPagar real al hacer submit.
+  // el servidor calcula y guarda el faltaPagar y el pagosQuincena reales al
+  // hacer submit (ver /api/liquidez).
   async function applyQuincena(qId: string) {
     setForm(f => ({ ...f, quincenaId: qId }))
     await recalcularFalta(qId)
   }
+
+  // "Pagos que caen esta quincena" = cuanto efectivo va a salir del banco EN
+  // esta quincena (pendientes directos + abonos de credito/TDC programados +
+  // presupuesto sin ejecutar) — a diferencia de "falta por pagar", que mide
+  // ejecucion de presupuesto sin importar cuando sale la caja. Es la fuente
+  // real de "¿me alcanza?". Se recalcula en vivo (nunca se confia en el valor
+  // guardado del snapshot) cada vez que cambia la quincena filtrada o los
+  // datos que la afectan (ver onChanged del panel de triage).
+  const fetchPagosQuincenaVivo = useCallback(async () => {
+    if (!quincenaId) { setPagosQuincenaVivo(0); return }
+    try {
+      const res = await fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`)
+      if (!res.ok) { setPagosQuincenaVivo(0); return }
+      const data = await res.json()
+      setPagosQuincenaVivo(typeof data?.pagosQuincena === 'number' ? data.pagosQuincena : 0)
+    } catch {
+      setPagosQuincenaVivo(0)
+    }
+  }, [quincenaId])
+
+  useEffect(() => { fetchPagosQuincenaVivo() }, [fetchPagosQuincenaVivo])
 
   function openCreate() {
     setEditing(null)
@@ -274,6 +299,7 @@ function LiquidezConfigContent() {
       setModalOpen(false)
       fetchData()
       fetchAllSnapshots()
+      fetchPagosQuincenaVivo()
     } catch {
       toast('Error al guardar', 'error')
     } finally {
@@ -369,6 +395,10 @@ function LiquidezConfigContent() {
   // reciente de la quincena seleccionada.
   const latestSnapshot = snapshots[0] ?? null
   const efectivo = calcularEfectivoDisponible(latestSnapshot, presupuestosQ)
+  // "¿Me alcanza?" se basa en pagosQuincenaVivo (cuanto sale de banco EN esta
+  // quincena), no en efectivo.faltaPagar (ejecucion de presupuesto sin
+  // importar cuando sale la caja) -- ver lib/pagos-quincena.ts.
+  const deltaLiquido = efectivo.totalLiquido - pagosQuincenaVivo
   const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
 
   // Corte inmediatamente anterior por fecha (no por quincena) al mas
@@ -440,22 +470,28 @@ function LiquidezConfigContent() {
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
           <KpiCard
-            label="¿Me alcanza?" value={formatMXN(efectivo.disponible)}
-            subtitle={efectivo.disponible < 0 ? 'te falta cubrir' : efectivo.disponible > 0 ? 'te sobra' : 'alcanza justo'}
+            label="Pagos que caen esta quincena" value={formatMXN(pagosQuincenaVivo)}
+            subtitle="incluye abonos de tarjeta/MSI"
+            icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
+            color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
+          />
+          <KpiCard
+            label="¿Me alcanza?" value={formatMXN(deltaLiquido)}
+            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : deltaLiquido > 0 ? 'te sobra' : 'alcanza justo'}
             icon={
-              efectivo.disponible < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
-              : efectivo.disponible > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
+              deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
+              : deltaLiquido > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
               : <Equal size={20} className="text-slate-500 dark:text-slate-300" />
             }
-            color={efectivo.disponible < 0 ? 'text-rose-600 dark:text-rose-400' : efectivo.disponible > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}
+            color={deltaLiquido < 0 ? 'text-rose-600 dark:text-rose-400' : deltaLiquido > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}
             bg={
-              efectivo.disponible < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
-              : efectivo.disponible > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
+              deltaLiquido < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
+              : deltaLiquido > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
               : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
             }
             action={
               <div className="mt-1.5 flex flex-col items-start gap-1">
-                {efectivo.disponible < 0 && currentQuincena && (
+                {deltaLiquido < 0 && currentQuincena && (
                   <button
                     onClick={() => setTriageOpen(true)}
                     className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
@@ -653,7 +689,8 @@ function LiquidezConfigContent() {
 
           {/* Teórico calculado -- "falta por pagar" ya no es un campo editable
               del corte: se calcula en vivo contra el presupuesto real de la
-              quincena y el servidor la guarda al hacer submit. */}
+              quincena y el servidor la guarda al hacer submit (junto con
+              pagosQuincena -- ver /api/liquidez). */}
           <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3 space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Teórico calculado</span>
@@ -737,7 +774,7 @@ function LiquidezConfigContent() {
           quincenaId={currentQuincena.id}
           quincenaCodigo={currentQuincena.codigo}
           quincenas={quincenas}
-          onChanged={() => { fetchData(); fetchAllSnapshots(); fetchPresupuestosQ() }}
+          onChanged={() => { fetchData(); fetchAllSnapshots(); fetchPresupuestosQ(); fetchPagosQuincenaVivo() }}
         />
       )}
     </div>

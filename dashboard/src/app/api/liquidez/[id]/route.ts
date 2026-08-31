@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { faltaPorPagarDeQuincena } from '@/lib/cierre-quincena-server'
+import { calcularPagosQuincena } from '@/lib/pagos-quincena'
 
 export async function GET(
   request: Request,
@@ -40,13 +41,17 @@ export async function PUT(
       teorico, notas, validado
     } = body
 
-    // faltaPagar nunca se acepta del cliente -- se recalcula en vivo contra
-    // el presupuesto real de la quincena efectiva (la nueva si se reasigna,
-    // si no la que ya tenía el snapshot). Ver cierre-quincena-server.ts.
+    // faltaPagar y pagosQuincena nunca se aceptan del cliente -- se recalculan
+    // en vivo contra el presupuesto/creditos reales de la quincena efectiva (la
+    // nueva si se reasigna, si no la que ya tenía el snapshot). Ver
+    // cierre-quincena-server.ts y lib/pagos-quincena.ts.
     const existing = await prisma.liquidezSnapshot.findUnique({ where: { id } })
     if (!existing) return NextResponse.json({ error: 'Snapshot not found' }, { status: 404 })
     const quincenaIdEfectiva = quincenaId ? parseInt(quincenaId) : existing.quincenaId
-    const faltaPagarCalc = await faltaPorPagarDeQuincena(quincenaIdEfectiva)
+    const [faltaPagarCalc, pagosQuincenaCalc] = await Promise.all([
+      faltaPorPagarDeQuincena(quincenaIdEfectiva),
+      calcularPagosQuincena(quincenaIdEfectiva),
+    ])
 
     const snapshot = await prisma.liquidezSnapshot.update({
       where: { id },
@@ -63,6 +68,7 @@ export async function PUT(
         ...(otros !== undefined && { otros: parseFloat(otros) }),
         ...(otrosNota !== undefined && { otrosNota }),
         faltaPagar: faltaPagarCalc,
+        pagosQuincena: pagosQuincenaCalc.pagosQuincena,
         ...(teorico !== undefined && { teorico: teorico ? parseFloat(teorico) : null }),
         ...(notas !== undefined && { notas }),
         ...(validado !== undefined && { validado }),
