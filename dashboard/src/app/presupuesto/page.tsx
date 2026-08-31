@@ -703,10 +703,22 @@ export default function PresupuestoPage() {
       {grupos.length > 0 && (
         <div className={`grid grid-cols-1 gap-4 ${refEfectiva.limiteGastoReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
           <KpiCard
-            label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
-            subtitle={`real ${formatMXN(totalIngresoReal)}`}
+            label="Ingresos" value={formatMXN(totalIngresoReal)}
+            subtitle={`de ${formatMXN(totalIngresoPresupuestado)} presupuestado`}
             icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
             color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+            action={(() => {
+              const pct = totalIngresoPresupuestado > 0 ? (totalIngresoReal / totalIngresoPresupuestado) * 100 : 0
+              const cumplido = pct >= 100
+              return (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                    <div className={`h-1.5 rounded-full transition-all ${cumplido ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                  </div>
+                  <span className={`text-[10px] font-semibold tabular-nums ${cumplido ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{pct.toFixed(0)}%</span>
+                </div>
+              )
+            })()}
           />
 
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
@@ -1731,24 +1743,46 @@ function PresupuestoTabla({
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
-          label="Ingresos" value={formatMXN(totalIngresoPresupuestadoFijo)}
-          subtitle={`real ${formatMXN(totalIngresoRealFijo)}`}
+          label="Ingresos" value={formatMXN(totalIngresoRealFijo)}
+          subtitle={`de ${formatMXN(totalIngresoPresupuestadoFijo)} presupuestado`}
           icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
           color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+          action={(() => {
+            const pct = totalIngresoPresupuestadoFijo > 0 ? (totalIngresoRealFijo / totalIngresoPresupuestadoFijo) * 100 : 0
+            const cumplido = pct >= 100
+            return (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                  <div className={`h-1.5 rounded-full transition-all ${cumplido ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <span className={`text-[10px] font-semibold tabular-nums ${cumplido ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{pct.toFixed(0)}%</span>
+              </div>
+            )
+          })()}
         />
         <KpiCard
-          label="Gastos" value={formatMXN(totalPresupuestado)}
-          subtitle={`real ${formatMXN(totalReal)}`}
+          label="Gastos" value={formatMXN(totalReal)}
+          subtitle={`de ${formatMXN(totalPresupuestado)} presupuestado`}
           icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
           color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
+          action={(() => {
+            const pct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
+            return (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                  <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
+              </div>
+            )
+          })()}
         />
         <KpiCard
-          label="Balance (plan)" value={formatMXN(balancePresupuestado)}
-          subtitle={`real ${formatMXN(balanceReal)}`}
-          subtitleColor={balanceReal < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
-          icon={<Scale size={20} className={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
-          color={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
-          bg={balancePresupuestado >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+          label="Balance (plan)" value={formatMXN(balanceReal)}
+          subtitle={`plan ${formatMXN(balancePresupuestado)}`}
+          icon={<Scale size={20} className={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
+          color={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
+          bg={balanceReal >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
         />
         {tablaQuincenaId !== ALL_QUINCENAS && (
           liquidezSnapshot ? (
@@ -1758,6 +1792,17 @@ function PresupuestoTabla({
               subtitleColor={totalFaltaPorPagar > totalLiquidez ? 'text-rose-500 dark:text-rose-400' : undefined}
               icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
               color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
+              action={(() => {
+                const pct = totalLiquidez > 0 ? (totalFaltaPorPagar / totalLiquidez) * 100 : 0
+                return (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                      <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                    </div>
+                    <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
+                  </div>
+                )
+              })()}
             />
           ) : (
             <Link href={`/configuracion/liquidez?quincenaId=${tablaQuincenaId}`}>
