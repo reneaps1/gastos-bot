@@ -1,7 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ArrowRightLeft } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
+import { getMexicoDateString } from '@/lib/quincena-selection'
 
 // Detalle de las transacciones que componen el real de una partida de
 // presupuesto. Consulta solo por presupuestoId (sin filtro de tipo), que es
@@ -17,7 +18,32 @@ export interface PartidaDetalle {
   montoEfectivo: number
   real: number
   categoriaNombre: string
+  categoriaTipo: string
   quincenaCodigo: string
+  recurrenciaGrupoId: string | null
+}
+
+interface OcurrenciaSerie {
+  id: number
+  real: number
+  quincena: { fechaInicio: string; fechaFin: string }
+}
+
+// Mismo calculo que proyeccion() en PresupuestoAnalisis.tsx (promedio +
+// desviacion poblacional de las ultimas hasta-3 quincenas YA CERRADAS), pero
+// aplicado al real de las ocurrencias pasadas de esta serie recurrente en vez
+// de al gasto total de la quincena -- misma nocion de "cerrada" (fechaFin <
+// hoy), sin depender de que alguien haya corrido el wizard de cierre.
+function historialSerie(ocurrencias: OcurrenciaSerie[], today: string) {
+  const cerradas = ocurrencias
+    .filter(o => o.quincena.fechaFin < today)
+    .sort((a, b) => a.quincena.fechaInicio.localeCompare(b.quincena.fechaInicio))
+  const ultimas = cerradas.slice(-3)
+  if (ultimas.length === 0) return null
+  const valores = ultimas.map(o => o.real)
+  const promedio = valores.reduce((s, v) => s + v, 0) / valores.length
+  const varianza = valores.reduce((s, v) => s + (v - promedio) ** 2, 0) / valores.length
+  return { promedio, desviacion: Math.sqrt(varianza), n: ultimas.length }
 }
 
 interface TransaccionRow {
@@ -31,11 +57,12 @@ interface TransaccionRow {
   user: { nombre: string } | null
 }
 
-export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
+export function DetalleGastoContent({ partida, onTraspasar }: { partida: PartidaDetalle; onTraspasar?: () => void }) {
   const [rows, setRows] = useState<TransaccionRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [historial, setHistorial] = useState<ReturnType<typeof historialSerie>>(null)
 
   // El componente se monta por partida (va con `key` en el caller), asi que el
   // estado ya arranca en loading y el efecto solo dispara el fetch: no hace
@@ -67,6 +94,22 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
     return () => { cancelado = true }
   }, [partida.id])
 
+  // Historial de esta serie recurrente: solo aplica si la partida pertenece a
+  // un grupo (ver recurrenciaGrupoId). Se pide aparte de las transacciones de
+  // arriba porque es una consulta distinta (otras partidas, no otras
+  // transacciones) y no toda partida es recurrente.
+  useEffect(() => {
+    if (!partida.recurrenciaGrupoId) { setHistorial(null); return }
+    let cancelado = false
+    fetch(`/api/presupuestos?recurrenciaGrupoId=${partida.recurrenciaGrupoId}`)
+      .then(res => res.ok ? res.json() : [])
+      .then((data: OcurrenciaSerie[]) => {
+        if (!cancelado) setHistorial(historialSerie(data, getMexicoDateString()))
+      })
+      .catch(() => { if (!cancelado) setHistorial(null) })
+    return () => { cancelado = true }
+  }, [partida.recurrenciaGrupoId])
+
   const presupuestado = partida.montoEfectivo
   const fueRevisado = partida.montoRevisado != null && Number(partida.montoRevisado) !== Number(partida.montoPresupuestado)
   const restante = presupuestado - partida.real
@@ -74,9 +117,35 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
   // usa /api/presupuestos, asi que deberia coincidir con `real`. Si no coincide
   // se avisa en vez de mostrar dos numeros distintos sin explicacion.
   const descuadre = !loading && !error && Math.abs(total - partida.real) > 0.01
+  // Mismo criterio que el boton de traspaso en presupuesto/page.tsx: solo
+  // lineas de Gasto con saldo sin gastar pueden donar.
+  const puedeTraspasar = onTraspasar != null && partida.categoriaTipo === 'Gasto' && restante > 0
 
   return (
     <div>
+      {puedeTraspasar && (
+        <div className="flex justify-end mb-3">
+          <button onClick={onTraspasar}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+            <ArrowRightLeft size={13} /> Traspasar saldo libre
+          </button>
+        </div>
+      )}
+
+      {partida.recurrenciaGrupoId && (
+        <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2 mb-4">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Historial de esta serie</p>
+          {historial ? (
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">
+              prom. real {formatMXN(historial.promedio)}
+              <span className="text-slate-400 dark:text-slate-500 font-normal text-xs"> ± {formatMXN(historial.desviacion)} ({historial.n} quincenas)</span>
+            </p>
+          ) : (
+            <p className="text-sm text-slate-400 dark:text-slate-500">Historial insuficiente</p>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
           <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Presupuestado</p>
