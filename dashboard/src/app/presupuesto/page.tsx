@@ -1432,8 +1432,11 @@ export default function PresupuestoPage() {
               montoEfectivo: detalleP.montoEfectivo,
               real: detalleP.real,
               categoriaNombre: detalleP.categoria.nombre,
+              categoriaTipo: detalleP.categoria.tipo,
               quincenaCodigo: detalleP.quincena.codigo,
+              recurrenciaGrupoId: detalleP.recurrenciaGrupoId,
             }}
+            onTraspasar={() => { const p = detalleP; setDetalleP(null); setTraspasoOrigen(p) }}
           />
         )}
       </FormModal>
