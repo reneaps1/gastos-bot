@@ -1,8 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2, ArrowRightLeft } from 'lucide-react'
+import { Loader2, ArrowRightLeft, ArrowUpDown, XCircle, Pencil } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { getMexicoDateString } from '@/lib/quincena-selection'
+import { useToast } from '@/components/Toast'
 
 // Detalle de las transacciones que componen el real de una partida de
 // presupuesto. Consulta solo por presupuestoId (sin filtro de tipo), que es
@@ -19,6 +20,7 @@ export interface PartidaDetalle {
   real: number
   categoriaNombre: string
   categoriaTipo: string
+  estadoLinea: string
   quincenaCodigo: string
   recurrenciaGrupoId: string | null
 }
@@ -57,12 +59,31 @@ interface TransaccionRow {
   user: { nombre: string } | null
 }
 
-export function DetalleGastoContent({ partida, onTraspasar }: { partida: PartidaDetalle; onTraspasar?: () => void }) {
+interface DetalleGastoProps {
+  partida: PartidaDetalle
+  onTraspasar?: () => void
+  // Ajustar monto y Cancelar generalizan acciones que hoy solo viven en el
+  // panel de triage de deficit / el wizard de cierre de quincena (mismos
+  // endpoints, sin restriccion de servidor -- ver plan). onAjustado deja que
+  // el padre actualice `detalleP` en vivo con el nuevo monto sin cerrar este
+  // modal; onCancelado cierra el modal (una linea Cancelada deja de tener
+  // sentido seguir inspeccionando aqui) y refresca las listas.
+  onAjustado?: (nuevoMontoRevisado: number) => void
+  onCancelado?: () => void
+  onEditar?: () => void
+}
+
+export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancelado, onEditar }: DetalleGastoProps) {
+  const { toast } = useToast()
   const [rows, setRows] = useState<TransaccionRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [historial, setHistorial] = useState<ReturnType<typeof historialSerie>>(null)
+  const [accionActiva, setAccionActiva] = useState<'ajustar' | 'cancelar' | null>(null)
+  const [montoAjuste, setMontoAjuste] = useState('')
+  const [notaCancelar, setNotaCancelar] = useState('')
+  const [guardando, setGuardando] = useState(false)
 
   // El componente se monta por partida (va con `key` en el caller), asi que el
   // estado ya arranca en loading y el efecto solo dispara el fetch: no hace
@@ -117,18 +138,116 @@ export function DetalleGastoContent({ partida, onTraspasar }: { partida: Partida
   // usa /api/presupuestos, asi que deberia coincidir con `real`. Si no coincide
   // se avisa en vez de mostrar dos numeros distintos sin explicacion.
   const descuadre = !loading && !error && Math.abs(total - partida.real) > 0.01
+  const esGastoAbierta = partida.categoriaTipo === 'Gasto' && partida.estadoLinea === 'Abierta'
   // Mismo criterio que el boton de traspaso en presupuesto/page.tsx: solo
-  // lineas de Gasto con saldo sin gastar pueden donar.
-  const puedeTraspasar = onTraspasar != null && partida.categoriaTipo === 'Gasto' && restante > 0
+  // lineas de Gasto abiertas con saldo sin gastar pueden donar.
+  const puedeTraspasar = onTraspasar != null && esGastoAbierta && restante > 0
+  const puedeAjustar = onAjustado != null && esGastoAbierta
+  const puedeCancelar = onCancelado != null && esGastoAbierta
+
+  async function guardarAjuste() {
+    const nuevo = parseFloat(montoAjuste)
+    if (isNaN(nuevo) || nuevo < partida.real) {
+      toast(`No puede quedar por debajo de lo ya gastado (${formatMXN(partida.real)})`, 'error')
+      return
+    }
+    setGuardando(true)
+    try {
+      const res = await fetch(`/api/presupuestos/${partida.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ montoRevisado: nuevo }),
+      })
+      if (!res.ok) throw new Error()
+      toast('Monto ajustado')
+      setAccionActiva(null)
+      onAjustado?.(nuevo)
+    } catch {
+      toast('Error al ajustar el monto', 'error')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function guardarCancelacion() {
+    setGuardando(true)
+    try {
+      const res = await fetch(`/api/presupuestos/${partida.id}/resolver`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accion: 'cancelar', nota: notaCancelar || undefined }),
+      })
+      if (!res.ok) throw new Error()
+      toast('Línea cancelada')
+      onCancelado?.()
+    } catch {
+      toast('Error al cancelar la línea', 'error')
+      setGuardando(false)
+    }
+  }
 
   return (
     <div>
-      {puedeTraspasar && (
-        <div className="flex justify-end mb-3">
-          <button onClick={onTraspasar}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
-            <ArrowRightLeft size={13} /> Traspasar saldo libre
-          </button>
+      {(onEditar || puedeAjustar || puedeTraspasar || puedeCancelar) && (
+        <div className="mb-3">
+          {accionActiva === null ? (
+            <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1.5">
+              {onEditar && (
+                <button onClick={onEditar}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:underline cursor-pointer">
+                  <Pencil size={13} /> Editar
+                </button>
+              )}
+              {puedeAjustar && (
+                <button onClick={() => { setMontoAjuste(String(presupuestado)); setAccionActiva('ajustar') }}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                  <ArrowUpDown size={13} /> Ajustar monto
+                </button>
+              )}
+              {puedeTraspasar && (
+                <button onClick={onTraspasar}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                  <ArrowRightLeft size={13} /> Traspasar saldo libre
+                </button>
+              )}
+              {puedeCancelar && (
+                <button onClick={() => setAccionActiva('cancelar')}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-400 hover:underline cursor-pointer">
+                  <XCircle size={13} /> Cancelar línea
+                </button>
+              )}
+            </div>
+          ) : accionActiva === 'ajustar' ? (
+            <div className="flex flex-wrap items-end gap-2 p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl">
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Nuevo monto comprometido</label>
+                <input type="number" min={partida.real} step="0.01" value={montoAjuste} onChange={e => setMontoAjuste(e.target.value)} autoFocus
+                  className="w-32 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              </div>
+              <button onClick={guardarAjuste} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+                {guardando && <Loader2 size={12} className="animate-spin" />} Guardar
+              </button>
+              <button onClick={() => setAccionActiva(null)} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-xl">
+              <div className="flex-1 min-w-[160px]">
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">¿Por qué? (opcional)</label>
+                <input type="text" value={notaCancelar} onChange={e => setNotaCancelar(e.target.value)} autoFocus
+                  className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-400" />
+              </div>
+              <button onClick={guardarCancelacion} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+                {guardando && <Loader2 size={12} className="animate-spin" />} Sí, cancelar línea
+              </button>
+              <button onClick={() => setAccionActiva(null)} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                Volver
+              </button>
+            </div>
+          )}
         </div>
       )}
 
