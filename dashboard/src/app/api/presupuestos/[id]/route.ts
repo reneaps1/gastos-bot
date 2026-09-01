@@ -89,6 +89,19 @@ export async function PUT(
     const finalFrecuencia = recurrente ? (frecuencia || current.frecuencia || 'CADA_QUINCENA') : null
     const finalNumOcurrencias = numOcurrencias !== undefined ? numOcurrencias : current.numOcurrencias
 
+    // La propia fila que se esta editando tambien puede ser MENSUAL con
+    // diaCobro -- sin esto, solo las ocurrencias hermanas que genera
+    // computeQuincenasTarget (mas abajo) traian Vence auto-derivado, y esta
+    // fila se quedaba en "—" aunque tuviera diaCobro. Una fecha explicita en
+    // el body siempre gana (ownData.fechaVencimiento ya la trae).
+    if (!ownData.fechaVencimiento && finalFrecuencia === 'MENSUAL' && diaCobro_ != null) {
+      const ownQuincenaId = quincenaId ? parseInt(quincenaId) : current.quincenaId
+      const allQuincenasForOwn = await prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
+      const ownQuincena = allQuincenasForOwn.find(q => q.id === ownQuincenaId) ?? current.quincena
+      const derived = computeQuincenasTarget(allQuincenasForOwn, ownQuincena, 'MENSUAL', diaCobro_, 1)[0]?.fechaVencimiento
+      if (derived) ownData.fechaVencimiento = new Date(derived)
+    }
+
     if (!current.recurrenciaGrupoId) {
       // Standalone item (not part of any recurring series).
       if (!recurrente) {
