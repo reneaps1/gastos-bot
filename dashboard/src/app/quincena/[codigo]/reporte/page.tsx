@@ -10,6 +10,7 @@ import { normalizeMontos, calcularEfectivoDisponible, type LiquidezMontos } from
 import { downloadReporteExcel } from '@/lib/reporte-excel'
 import { colorForCategoria } from '@/lib/category-colors'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
+import { calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface PresupuestoRow {
@@ -21,6 +22,7 @@ interface PresupuestoRow {
   estadoLinea: string
   real: number
   pendiente: number
+  excedido: number
   categoria: { nombre: string; tipo: string }
 }
 interface TransaccionRow {
@@ -171,13 +173,19 @@ export default function ReporteQuincenaPage() {
     }
   }).filter(t => t.Presupuestado > 0 || t.Real > 0)
 
+  // Mismo calculo que la card "Libre / sin asignar" de Presupuesto -> Tabla y
+  // "según presupuesto" del dashboard (ver calcularLibreSinAsignar) -- cuanto
+  // del ingreso real de la quincena sigue sin comprometerse en ningun lado.
+  const gastosNoCubiertos = Math.max(totales.Gasto - gastoRows.reduce((s, p) => s + p.real, 0), 0)
+  const libreSinAsignar = calcularLibreSinAsignar(totales.Ingreso, presupuestos, gastosNoCubiertos)
+
   async function handleExportExcel() {
     if (!target) return
     setExporting(true)
     try {
       await downloadReporteExcel({
         quincena: target,
-        totales: { ingreso: totales.Ingreso, gasto: totales.Gasto, pagado: totales.GastoPagado, pendiente },
+        totales: { ingreso: totales.Ingreso, gasto: totales.Gasto, pagado: totales.GastoPagado, pendiente, libreSinAsignar },
         presupuesto: presupuestos.filter(cuentaParaAgregados).map(p => ({
           tipo: tipoDe(p),
           categoria: p.categoria?.nombre ?? 'Sin categoría',
@@ -203,7 +211,7 @@ export default function ReporteQuincenaPage() {
           bbva: snapshot.bbva, banamex: snapshot.banamex, uala: snapshot.uala, ualaInversion: snapshot.ualaInversion,
           efectivo: snapshot.efectivo, valesDespensa: snapshot.valesDespensa, valesGasolina: snapshot.valesGasolina,
           otros: snapshot.otros, otrosNota: snapshot.otrosNota,
-          totalLiquido: efectivo.totalLiquido, faltaPagar: efectivo.faltaPagar, delta: efectivo.disponible,
+          totalLiquido: efectivo.totalLiquido, faltaPagar: efectivo.faltaPagar, pagosQuincena: pagosQuincenaVivo, delta,
         } : null,
       })
     } finally {
@@ -298,16 +306,17 @@ export default function ReporteQuincenaPage() {
         {/* KPIs de presupuesto */}
         <section className="space-y-3 break-inside-avoid">
           <h3 className="text-sm font-bold text-slate-800">Presupuesto</h3>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
               { label: 'Ingresos', value: totales.Ingreso },
               { label: 'Gastos', value: totales.Gasto },
               { label: 'Pagado', value: totales.GastoPagado },
               { label: 'Pendiente', value: pendiente },
+              { label: 'Libre / sin asignar', value: libreSinAsignar, coloreado: true },
             ].map(k => (
               <div key={k.label} className="border border-slate-300 rounded-lg p-3 text-center">
                 <p className="text-xs text-slate-500">{k.label}</p>
-                <p className="text-lg font-bold text-slate-900 tabular-nums">{formatMXN(k.value)}</p>
+                <p className={`text-lg font-bold tabular-nums ${k.coloreado ? (k.value < 0 ? 'text-rose-600' : 'text-emerald-600') : 'text-slate-900'}`}>{formatMXN(k.value)}</p>
               </div>
             ))}
           </div>
