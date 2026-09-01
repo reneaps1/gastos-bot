@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
-import { computeQuincenasTarget } from '@/lib/recurrencia'
+import { computeQuincenasTarget, fechaDiaCobroEnQuincena } from '@/lib/recurrencia'
 import { conNota } from '@/lib/cierre-quincena-server'
 
 export async function GET(
@@ -93,13 +93,17 @@ export async function PUT(
     // diaCobro -- sin esto, solo las ocurrencias hermanas que genera
     // computeQuincenasTarget (mas abajo) traian Vence auto-derivado, y esta
     // fila se quedaba en "—" aunque tuviera diaCobro. Una fecha explicita en
-    // el body siempre gana (ownData.fechaVencimiento ya la trae).
+    // el body siempre gana (ownData.fechaVencimiento ya la trae). Usa
+    // fechaDiaCobroEnQuincena (no computeQuincenasTarget) porque esta
+    // quincena ya es conocida -- no hace falta que el dia caiga en su
+    // sub-rango exacto para mostrar la fecha, a diferencia de ubicar una
+    // ocurrencia nueva.
     if (!ownData.fechaVencimiento && finalFrecuencia === 'MENSUAL' && diaCobro_ != null) {
       const ownQuincenaId = quincenaId ? parseInt(quincenaId) : current.quincenaId
-      const allQuincenasForOwn = await prisma.quincena.findMany({ orderBy: { fechaInicio: 'asc' } })
-      const ownQuincena = allQuincenasForOwn.find(q => q.id === ownQuincenaId) ?? current.quincena
-      const derived = computeQuincenasTarget(allQuincenasForOwn, ownQuincena, 'MENSUAL', diaCobro_, 1)[0]?.fechaVencimiento
-      if (derived) ownData.fechaVencimiento = new Date(derived)
+      const ownQuincena = ownQuincenaId === current.quincenaId
+        ? current.quincena
+        : await prisma.quincena.findUnique({ where: { id: ownQuincenaId } })
+      if (ownQuincena) ownData.fechaVencimiento = new Date(fechaDiaCobroEnQuincena(ownQuincena, diaCobro_))
     }
 
     if (!current.recurrenciaGrupoId) {

@@ -5,6 +5,24 @@ interface QuincenaLike {
 }
 
 /**
+ * El dia diaCobro del mismo mes en que cae quincena.fechaInicio, clamped a
+ * los dias que tenga ese mes -- una etiqueta de fecha para una quincena YA
+ * conocida (la fila ya vive ahi), no una busqueda de "que quincena cubre
+ * esta fecha" como hace computeQuincenasTarget para UBICAR una ocurrencia
+ * nueva. Por eso no valida que diaCobro caiga dentro del sub-rango exacto
+ * de esa quincena -- una fila puede estar en la quincena "equivocada" para
+ * su propio diaCobro (reasignada a mano, dato viejo) y aun asi debe mostrar
+ * la fecha que el usuario configuro, no quedar en blanco en silencio.
+ */
+export function fechaDiaCobroEnQuincena(quincena: QuincenaLike, diaCobro: number): string {
+  const y = quincena.fechaInicio.getUTCFullYear()
+  const mo = quincena.fechaInicio.getUTCMonth()
+  const daysInMonth = new Date(Date.UTC(y, mo + 1, 0)).getUTCDate()
+  const d = Math.min(diaCobro, daysInMonth)
+  return `${y}-${String(mo + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+}
+
+/**
  * Given a starting quincena and a recurrence config, returns the quincenas
  * (from allQuincenas) where an occurrence should land, starting at
  * quincenaInicio (inclusive) going forward. Shared by the recurring-create
