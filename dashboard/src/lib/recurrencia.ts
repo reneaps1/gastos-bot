@@ -10,6 +10,13 @@ interface QuincenaLike {
  * quincenaInicio (inclusive) going forward. Shared by the recurring-create
  * path (POST /api/presupuestos) and the recurring-edit path
  * (PUT /api/presupuestos/[id]).
+ *
+ * Cada quincena viene con `fechaVencimiento`: para MENSUAL con diaCobro
+ * explicito, el dia diaCobro del mes de esa ocurrencia (el mismo target-date
+ * que ya se calculaba para encontrar la quincena, antes se descartaba) --
+ * asi cada ocurrencia generada trae una fecha real en vez de quedar vacia.
+ * Sin diaCobro explicito (o en CADA_QUINCENA, donde "dia del mes" no aplica)
+ * viene null -- nunca se inventa una fecha que el usuario no pidio.
  */
 export function computeQuincenasTarget<Q extends QuincenaLike>(
   allQuincenas: Q[],
@@ -17,7 +24,7 @@ export function computeQuincenasTarget<Q extends QuincenaLike>(
   frecuencia: string,
   diaCobro: number | null,
   numOcurrencias: number | null
-): Q[] {
+): Array<Q & { fechaVencimiento: string | null }> {
   if (frecuencia === 'MENSUAL') {
     // Target-date lookup: for each calendar month find the quincena that covers diaCobro
     const targetDay = diaCobro ?? 1
@@ -33,6 +40,7 @@ export function computeQuincenasTarget<Q extends QuincenaLike>(
     const monthCount = numOcurrencias ? Math.min(numOcurrencias, maxMonths) : maxMonths
 
     const selectedIds = new Set<number>()
+    const fechaPorQuincenaId = new Map<number, string>()
     for (let i = 0; i < monthCount; i++) {
       const y = startYear + Math.floor((startMonth + i) / 12)
       const mo = (startMonth + i) % 12
@@ -44,9 +52,14 @@ export function computeQuincenasTarget<Q extends QuincenaLike>(
         const fin = q.fechaFin.toISOString().split('T')[0]
         return ini <= target && target <= fin
       })
-      if (q && q.fechaInicio >= quincenaInicio.fechaInicio) selectedIds.add(q.id)
+      if (q && q.fechaInicio >= quincenaInicio.fechaInicio) {
+        selectedIds.add(q.id)
+        if (diaCobro != null) fechaPorQuincenaId.set(q.id, target)
+      }
     }
-    return allQuincenas.filter(q => selectedIds.has(q.id))
+    return allQuincenas
+      .filter(q => selectedIds.has(q.id))
+      .map(q => ({ ...q, fechaVencimiento: fechaPorQuincenaId.get(q.id) ?? null }))
   }
 
   // CADA_QUINCENA: all quincenas from start, optionally limited
@@ -54,5 +67,5 @@ export function computeQuincenasTarget<Q extends QuincenaLike>(
   if (numOcurrencias && numOcurrencias > 0) {
     quincenesTarget = quincenesTarget.slice(0, numOcurrencias)
   }
-  return quincenesTarget
+  return quincenesTarget.map(q => ({ ...q, fechaVencimiento: null }))
 }
