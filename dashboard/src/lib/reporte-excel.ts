@@ -43,12 +43,13 @@ export interface ReporteLiquidez {
   otrosNota: string | null
   totalLiquido: number
   faltaPagar: number
+  pagosQuincena: number
   delta: number
 }
 
 export interface ReporteData {
   quincena: ReporteQuincena
-  totales: { ingreso: number; gasto: number; pagado: number; pendiente: number }
+  totales: { ingreso: number; gasto: number; pagado: number; pendiente: number; libreSinAsignar: number }
   presupuesto: ReportePresupuestoRow[]
   transacciones: ReporteTransaccionRow[]
   liquidez: ReporteLiquidez | null
@@ -79,7 +80,8 @@ export async function downloadReporteExcel(data: ReporteData) {
     resumen.addRow(['Liquidez — corte', l.fechaCorte.split('T')[0]])
     resumen.addRow(['Validado', l.validado ? 'Si' : 'No'])
     resumen.addRow(['Total liquido', money(l.totalLiquido)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Falta por pagar', money(l.faltaPagar)]).getCell(2).numFmt = moneyFmt
+    resumen.addRow(['Pagos que caen esta quincena', money(l.pagosQuincena)]).getCell(2).numFmt = moneyFmt
+    resumen.addRow(['Falta por pagar (ejecucion de presupuesto)', money(l.faltaPagar)]).getCell(2).numFmt = moneyFmt
     resumen.addRow(['Delta (liquido neto)', money(l.delta)]).getCell(2).numFmt = moneyFmt
     resumen.addRow([])
     resumen.addRow(['BBVA', money(l.bbva)]).getCell(2).numFmt = moneyFmt
@@ -97,6 +99,7 @@ export async function downloadReporteExcel(data: ReporteData) {
   resumen.addRow(['Gastos', money(data.totales.gasto)]).getCell(2).numFmt = moneyFmt
   resumen.addRow(['Pagado', money(data.totales.pagado)]).getCell(2).numFmt = moneyFmt
   resumen.addRow(['Pendiente', money(data.totales.pendiente)]).getCell(2).numFmt = moneyFmt
+  resumen.addRow(['Libre / sin asignar', money(data.totales.libreSinAsignar)]).getCell(2).numFmt = moneyFmt
   resumen.getColumn(1).font = { bold: true }
 
   // ---- Presupuesto ----

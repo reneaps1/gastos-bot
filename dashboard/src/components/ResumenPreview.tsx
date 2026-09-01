@@ -60,7 +60,12 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   const captureRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState<Fila[]>([])
-  const [liquidezDisponible, setLiquidezDisponible] = useState<number | null>(null)
+  // Mismas dos piezas que arma "Disponible real" en el dashboard y la card
+  // "Libre / sin asignar" de Presupuesto -> Tabla: el liquido crudo del
+  // corte, y cuanto de eso ya esta comprometido a salir del banco ESTA
+  // quincena. `disponible` (abajo) es lo que se muestra -- nunca el liquido
+  // crudo solo, que no es lo mismo que "disponible".
+  const [liquidez, setLiquidez] = useState<{ totalLiquido: number; pagosQuincena: number } | null>(null)
   const [exportingKind, setExportingKind] = useState<ExportKind | null>(null)
 
   useEffect(() => {
@@ -68,9 +73,10 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
     async function load() {
       setLoading(true)
       try {
-        const [presupuestos, liqData]: [PresupuestoRow[], unknown[]] = await Promise.all([
+        const [presupuestos, liqData, pagosJson]: [PresupuestoRow[], unknown[], { pagosQuincena?: number }] = await Promise.all([
           fetch(`/api/presupuestos?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/liquidez?quincenaId=${quincena.id}`).then(r => r.json()),
+          fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincena.id}`).then(r => r.json()),
         ])
         if (cancelled) return
         setRows(presupuestos.map(p => {
@@ -80,7 +86,10 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           return { ...p, pagado, falta, estado }
         }))
         const raw = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
-        setLiquidezDisponible(raw ? sumLiquidez(normalizeMontos(raw as Parameters<typeof normalizeMontos>[0])) : null)
+        setLiquidez(raw ? {
+          totalLiquido: sumLiquidez(normalizeMontos(raw as Parameters<typeof normalizeMontos>[0])),
+          pagosQuincena: typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0,
+        } : null)
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -88,6 +97,11 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
     void load()
     return () => { cancelled = true }
   }, [quincena.id])
+
+  // "Disponible" = liquido menos lo que cae de banco ESTA quincena -- mismo
+  // criterio que "Disponible real" del dashboard y "Liquidez" de Presupuesto
+  // -> Tabla. El total liquido crudo (sin restar nada) no es "disponible".
+  const disponible = liquidez ? liquidez.totalLiquido - liquidez.pagosQuincena : null
 
   // Los 4 totales de arriba son de la quincena completa (para que no cambien
   // segun lo que se muestre en la tabla), pero la tabla en si solo lista lo
@@ -114,7 +128,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
       } else if (kind === 'excel') {
         await downloadResumenExcel({
           quincena,
-          liquidezDisponible,
+          liquidezDisponible: disponible,
           totalPresupuestado, totalPagado, totalFalta,
           totalPresupuestadoPendiente, totalPagadoPendiente, totalFaltaPendiente,
           rows: filasPorCubrir.map(r => ({
@@ -184,7 +198,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
               el que ya se sabe que captura bien. */}
           <div className="grid grid-cols-4 gap-2.5">
             {[
-              { label: 'Liquidez disponible', value: liquidezDisponible },
+              { label: 'Liquidez disponible', value: disponible },
               { label: 'Presupuestado', value: totalPresupuestado },
               { label: 'Pagado', value: totalPagado },
               { label: 'Falta por cubrir', value: totalFalta },
