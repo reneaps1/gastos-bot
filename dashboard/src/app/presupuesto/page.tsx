@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRightLeft } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRightLeft, Coins } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
@@ -14,7 +14,7 @@ import { KpiCard } from '@/components/ui/KpiCard'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
-import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { calcularFaltaPorPagar, calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
@@ -1694,6 +1694,23 @@ function PresupuestoTabla({
   }, [tablaQuincenaId])
   const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
 
+  // Ingreso real total de la quincena (asignado o no) y gasto sin presupuestar,
+  // agregados no paginados del servidor -- misma fuente que usa el dashboard
+  // para "Disponible real"/"según presupuesto", ver calcularLibreSinAsignar.
+  const [totalesTx, setTotalesTx] = useState<{ ingreso: number; gasto: number } | null>(null)
+  useEffect(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) { setTotalesTx(null); return }
+    fetch(`/api/transacciones?quincenaId=${tablaQuincenaId}&limit=1`)
+      .then(r => r.json())
+      .then(data => setTotalesTx({ ingreso: Number(data?.totales?.Ingreso ?? 0), gasto: Number(data?.totales?.Gasto ?? 0) }))
+  }, [tablaQuincenaId])
+  // gastoTotal (todo el Gasto real, asignado o no) menos totalRealFijo (el ya
+  // contabilizado en lineas de Gasto) = lo que quedo sin presupuestoId -- evita
+  // un segundo fetch con asignado=no.
+  const libreSinAsignar = totalesTx != null
+    ? calcularLibreSinAsignar(totalesTx.ingreso, presupuestosTabla, Math.max(totalesTx.gasto - totalRealFijo, 0))
+    : null
+
   return (
     <div className="space-y-4">
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
@@ -1744,7 +1761,7 @@ function PresupuestoTabla({
         <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className={`grid grid-cols-2 gap-3 ${tablaQuincenaId !== ALL_QUINCENAS ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
         <KpiCard
           label="Ingresos" value={formatMXN(totalIngresoRealFijo)}
           subtitle={`de ${formatMXN(totalIngresoPresupuestadoFijo)} presupuestado`}
@@ -1816,6 +1833,16 @@ function PresupuestoTabla({
               />
             </Link>
           )
+        )}
+        {tablaQuincenaId !== ALL_QUINCENAS && libreSinAsignar != null && (
+          <KpiCard
+            label="Libre / sin asignar" value={formatMXN(Math.abs(libreSinAsignar))}
+            subtitle={libreSinAsignar < 0 ? 'de más' : 'de tus ingresos reales'}
+            subtitleColor={libreSinAsignar < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
+            icon={<Coins size={20} className={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'} />}
+            color={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
+            bg={libreSinAsignar >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+          />
         )}
       </div>
 
