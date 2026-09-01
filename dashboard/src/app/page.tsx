@@ -13,6 +13,7 @@ import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
 import { normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
 import { quincenasPendientesDeCierre, cuentaParaAgregados, type GrupoCierre } from '@/lib/cierre-quincena'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
+import { calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 
 interface PresupuestoConQuincena {
   id: number; descripcion: string; montoEfectivo: number; real: number; pendiente: number
@@ -73,7 +74,7 @@ export default function DashboardPage() {
   const [metricas, setMetricas] = useState({
     ingresos: 0, gastos: 0, ahorros: 0, margen: 0, balanceNeto: 0,
     presupTotal: 0, pendientePorPagar: 0, pctPresup: 0,
-    gastosNoCubiertos: 0, totalExcedido: 0, ahorroComprometido: 0,
+    gastosNoCubiertos: 0, totalExcedido: 0, ahorroComprometido: 0, disponibleReal: 0,
     gastoParaLimite: 0,
     totalLiquido: 0, disponibleEfectivo: 0, pagosQuincena: 0,
   })
@@ -194,7 +195,7 @@ export default function DashboardPage() {
         ? `/api/transacciones?quincenaId=${quincenaId}&limit=200`
         : `/api/transacciones?fechaDesde=${periodo!.desde}&fechaHasta=${periodo!.hasta}&limit=500`
 
-      const [txRes, presupRes, liqRes, tendRes, pagosRes] = await Promise.all([
+      const [txRes, presupRes, liqRes, tendRes, pagosRes, sinCubrirRes] = await Promise.all([
         fetch(txUrl),
         quincenaMode ? fetch(`/api/presupuestos?quincenaId=${quincenaId}`) : Promise.resolve(null),
         quincenaMode ? fetch(`/api/liquidez?quincenaId=${quincenaId}`) : Promise.resolve(null),
@@ -202,6 +203,7 @@ export default function DashboardPage() {
           ? fetch(`/api/tendencia?quincenaId=${quincenaId}&range=3`)
           : fetch(`/api/tendencia-periodo?granularidad=${granularidad}&anchor=${periodoAnchor}&range=3`),
         quincenaMode ? fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`) : Promise.resolve(null),
+        quincenaMode ? fetch(`/api/transacciones?quincenaId=${quincenaId}&asignado=no&limit=1`) : Promise.resolve(null),
       ])
       const txJson = await txRes.json()
       const presupData: Presupuesto[] = presupRes ? await presupRes.json() : []
@@ -209,6 +211,11 @@ export default function DashboardPage() {
       const tendData = await tendRes.json()
       const pagosJson = pagosRes ? await pagosRes.json() : null
       const pagosQuincenaVivo = typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0
+      // Agregado no paginado (a diferencia de sumar sobre `txs`, que se trae
+      // acotado a `limit`): correcto sin importar cuantos gastos tenga la
+      // quincena. Ver calcularLibreSinAsignar en presupuesto-totales.ts.
+      const sinCubrirJson = sinCubrirRes ? await sinCubrirRes.json() : null
+      const gastosNoCubiertos: number = Number(sinCubrirJson?.totales?.Gasto ?? 0)
 
       const txs: Transaccion[] = txJson.data ?? []
       const totales = txJson.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, GastoParaLimite: 0 }
@@ -254,17 +261,19 @@ export default function DashboardPage() {
         .sort((a, b) => b.pct - a.pct)
 
       // Ojo: no se suma aparte el ahorro sin presupuestar — ya queda incluido en
-      // gastosNoCubiertos, que no filtra por categoría (cualquier Gasto sin
-      // presupuestoId cuenta como comprometido, sea Ahorro o no).
-      const gastosNoCubiertos = txs
-        .filter(t => t.tipo === 'Gasto' && t.presupuestoId == null)
-        .reduce((s, t) => s + Number(t.monto), 0)
-
+      // gastosNoCubiertos (fetch de arriba), que no filtra por categoría
+      // (cualquier Gasto sin presupuestoId cuenta como comprometido, sea
+      // Ahorro o no).
       const ahorroComprometido = ahorroPresupuestado
 
       const totalExcedido = presupData
         .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
         .reduce((s, p) => s + (p.excedido ?? 0), 0)
+      const disponibleReal = calcularLibreSinAsignar(
+        ingresos,
+        presupData.map(p => ({ ...p, excedido: p.excedido ?? 0 })),
+        gastosNoCubiertos,
+      )
 
       setTransacciones(txs.slice(0, 8))
       setTxSinPresupuesto(txs.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null))
@@ -291,7 +300,7 @@ export default function DashboardPage() {
         ingresos, gastos, ahorros, margen: ingresos - gastos, balanceNeto: ingresos - gastos - ahorros,
         presupTotal, pendientePorPagar: efectivo.faltaPagar,
         pctPresup: presupTotal > 0 ? (gastos / presupTotal) * 100 : 0,
-        gastosNoCubiertos, totalExcedido, ahorroComprometido,
+        gastosNoCubiertos, totalExcedido, ahorroComprometido, disponibleReal,
         gastoParaLimite: Number(totales.GastoParaLimite ?? 0),
         totalLiquido: efectivo.totalLiquido, disponibleEfectivo: efectivo.disponible,
         pagosQuincena: pagosQuincenaVivo,
@@ -322,8 +331,10 @@ export default function DashboardPage() {
   const totalGastadoPresupuesto = presupuestoPorCategoria.reduce((s, c) => s + c.gastado, 0)
   const pctPresupuestoCategorias = totalPresupuestoCategorias > 0 ? (totalGastadoPresupuesto / totalPresupuestoCategorias) * 100 : 0
   const sinAsignar = metricas.ingresos - metricas.presupTotal - metricas.ahorroComprometido
-  const totalComprometido = metricas.presupTotal + metricas.gastosNoCubiertos + metricas.totalExcedido + metricas.ahorroComprometido
-  const disponibleReal = metricas.ingresos - totalComprometido
+  // Calculado en fetchData via calcularLibreSinAsignar (lib/presupuesto-totales.ts)
+  // -- misma funcion que usa la card "Libre / sin asignar" en Presupuesto, para
+  // que ambas paginas nunca puedan des-alinearse.
+  const disponibleReal = metricas.disponibleReal
   const pctPresupAsignado = metricas.ingresos > 0 ? (metricas.presupTotal / metricas.ingresos) * 100 : 0
   const pctSinPresupuesto = metricas.ingresos > 0 ? (metricas.gastosNoCubiertos / metricas.ingresos) * 100 : 0
   const pctExcedido = metricas.ingresos > 0 ? (metricas.totalExcedido / metricas.ingresos) * 100 : 0

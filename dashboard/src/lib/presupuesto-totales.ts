@@ -27,3 +27,32 @@ export function calcularFaltaPorPagar(presupuestos: PresupuestoParaTotales[]): n
     .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
     .reduce((s, p) => s + p.pendiente + Math.max(p.montoEfectivo - p.real, 0), 0)
 }
+
+export interface PresupuestoParaLibre {
+  categoria: { tipo: string }
+  estadoLinea: string
+  montoEfectivo: number
+  excedido: number
+}
+
+// Cuanto de tus ingresos reales de la quincena sigue sin comprometerse en
+// ningun lado: ni en una linea de Gasto/Ahorro presupuestada, ni en un
+// excedido sobre una linea ya presupuestada, ni en un gasto registrado sin
+// presupuestoId. A diferencia de "ingresos - presupuestado" (estatico), este
+// SI baja si te pasas de una linea y nadie traspasa para cubrirlo. Usa
+// `excedido` tal cual lo manda GET /api/presupuestos (ya floored en 0 por
+// linea), no lo recalcula.
+export function calcularLibreSinAsignar(
+  ingresos: number,
+  presupuestos: PresupuestoParaLibre[],
+  gastosNoCubiertos: number,
+): number {
+  const gastoLineas = presupuestos.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+  const presupTotal = gastoLineas.reduce((s, p) => s + p.montoEfectivo, 0)
+  const totalExcedido = gastoLineas.reduce((s, p) => s + (p.excedido ?? 0), 0)
+  const ahorroComprometido = presupuestos
+    .filter(p => p.categoria.tipo === 'Ahorro' && cuentaParaAgregados(p))
+    .reduce((s, p) => s + p.montoEfectivo, 0)
+  const totalComprometido = presupTotal + gastosNoCubiertos + totalExcedido + ahorroComprometido
+  return ingresos - totalComprometido
+}
