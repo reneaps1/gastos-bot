@@ -1433,10 +1433,17 @@ export default function PresupuestoPage() {
               real: detalleP.real,
               categoriaNombre: detalleP.categoria.nombre,
               categoriaTipo: detalleP.categoria.tipo,
+              estadoLinea: detalleP.estadoLinea,
               quincenaCodigo: detalleP.quincena.codigo,
               recurrenciaGrupoId: detalleP.recurrenciaGrupoId,
             }}
             onTraspasar={() => { const p = detalleP; setDetalleP(null); setTraspasoOrigen(p) }}
+            onEditar={() => { const p = detalleP; setDetalleP(null); openEdit(p) }}
+            onAjustado={nuevo => {
+              setDetalleP(p => p && { ...p, montoRevisado: nuevo, montoEfectivo: nuevo, excedido: Math.max(p.real - nuevo, 0) })
+              fetchPresupuestos(); fetchPresupuestosTabla()
+            }}
+            onCancelado={() => { setDetalleP(null); fetchPresupuestos(); fetchPresupuestosTabla() }}
           />
         )}
       </FormModal>
