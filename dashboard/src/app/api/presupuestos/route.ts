@@ -83,7 +83,7 @@ export async function POST(request: Request) {
     const body = await request.json()
     const {
       quincenaId, descripcion, categoriaId, montoPresupuestado,
-      clasificacion, tipo, notas,
+      clasificacion, tipo, notas, fechaVencimiento,
       recurrente, frecuencia, numOcurrencias, diaCobro,
     } = body
 
@@ -107,7 +107,7 @@ export async function POST(request: Request) {
 
     if (!recurrente) {
       const presupuesto = await prisma.presupuesto.create({
-        data: { ...baseData, quincenaId: parseInt(quincenaId) },
+        data: { ...baseData, quincenaId: parseInt(quincenaId), fechaVencimiento: fechaVencimiento ? new Date(fechaVencimiento) : null },
         include: { categoria: true, quincena: true },
       })
       return NextResponse.json(presupuesto, { status: 201 })
@@ -135,6 +135,7 @@ export async function POST(request: Request) {
       data: quincenesTarget.map(q => ({
         ...baseData,
         quincenaId: q.id,
+        fechaVencimiento: q.fechaVencimiento ? new Date(q.fechaVencimiento) : null,
         recurrenciaGrupoId: grupoId,
         numOcurrencias: numOcurrencias ?? null,
       })),
