@@ -7,6 +7,7 @@ import { useToast } from '@/components/Toast'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
+import { QuincenaRangeSlider } from '@/components/ui/QuincenaRangeSlider'
 import { resolveReferencia, normalizeReferencia, type ReferenciaValores } from '@/lib/referencia'
 import { colorForCategoria } from '@/lib/category-colors'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
@@ -623,12 +624,9 @@ export function PresupuestoAnalisis({
       {/* Filtros */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
         <div>
-          <p className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Desde</p>
-          <QuincenaChips quincenas={quincenasOrdenadas} quincenaId={desdeId} today={today} onSelect={setDesdeId} />
-        </div>
-        <div>
-          <p className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Hasta</p>
-          <QuincenaChips quincenas={quincenasOrdenadas} quincenaId={hastaId} today={today} onSelect={setHastaId} />
+          <p className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">Rango de quincenas</p>
+          <QuincenaRangeSlider quincenas={quincenasOrdenadas} desdeId={desdeId} hastaId={hastaId}
+            onChange={(d, h) => { setDesdeId(d); setHastaId(h) }} />
         </div>
         <FilterChip value={categoriaId} onChange={setCategoriaId} onClear={() => setCategoriaId('')} placeholder="Categoría">
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
