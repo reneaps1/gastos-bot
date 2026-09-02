@@ -217,6 +217,9 @@ export default function PresupuestoPage() {
 
   const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis' | 'configuracion'>('tabla')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
+  // Igual que en Tarjetas: quincenas extra combinadas via Ctrl/Cmd+clic.
+  // Sin efecto si tablaQuincenaId === ALL_QUINCENAS (ya trae todo).
+  const [extraTablaQuincenaIds, setExtraTablaQuincenaIds] = useState<Set<string>>(new Set())
   const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
   const [tablaLoading, setTablaLoading] = useState(false)
   const [tablaCategoriaId, setTablaCategoriaId] = useState('')
@@ -302,14 +305,43 @@ export default function PresupuestoPage() {
     return Array.from(new Set([quincenaId, ...extraQuincenaIds].filter(Boolean)))
   }, [quincenaId, extraQuincenaIds])
 
+  function selectTablaQuincena(id: string) {
+    setTablaQuincenaId(id)
+    setExtraTablaQuincenaIds(new Set())
+  }
+
+  function toggleExtraTablaQuincena(id: string) {
+    if (id === tablaQuincenaId || tablaQuincenaId === ALL_QUINCENAS) return
+    setExtraTablaQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function clearExtraTablaQuincenas() {
+    setExtraTablaQuincenaIds(new Set())
+  }
+
+  const selectedTablaQuincenaIds = useMemo(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) return [ALL_QUINCENAS]
+    return Array.from(new Set([tablaQuincenaId, ...extraTablaQuincenaIds].filter(Boolean)))
+  }, [tablaQuincenaId, extraTablaQuincenaIds])
+
   const fetchPresupuestosTabla = useCallback(async () => {
     setTablaLoading(true)
     try {
-      const params = tablaQuincenaId !== ALL_QUINCENAS ? `?quincenaId=${tablaQuincenaId}` : ''
-      const res = await fetch(`/api/presupuestos${params}`)
-      setPresupuestosTabla(await res.json())
+      if (tablaQuincenaId === ALL_QUINCENAS) {
+        setPresupuestosTabla(await (await fetch('/api/presupuestos')).json())
+      } else {
+        const porQuincena = await Promise.all(
+          selectedTablaQuincenaIds.map(id => fetch(`/api/presupuestos?quincenaId=${id}`).then(r => r.json()))
+        )
+        setPresupuestosTabla(porQuincena.flat())
+      }
     } finally { setTablaLoading(false) }
-  }, [tablaQuincenaId])
+  }, [tablaQuincenaId, selectedTablaQuincenaIds])
 
   useEffect(() => {
     if (vista === 'tabla') fetchPresupuestosTabla()
@@ -722,7 +754,10 @@ export default function PresupuestoPage() {
       {vista === 'tabla' ? (
         <PresupuestoTabla
           quincenas={quincenas} categorias={categorias} today={today}
-          tablaQuincenaId={tablaQuincenaId} setTablaQuincenaId={setTablaQuincenaId}
+          tablaQuincenaId={tablaQuincenaId} setTablaQuincenaId={selectTablaQuincena}
+          extraTablaQuincenaIds={extraTablaQuincenaIds} onToggleExtraTablaQuincena={toggleExtraTablaQuincena}
+          onClearExtraTablaQuincenas={clearExtraTablaQuincenas}
+          selectedTablaQuincenaIds={selectedTablaQuincenaIds}
           presupuestosTabla={presupuestosTabla} tablaLoading={tablaLoading}
           tablaCategoriaId={tablaCategoriaId} setTablaCategoriaId={setTablaCategoriaId}
           tablaClasificacion={tablaClasificacion} setTablaClasificacion={setTablaClasificacion}
@@ -1699,6 +1734,9 @@ function SortableTh({ label, sortKeyName, align, sortKey, sortDir, onSort }: {
 interface PresupuestoTablaProps {
   quincenas: Quincena[]; categorias: Categoria[]; today: string
   tablaQuincenaId: string; setTablaQuincenaId: (id: string) => void
+  extraTablaQuincenaIds: Set<string>; onToggleExtraTablaQuincena: (id: string) => void
+  onClearExtraTablaQuincenas: () => void
+  selectedTablaQuincenaIds: string[]
   presupuestosTabla: Presupuesto[]; tablaLoading: boolean
   tablaCategoriaId: string; setTablaCategoriaId: (v: string) => void
   tablaClasificacion: string; setTablaClasificacion: (v: string) => void
@@ -1717,7 +1755,9 @@ interface PresupuestoTablaProps {
 
 function PresupuestoTabla({
   quincenas, categorias, today,
-  tablaQuincenaId, setTablaQuincenaId, presupuestosTabla, tablaLoading,
+  tablaQuincenaId, setTablaQuincenaId, extraTablaQuincenaIds, onToggleExtraTablaQuincena,
+  onClearExtraTablaQuincenas, selectedTablaQuincenaIds,
+  presupuestosTabla, tablaLoading,
   tablaCategoriaId, setTablaCategoriaId, tablaClasificacion, setTablaClasificacion,
   tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
@@ -1775,6 +1815,12 @@ function PresupuestoTabla({
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
   const balanceReal = totalIngresoRealFijo - totalRealFijo
 
+  const multiSelectTablaActivo = selectedTablaQuincenaIds.length > 1
+
+  // Liquidez es un corte puntual de cuentas bancarias (una foto en el
+  // tiempo), no un flujo -- sumar el snapshot de varias quincenas no
+  // significaria nada (no es "cuanto dinero tuviste en total"). Se queda
+  // atada solo a tablaQuincenaId (la primaria), igual que en Tarjetas.
   const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
   useEffect(() => {
     if (tablaQuincenaId === ALL_QUINCENAS) { setLiquidezSnapshot(null); return }
@@ -1787,16 +1833,20 @@ function PresupuestoTabla({
   }, [tablaQuincenaId])
   const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
 
-  // Ingreso real total de la quincena (asignado o no) y gasto sin presupuestar,
-  // agregados no paginados del servidor -- misma fuente que usa el dashboard
-  // para "Disponible real"/"según presupuesto", ver calcularLibreSinAsignar.
+  // Ingreso real total (asignado o no) y gasto sin presupuestar, agregados no
+  // paginados del servidor -- misma fuente que usa el dashboard para
+  // "Disponible real"/"según presupuesto", ver calcularLibreSinAsignar. A
+  // diferencia de Liquidez, esto SI es un flujo y se puede sumar entre las
+  // quincenas combinadas.
   const [totalesTx, setTotalesTx] = useState<{ ingreso: number; gasto: number } | null>(null)
   useEffect(() => {
     if (tablaQuincenaId === ALL_QUINCENAS) { setTotalesTx(null); return }
-    fetch(`/api/transacciones?quincenaId=${tablaQuincenaId}&limit=1`)
-      .then(r => r.json())
-      .then(data => setTotalesTx({ ingreso: Number(data?.totales?.Ingreso ?? 0), gasto: Number(data?.totales?.Gasto ?? 0) }))
-  }, [tablaQuincenaId])
+    Promise.all(selectedTablaQuincenaIds.map(id => fetch(`/api/transacciones?quincenaId=${id}&limit=1`).then(r => r.json())))
+      .then(datas => setTotalesTx(datas.reduce((acc, data) => ({
+        ingreso: acc.ingreso + Number(data?.totales?.Ingreso ?? 0),
+        gasto: acc.gasto + Number(data?.totales?.Gasto ?? 0),
+      }), { ingreso: 0, gasto: 0 })))
+  }, [tablaQuincenaId, selectedTablaQuincenaIds])
   // gastoTotal (todo el Gasto real, asignado o no) menos totalRealFijo (el ya
   // contabilizado en lineas de Gasto) = lo que quedo sin presupuestoId -- evita
   // un segundo fetch con asignado=no.
@@ -1807,7 +1857,20 @@ function PresupuestoTabla({
   return (
     <div className="space-y-4">
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
-        <QuincenaChips quincenas={quincenas} quincenaId={tablaQuincenaId} today={today} onSelect={setTablaQuincenaId} showAll />
+        <div className="flex items-center flex-wrap gap-2">
+          <QuincenaChips quincenas={quincenas} quincenaId={tablaQuincenaId} today={today} onSelect={setTablaQuincenaId} showAll
+            extraSelectedIds={extraTablaQuincenaIds} onToggleExtra={onToggleExtraTablaQuincena} />
+          {multiSelectTablaActivo ? (
+            <button onClick={onClearExtraTablaQuincenas}
+              className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+              Quitar combinación
+            </button>
+          ) : tablaQuincenaId !== ALL_QUINCENAS ? (
+            <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+              Ctrl/Cmd+clic para combinar quincenas
+            </span>
+          ) : null}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <FilterChip value={tablaCategoriaId} onChange={setTablaCategoriaId} onClear={() => setTablaCategoriaId('')} placeholder="Categoría">
             {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -1901,7 +1964,7 @@ function PresupuestoTabla({
         {tablaQuincenaId !== ALL_QUINCENAS && (
           liquidezSnapshot ? (
             <KpiCard
-              label="Liquidez" value={formatMXN(totalLiquidez)}
+              label={multiSelectTablaActivo ? 'Liquidez (Q primaria)' : 'Liquidez'} value={formatMXN(totalLiquidez)}
               subtitle={`falta por cubrir ${formatMXN(totalFaltaPorPagar)}`}
               subtitleColor={totalFaltaPorPagar > totalLiquidez ? 'text-rose-500 dark:text-rose-400' : undefined}
               icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
@@ -1930,7 +1993,7 @@ function PresupuestoTabla({
         )}
         {tablaQuincenaId !== ALL_QUINCENAS && libreSinAsignar != null && (
           <KpiCard
-            label="Libre / sin asignar" value={formatMXN(Math.abs(libreSinAsignar))}
+            label={multiSelectTablaActivo ? 'Libre / sin asignar (combinado)' : 'Libre / sin asignar'} value={formatMXN(Math.abs(libreSinAsignar))}
             subtitle={libreSinAsignar < 0 ? 'de más' : 'de tus ingresos reales'}
             subtitleColor={libreSinAsignar < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
             icon={<Coins size={20} className={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'} />}

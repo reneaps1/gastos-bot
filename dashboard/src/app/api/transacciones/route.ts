@@ -17,7 +17,10 @@ async function findQuincenaIdForDate(date: Date): Promise<number | null> {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const quincenaId = searchParams.get('quincenaId')
+    // Uno o varios ?quincenaId= (para combinar quincenas en Presupuesto/
+    // Transacciones con Ctrl/Cmd+clic) -- un solo valor sigue siendo
+    // where.quincenaId = N como antes, no cambia nada para el resto de callers.
+    const quincenaIds = searchParams.getAll('quincenaId')
     const tipo = searchParams.get('tipo')
     const categoriaId = searchParams.get('categoriaId')
     const userId = searchParams.get('userId')
@@ -33,7 +36,8 @@ export async function GET(request: Request) {
     const fechaHasta = searchParams.get('fechaHasta')
 
     const where: any = {}
-    if (quincenaId) where.quincenaId = parseInt(quincenaId)
+    if (quincenaIds.length === 1) where.quincenaId = parseInt(quincenaIds[0])
+    else if (quincenaIds.length > 1) where.quincenaId = { in: quincenaIds.map(id => parseInt(id)) }
     if (fechaDesde || fechaHasta) {
       where.fecha = {}
       if (fechaDesde) where.fecha.gte = new Date(`${fechaDesde}T00:00:00.000Z`)
