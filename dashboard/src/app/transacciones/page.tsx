@@ -10,6 +10,8 @@ import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
+import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
+import { useColumnVisibility } from '@/lib/use-column-visibility'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -47,6 +49,21 @@ const EMPTY_FORM = {
 }
 
 const LIMIT = 25
+
+// Descripción y Monto son las columnas núcleo (no se pueden ocultar) --
+// el resto es opcional, elegible desde el menú "Columnas". Método de pago
+// va visible por default junto con las demás.
+const TX_COLUMNS = [
+  { key: 'categoria', label: 'Categoría' },
+  { key: 'presupuesto', label: 'Presupuesto' },
+  { key: 'quincena', label: 'Quincena' },
+  { key: 'fecha', label: 'Fecha' },
+  { key: 'usuario', label: 'Usuario' },
+  { key: 'metodoPago', label: 'Método de pago' },
+  { key: 'tipo', label: 'Tipo' },
+  { key: 'estatus', label: 'Estatus' },
+]
+const TX_COLUMNS_DEFAULT = TX_COLUMNS.map(c => c.key)
 
 function fieldClass(error?: string) {
   return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${error ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
@@ -93,6 +110,8 @@ export default function TransaccionesPage() {
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  const { visible: colVisible, toggle: toggleCol } = useColumnVisibility('milo:columns:transacciones', TX_COLUMNS_DEFAULT)
 
   useEffect(() => {
     const t = setTimeout(() => { setDebouncedSearch(busqueda); setPage(1) }, 300)
@@ -329,6 +348,7 @@ export default function TransaccionesPage() {
       <div className="flex items-center justify-between flex-wrap gap-4">
         <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Transacciones</h2>
         <div className="flex items-center gap-2">
+          <ColumnsMenu columns={TX_COLUMNS} visible={colVisible} onToggle={toggleCol} />
           <button onClick={handleExportCsv} disabled={exporting || total === 0}
             className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-4 py-2.5 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
             <Download size={16} /> {exporting ? 'Exportando...' : 'Descargar CSV'}
@@ -477,13 +497,14 @@ export default function TransaccionesPage() {
               <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
                   <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Presup.</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estatus</th>
+                  {colVisible.has('categoria') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>}
+                  {colVisible.has('presupuesto') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Presup.</th>}
+                  {colVisible.has('quincena') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>}
+                  {colVisible.has('fecha') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>}
+                  {colVisible.has('usuario') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>}
+                  {colVisible.has('metodoPago') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Método de pago</th>}
+                  {colVisible.has('tipo') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>}
+                  {colVisible.has('estatus') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estatus</th>}
                   <th className="text-right px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Monto</th>
                 </tr>
               </thead>
@@ -496,44 +517,55 @@ export default function TransaccionesPage() {
                       <td className="px-5 py-3.5">
                         <span className="font-medium text-slate-800 dark:text-slate-100 group-hover:text-indigo-700 transition-colors max-w-[200px] block truncate">{tx.descripcion}</span>
                       </td>
-                      <td className="px-4 py-3.5">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
-                          {tx.categoria?.nombre}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 text-center">
-                        {tx.presupuestoId ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400" title={tx.presupuesto?.descripcion}>
-                            <Check size={10} /> Asignada
+                      {colVisible.has('categoria') && (
+                        <td className="px-4 py-3.5">
+                          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
+                            {tx.categoria?.nombre}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                            <AlertCircle size={10} /> Sin asignar
+                        </td>
+                      )}
+                      {colVisible.has('presupuesto') && (
+                        <td className="px-4 py-3.5 text-center">
+                          {tx.presupuestoId ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400" title={tx.presupuesto?.descripcion}>
+                              <Check size={10} /> Asignada
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                              <AlertCircle size={10} /> Sin asignar
+                            </span>
+                          )}
+                        </td>
+                      )}
+                      {colVisible.has('quincena') && (
+                        <td className="px-4 py-3.5">
+                          <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
+                        </td>
+                      )}
+                      {colVisible.has('fecha') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(tx.fecha)}</td>}
+                      {colVisible.has('usuario') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>}
+                      {colVisible.has('metodoPago') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.metodoPago?.nombre ?? '—'}</td>}
+                      {colVisible.has('tipo') && (
+                        <td className="px-4 py-3.5 text-center">
+                          <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                            tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400'
+                          }`}>
+                            {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : tx.tipo === 'Ahorro' ? <Wallet size={11} /> : <ArrowDownRight size={11} />}
+                            {tx.tipo}
                           </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
-                      </td>
-                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(tx.fecha)}</td>
-                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>
-                      <td className="px-4 py-3.5 text-center">
-                        <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                          tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400'
-                        }`}>
-                          {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : tx.tipo === 'Ahorro' ? <Wallet size={11} /> : <ArrowDownRight size={11} />}
-                          {tx.tipo}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 text-center">
-                        <button onClick={e => { e.stopPropagation(); toggleEstatus(tx) }} disabled={togglingId === tx.id}
-                          className={`text-xs font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors ${
-                            tx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
-                          } disabled:opacity-50`}>
-                          {togglingId === tx.id ? '...' : tx.estatus}
-                        </button>
-                      </td>
+                        </td>
+                      )}
+                      {colVisible.has('estatus') && (
+                        <td className="px-4 py-3.5 text-center">
+                          <button onClick={e => { e.stopPropagation(); toggleEstatus(tx) }} disabled={togglingId === tx.id}
+                            className={`text-xs font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors ${
+                              tx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
+                            } disabled:opacity-50`}>
+                            {togglingId === tx.id ? '...' : tx.estatus}
+                          </button>
+                        </td>
+                      )}
                       <td className={`px-4 py-3.5 text-right font-bold tabular-nums ${
                         tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600 dark:text-rose-400'
                       }`}>

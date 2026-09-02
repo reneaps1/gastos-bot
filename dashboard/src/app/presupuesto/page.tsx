@@ -14,6 +14,8 @@ import { KpiCard } from '@/components/ui/KpiCard'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
+import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
+import { useColumnVisibility } from '@/lib/use-column-visibility'
 import { calcularFaltaPorPagar, calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
@@ -29,6 +31,19 @@ const CAT_DOT: Record<string, string> = {
   Transporte: 'bg-sky-500', Suscripciones: 'bg-violet-500', Deudas: 'bg-red-500',
   Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
+
+// Descripción/Presupuestado/Real/% usado/Restante/Acciones son el núcleo de
+// la tabla (no se pueden ocultar) -- el resto es opcional desde "Columnas".
+// Todas van visibles por default: agregar la opción no cambia el layout
+// actual hasta que el usuario decida ocultar algo.
+const PRESUPUESTO_TABLA_COLUMNS = [
+  { key: 'quincena', label: 'Quincena' },
+  { key: 'categoria', label: 'Categoría' },
+  { key: 'clasificacion', label: 'Clasificación' },
+  { key: 'recurrente', label: 'Recurrente' },
+  { key: 'vence', label: 'Vence' },
+]
+const PRESUPUESTO_TABLA_COLUMNS_DEFAULT = PRESUPUESTO_TABLA_COLUMNS.map(c => c.key)
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null; fechaCierre?: string | null }
 interface Categoria { id: number; nombre: string; tipo: string; activo: boolean }
@@ -1647,6 +1662,14 @@ function PresupuestoTabla({
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
   openEdit, setDeleteTarget, setDetalleP, setTraspasoOrigen,
 }: PresupuestoTablaProps) {
+  const { visible: colVisible, toggle: toggleCol } = useColumnVisibility('milo:columns:presupuesto-tabla', PRESUPUESTO_TABLA_COLUMNS_DEFAULT)
+  // Descripción + las columnas opcionales del grupo inicial (Quincena,
+  // Categoría, Clasificación) van antes de Presupuestado; Recurrente/Vence +
+  // Acciones van despues de Restante -- estos conteos alimentan el colSpan
+  // del tfoot, que si no se ajustara quedaria desalineado apenas se oculte
+  // alguna columna.
+  const leadingCols = 1 + ['quincena', 'categoria', 'clasificacion'].filter(k => colVisible.has(k)).length
+  const trailingCols = 1 + ['recurrente', 'vence'].filter(k => colVisible.has(k)).length
   const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
     .filter(p => matchesFiltrosTabla(p, filtros))
@@ -1764,6 +1787,7 @@ function PresupuestoTabla({
               className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400" />
             Ocultar ingresos
           </label>
+          <ColumnsMenu columns={PRESUPUESTO_TABLA_COLUMNS} visible={colVisible} onToggle={toggleCol} />
         </div>
         <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
       </div>
@@ -1948,36 +1972,38 @@ function PresupuestoTabla({
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                   <tr>
-                    <SortableTh label="Quincena" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Categoría" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    {colVisible.has('quincena') && <SortableTh label="Quincena" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    {colVisible.has('categoria') && <SortableTh label="Categoría" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                     <SortableTh label="Descripción" sortKeyName="descripcion" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Clasificación</th>
+                    {colVisible.has('clasificacion') && <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Clasificación</th>}
                     <SortableTh label="Presupuestado" sortKeyName="presupuestado" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="Real" sortKeyName="real" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="% usado" sortKeyName="pct" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="Restante/Excedido" sortKeyName="restante" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    {colVisible.has('recurrente') && <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    {colVisible.has('vence') && <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                     <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
                   {filasTabla.map(p => (
                     <tr key={p.id} className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors">
-                      <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{p.quincena.codigo}</span></td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
-                          {p.categoria.nombre}
-                        </span>
-                      </td>
+                      {colVisible.has('quincena') && <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{p.quincena.codigo}</span></td>}
+                      {colVisible.has('categoria') && (
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                            {p.categoria.nombre}
+                          </span>
+                        </td>
+                      )}
                       <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px]">
                         <div className="flex items-center gap-1.5">
                           <span className="truncate">{p.descripcion}</span>
                           {estadoLineaBadge(p.estadoLinea)}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
+                      {colVisible.has('clasificacion') && <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>}
                       <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(p.montoEfectivo)}</td>
                       <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
                         <button onClick={() => setDetalleP(p)}
@@ -1993,12 +2019,16 @@ function PresupuestoTabla({
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${p.excedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(p.montoEfectivo - p.real)}
                       </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                        {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                        {p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short' }) : '—'}
-                      </td>
+                      {colVisible.has('recurrente') && (
+                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}
+                        </td>
+                      )}
+                      {colVisible.has('vence') && (
+                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short' }) : '—'}
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
                           {p.categoria.tipo === 'Gasto' && p.montoEfectivo - p.real > 0 && (
@@ -2022,7 +2052,7 @@ function PresupuestoTabla({
                 </tbody>
                 <tfoot className="bg-slate-50 dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-700">
                   <tr>
-                    <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    <td colSpan={leadingCols} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                       Total · {gastoFilasTabla.length} {gastoFilasTabla.length === 1 ? 'partida' : 'partidas'}
                     </td>
                     <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">{formatMXN(totalPresupuestado)}</td>
@@ -2036,16 +2066,16 @@ function PresupuestoTabla({
                     <td className={`px-4 py-3 text-right font-bold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                       {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
                     </td>
-                    <td colSpan={3}></td>
+                    <td colSpan={trailingCols}></td>
                   </tr>
                   <tr className="bg-amber-50/70 dark:bg-amber-950/20 border-t border-amber-200/60 dark:border-amber-900/40">
-                    <td colSpan={7} className="px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                    <td colSpan={leadingCols + 4} className="px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
                       Falta por pagar <span className="font-normal text-amber-600/80 dark:text-amber-500/80">— pendiente de pago + presupuesto que aún no registras</span>
                     </td>
                     <td className="px-4 py-2.5 text-right font-bold tabular-nums text-amber-700 dark:text-amber-400">
                       {formatMXN(totalFaltaPorPagar)}
                     </td>
-                    <td colSpan={3}></td>
+                    <td colSpan={trailingCols}></td>
                   </tr>
                 </tfoot>
               </table>
