@@ -22,7 +22,7 @@ export function ColumnsMenu({ columns, visible, onToggle }: Props) {
       {open && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} aria-hidden />
-          <div className="absolute right-0 top-full mt-1.5 w-56 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl z-30 overflow-hidden">
+          <div className="absolute left-0 top-full mt-1.5 w-56 max-w-[calc(100vw-2rem)] bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl z-30 overflow-hidden">
             <div className="px-3 pt-2 pb-1 border-b border-slate-100 dark:border-slate-700">
               <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Mostrar columnas</p>
             </div>
