@@ -12,6 +12,15 @@ enum TipoMovimiento {
   Ahorro
 }
 
+// Direccion de un movimiento de ahorro (categoria.tipo === 'Ahorro'): Aporte
+// suma al saldo del ahorro/apartado, Retiro resta. monto siempre se guarda
+// positivo, asi que direccion es la unica forma de saber el signo. NULL para
+// transacciones que no son de ahorro.
+enum DireccionAhorro {
+  Aporte
+  Retiro
+}
+
 enum ClasificacionGasto {
   Fijo
   Variable
@@ -155,6 +164,23 @@ model Cuenta {
   @@map("cuentas")
 }
 
+// Sub-cuenta de ahorro (apartado bancario): agrupa aportaciones/retiros de
+// categoria "Ahorro" bajo una meta opcional. El saldo se calcula en vivo a
+// partir de sus transacciones (Aporte suma, Retiro resta), no se guarda
+// columna de saldo. apartadoId NULL en una transaccion significa "ahorro
+// general", sin apartado asignado.
+model Apartado {
+  id            Int      @id @default(autoincrement())
+  nombre        String   @unique @db.VarChar(50)
+  metaMonto     Decimal? @map("meta_monto") @db.Decimal(12, 2)
+  activo        Boolean  @default(true)
+  fechaCreacion DateTime @default(now()) @map("fecha_creacion") @db.Timestamptz()
+
+  transacciones Transaccion[]
+
+  @@map("apartados")
+}
+
 model Transaccion {
   id                  Int                 @id @default(autoincrement())
   fecha               DateTime            @db.Date
@@ -165,10 +191,16 @@ model Transaccion {
   categoriaId         Int                 @map("categoria_id")
   clasificacion       ClasificacionGasto?
   tipo                TipoMovimiento
+  // Solo tiene sentido cuando tipo === 'Ahorro' (ver DireccionAhorro). NULL
+  // para el resto de transacciones.
+  direccion           DireccionAhorro?
   monto               Decimal             @db.Decimal(12, 2)
   metodoPagoId        Int?                @map("metodo_pago_id")
   creditoId           Int?                @map("credito_id")
   presupuestoId       Int?                @map("presupuesto_id")
+  // Apartado de ahorro asignado (opcional). NULL = ahorro general / sin
+  // apartado. Solo relevante para transacciones de categoria "Ahorro".
+  apartadoId          Int?                @map("apartado_id")
   fechaPagoProgramada DateTime?           @map("fecha_pago_programada") @db.Date
   estatus             EstatusPago         @default(Pendiente)
   notas               String?
@@ -182,6 +214,7 @@ model Transaccion {
   metodoPago      MetodoPago? @relation(fields: [metodoPagoId], references: [id])
   credito         Credito?    @relation(fields: [creditoId], references: [id])
   presupuesto     Presupuesto? @relation(fields: [presupuestoId], references: [id], onDelete: SetNull)
+  apartado        Apartado?   @relation(fields: [apartadoId], references: [id])
 
   whatsappMsgs WhatsappMessage[]
   creditoPagos CreditoPago[]
@@ -193,6 +226,7 @@ model Transaccion {
   @@index([tipo], name: "idx_tx_tipo")
   @@index([creditoId], name: "idx_tx_credito")
   @@index([presupuestoId], name: "idx_tx_presupuesto")
+  @@index([apartadoId], name: "idx_tx_apartado")
   @@map("transacciones")
 }
 

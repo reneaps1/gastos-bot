@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { PiggyBank, TrendingUp, TrendingDown, Pencil, Trash2 } from 'lucide-react'
+import { PiggyBank, TrendingUp, TrendingDown, Pencil, Trash2, Plus, Target } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { FormModal } from '@/components/ui/FormModal'
@@ -11,15 +11,18 @@ interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: 
 interface Categoria { id: number; nombre: string }
 interface MetodoPago { id: number; nombre: string }
 interface Transaccion {
-  id: number; fecha: string; descripcion: string; tipo: string; monto: number
-  quincenaId: number; metodoPagoId: number | null
+  id: number; fecha: string; descripcion: string; tipo: string; direccion: string | null; monto: number
+  quincenaId: number; metodoPagoId: number | null; apartadoId: number | null
   quincena: Quincena; user: { id: number; nombre: string } | null
   balanceAcumulado: number
 }
 interface PorQuincena { quincena: Quincena; aportado: number; retirado: number }
+interface ApartadoInfo { id: number; nombre: string; metaMonto: number | null }
+interface PorApartado { apartado: ApartadoInfo | null; aportado: number; retirado: number; balance: number }
 interface AhorroData {
   total: number
   porQuincena: PorQuincena[]
+  porApartado: PorApartado[]
   transacciones: Transaccion[]
 }
 
@@ -31,6 +34,7 @@ const EMPTY_FORM = {
   descripcion: '',
   monto: '',
   metodoPagoId: '',
+  apartadoId: '',
 }
 
 function fieldClass(err?: string) {
@@ -62,6 +66,14 @@ export default function AhorroPage() {
 
   const [deleteTargetId, setDeleteTargetId] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  const [apartadoModalOpen, setApartadoModalOpen] = useState(false)
+  const [editingApartado, setEditingApartado] = useState<ApartadoInfo | null>(null)
+  const [apartadoForm, setApartadoForm] = useState({ nombre: '', metaMonto: '' })
+  const [apartadoFormErrors, setApartadoFormErrors] = useState<Record<string, string>>({})
+  const [savingApartado, setSavingApartado] = useState(false)
+  const [deleteApartadoId, setDeleteApartadoId] = useState<number | null>(null)
+  const [deletingApartado, setDeletingApartado] = useState(false)
 
   const fetchAhorro = useCallback(async () => {
     setLoading(true)
@@ -98,13 +110,14 @@ export default function AhorroPage() {
 
   function openEdit(tx: Transaccion) {
     setEditingTx(tx)
-    setModalTipo(tx.tipo === 'Ingreso' ? 'retiro' : 'aportacion')
+    setModalTipo(tx.direccion === 'Retiro' ? 'retiro' : 'aportacion')
     setForm({
       fecha: tx.fecha.split('T')[0],
       quincenaId: tx.quincenaId.toString(),
       descripcion: tx.descripcion,
       monto: tx.monto.toString(),
       metodoPagoId: tx.metodoPagoId?.toString() ?? '',
+      apartadoId: tx.apartadoId?.toString() ?? '',
     })
     setFormErrors({})
     setModalOpen(true)
@@ -128,7 +141,9 @@ export default function AhorroPage() {
         quincenaId: form.quincenaId,
         descripcion: form.descripcion.trim() || (modalTipo === 'retiro' ? 'Retiro de ahorro' : 'Aportación a ahorro'),
         categoriaId: catAhorroId,
-        tipo: modalTipo === 'retiro' ? 'Ingreso' : 'Gasto',
+        tipo: 'Ahorro',
+        direccion: modalTipo === 'retiro' ? 'Retiro' : 'Aporte',
+        apartadoId: form.apartadoId || null,
         monto: form.monto,
         metodoPagoId: form.metodoPagoId || null,
         estatus: 'Pagado',
@@ -161,6 +176,69 @@ export default function AhorroPage() {
       toast('Error al eliminar', 'error')
     } finally {
       setDeleting(false)
+    }
+  }
+
+  function openCreateApartado() {
+    setEditingApartado(null)
+    setApartadoForm({ nombre: '', metaMonto: '' })
+    setApartadoFormErrors({})
+    setApartadoModalOpen(true)
+  }
+
+  function openEditApartado(a: ApartadoInfo) {
+    setEditingApartado(a)
+    setApartadoForm({ nombre: a.nombre, metaMonto: a.metaMonto != null ? a.metaMonto.toString() : '' })
+    setApartadoFormErrors({})
+    setApartadoModalOpen(true)
+  }
+
+  function validateApartado() {
+    const errors: Record<string, string> = {}
+    if (!apartadoForm.nombre.trim()) errors.nombre = 'Requerido'
+    if (apartadoForm.metaMonto && Number(apartadoForm.metaMonto) <= 0) errors.metaMonto = 'Debe ser mayor a 0'
+    return errors
+  }
+
+  async function handleSaveApartado() {
+    const errors = validateApartado()
+    if (Object.keys(errors).length) { setApartadoFormErrors(errors); return }
+    setSavingApartado(true)
+    try {
+      const body = { nombre: apartadoForm.nombre.trim(), metaMonto: apartadoForm.metaMonto || null }
+      const res = editingApartado
+        ? await fetch(`/api/apartados/${editingApartado.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        : await fetch('/api/apartados', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error)
+      }
+      toast(editingApartado ? 'Apartado actualizado' : 'Apartado creado')
+      setApartadoModalOpen(false)
+      fetchAhorro()
+    } catch (e) {
+      toast(e instanceof Error && e.message ? e.message : 'Error al guardar', 'error')
+    } finally {
+      setSavingApartado(false)
+    }
+  }
+
+  async function handleDeleteApartado() {
+    if (deleteApartadoId == null) return
+    setDeletingApartado(true)
+    try {
+      const res = await fetch(`/api/apartados/${deleteApartadoId}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        throw new Error(data?.error)
+      }
+      toast('Apartado eliminado')
+      setDeleteApartadoId(null)
+      fetchAhorro()
+    } catch (e) {
+      toast(e instanceof Error && e.message ? e.message : 'Error al eliminar', 'error')
+    } finally {
+      setDeletingApartado(false)
     }
   }
 
@@ -232,6 +310,18 @@ export default function AhorroPage() {
           </select>
         </div>
 
+        <div>
+          <Label htmlFor="a-apartado">Apartado</Label>
+          <select id="a-apartado" value={form.apartadoId}
+            onChange={e => setForm(f => ({ ...f, apartadoId: e.target.value }))}
+            className={fieldClass()}>
+            <option value="">General (sin apartado)</option>
+            {(data?.porApartado ?? []).filter(p => p.apartado).map(p => (
+              <option key={p.apartado!.id} value={p.apartado!.id}>{p.apartado!.nombre}</option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex gap-3 justify-end pt-2">
           <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
             className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
@@ -257,6 +347,107 @@ export default function AhorroPage() {
       confirmLabel="Eliminar"
       onConfirm={handleDelete}
       loading={deleting}
+    />
+  )
+
+  const apartadosSection = (
+    <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Apartados</h3>
+        <button onClick={openCreateApartado}
+          className="flex items-center gap-1 text-xs text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 px-2.5 py-1.5 rounded-lg cursor-pointer font-medium transition-colors">
+          <Plus size={13} />
+          Nuevo apartado
+        </button>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {(data?.porApartado ?? []).map(p => {
+          const meta = p.apartado?.metaMonto != null ? Number(p.apartado.metaMonto) : null
+          const progreso = meta ? Math.min(100, Math.max(0, (p.balance / meta) * 100)) : null
+          return (
+            <div key={p.apartado?.id ?? 'general'}
+              className="rounded-xl border border-slate-100 dark:border-slate-700 p-3">
+              <div className="flex items-start justify-between gap-2 mb-1.5">
+                <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
+                  {p.apartado?.nombre ?? 'General'}
+                </p>
+                {p.apartado && (
+                  <div className="flex items-center gap-0.5 shrink-0">
+                    <button onClick={() => openEditApartado(p.apartado!)} aria-label="Editar apartado"
+                      className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-md cursor-pointer transition-colors">
+                      <Pencil size={12} />
+                    </button>
+                    <button onClick={() => setDeleteApartadoId(p.apartado!.id)} aria-label="Eliminar apartado"
+                      className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-md cursor-pointer transition-colors">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                )}
+              </div>
+              <p className="text-xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">{formatMXN(p.balance)}</p>
+              {meta != null && (
+                <div className="mt-2">
+                  <div className="h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
+                    <div className="h-full bg-blue-500 rounded-full" style={{ width: `${progreso}%` }} />
+                  </div>
+                  <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 flex items-center gap-1">
+                    <Target size={11} /> Meta {formatMXN(meta)}
+                  </p>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {(data?.porApartado ?? []).filter(p => p.apartado).length === 0 && (
+        <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+          Crea un apartado para organizar tu ahorro en metas, como en un banco.
+        </p>
+      )}
+    </div>
+  )
+
+  const apartadoFormModal = (
+    <FormModal open={apartadoModalOpen} onOpenChange={setApartadoModalOpen}
+      title={editingApartado ? 'Editar apartado' : 'Nuevo apartado'}>
+      <div className="space-y-4">
+        <div>
+          <Label htmlFor="ap-nombre">Nombre *</Label>
+          <input id="ap-nombre" type="text" placeholder="Ej: Vacaciones, Fondo de emergencia..."
+            value={apartadoForm.nombre} onChange={e => setApartadoForm(f => ({ ...f, nombre: e.target.value }))}
+            className={fieldClass(apartadoFormErrors.nombre)} />
+          {apartadoFormErrors.nombre && <p className="text-xs text-rose-500 mt-1">{apartadoFormErrors.nombre}</p>}
+        </div>
+        <div>
+          <Label htmlFor="ap-meta">Meta (MXN)</Label>
+          <input id="ap-meta" type="number" min="0" step="0.01" placeholder="Opcional"
+            value={apartadoForm.metaMonto} onChange={e => setApartadoForm(f => ({ ...f, metaMonto: e.target.value }))}
+            className={fieldClass(apartadoFormErrors.metaMonto)} />
+          {apartadoFormErrors.metaMonto && <p className="text-xs text-rose-500 mt-1">{apartadoFormErrors.metaMonto}</p>}
+        </div>
+        <div className="flex gap-3 justify-end pt-2">
+          <button type="button" onClick={() => setApartadoModalOpen(false)} disabled={savingApartado}
+            className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer">
+            Cancelar
+          </button>
+          <button type="button" onClick={handleSaveApartado} disabled={savingApartado}
+            className="px-5 py-2 text-sm text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[110px] bg-indigo-600 hover:bg-indigo-700">
+            {savingApartado ? 'Guardando...' : editingApartado ? 'Guardar cambios' : 'Crear'}
+          </button>
+        </div>
+      </div>
+    </FormModal>
+  )
+
+  const apartadoDeleteDialog = (
+    <ConfirmDialog
+      open={deleteApartadoId != null}
+      onOpenChange={open => !open && setDeleteApartadoId(null)}
+      title="Eliminar apartado"
+      description="Esta acción no se puede deshacer. Solo se puede eliminar un apartado sin movimientos asociados."
+      confirmLabel="Eliminar"
+      onConfirm={handleDeleteApartado}
+      loading={deletingApartado}
     />
   )
 
@@ -286,7 +477,10 @@ export default function AhorroPage() {
           <p className="font-medium text-slate-600 dark:text-slate-400">Sin movimientos de ahorro</p>
           <p className="text-sm mt-1">Registra una aportación para empezar</p>
         </div>
+        {apartadosSection}
         {formModal}
+        {apartadoFormModal}
+        {apartadoDeleteDialog}
       </div>
     )
   }
@@ -308,6 +502,8 @@ export default function AhorroPage() {
           <p className="text-3xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">{formatMXN(data.total)}</p>
         </div>
       </div>
+
+      {apartadosSection}
 
       {/* Desglose por quincena */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
@@ -357,7 +553,7 @@ export default function AhorroPage() {
           {data.transacciones.map(t => (
             <div key={t.id} className="px-4 py-3 flex items-center justify-between gap-3">
               <div className="min-w-0 flex items-center gap-2">
-                {t.tipo === 'Ingreso'
+                {t.direccion === 'Retiro'
                   ? <TrendingDown size={16} className="text-rose-500 shrink-0" />
                   : <TrendingUp size={16} className="text-emerald-500 shrink-0" />}
                 <div className="min-w-0">
@@ -367,8 +563,8 @@ export default function AhorroPage() {
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 <div className="text-right">
-                  <p className={`font-semibold tabular-nums ${t.tipo === 'Ingreso' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                    {t.tipo === 'Ingreso' ? '-' : '+'}{formatMXN(Number(t.monto))}
+                  <p className={`font-semibold tabular-nums ${t.direccion === 'Retiro' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {t.direccion === 'Retiro' ? '-' : '+'}{formatMXN(Number(t.monto))}
                   </p>
                   <p className="text-xs text-slate-400 dark:text-slate-500 tabular-nums">saldo {formatMXN(t.balanceAcumulado)}</p>
                 </div>
@@ -390,6 +586,8 @@ export default function AhorroPage() {
 
       {formModal}
       {deleteDialog}
+      {apartadoFormModal}
+      {apartadoDeleteDialog}
     </div>
   )
 }
