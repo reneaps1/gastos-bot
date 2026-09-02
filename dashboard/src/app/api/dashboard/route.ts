@@ -60,7 +60,7 @@ export async function GET(request: Request) {
 
     const whereClause = quincenaActual ? { quincenaId: quincenaActual.id } : { id: -1 }
 
-    const [ingresos, gastos, ahorros] = await Promise.all([
+    const [ingresos, gastos, aportesAhorro, retirosAhorro] = await Promise.all([
       prisma.transaccion.aggregate({
         where: { ...whereClause, tipo: 'Ingreso' },
         _sum: { monto: true },
@@ -70,10 +70,18 @@ export async function GET(request: Request) {
         _sum: { monto: true },
       }),
       prisma.transaccion.aggregate({
-        where: { ...whereClause, tipo: 'Ahorro' },
+        where: { ...whereClause, tipo: 'Ahorro', direccion: 'Aporte' },
+        _sum: { monto: true },
+      }),
+      prisma.transaccion.aggregate({
+        where: { ...whereClause, tipo: 'Ahorro', direccion: 'Retiro' },
         _sum: { monto: true },
       }),
     ])
+    // Aporte suma, Retiro resta -- ver @/lib/transaccion-ahorro. Toda
+    // transaccion de categoria Ahorro comparte tipo:'Ahorro', asi que un
+    // blind SUM inflaria el total en vez de netear los retiros.
+    const ahorros = Number(aportesAhorro._sum.monto ?? 0) - Number(retirosAhorro._sum.monto ?? 0)
 
     return NextResponse.json({
       quincenaActual,
@@ -84,8 +92,8 @@ export async function GET(request: Request) {
       metricas: {
         ingresos: Number(ingresos._sum.monto ?? 0),
         gastos: Number(gastos._sum.monto ?? 0),
-        ahorros: Number(ahorros._sum.monto ?? 0),
-        balance: Number(ingresos._sum.monto ?? 0) - Number(gastos._sum.monto ?? 0) - Number(ahorros._sum.monto ?? 0),
+        ahorros,
+        balance: Number(ingresos._sum.monto ?? 0) - Number(gastos._sum.monto ?? 0) - ahorros,
       },
     })
   } catch (error) {

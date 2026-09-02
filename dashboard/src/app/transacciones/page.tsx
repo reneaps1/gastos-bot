@@ -34,6 +34,7 @@ interface Credito { id: number; nombre: string; tipoCredito: string; acreedor: s
 interface PresupuestoOption { id: number; descripcion: string; montoEfectivo: number }
 interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: 'Gasto' | 'Ingreso' | 'Ahorro'
+  direccion: 'Aporte' | 'Retiro' | null
   monto: number; estatus: 'Pagado' | 'Pendiente'; notas: string | null
   categoria: Categoria; user: User | null; quincena: Quincena; metodoPago: MetodoPago | null
   presupuesto: { id: number; descripcion: string } | null
@@ -43,7 +44,7 @@ interface Transaccion {
 
 const EMPTY_FORM = {
   fecha: getMexicoDateString(), descripcion: '', categoriaId: '',
-  tipo: 'Gasto', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
+  tipo: 'Gasto', direccion: 'Aporte', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
   creditoId: '', totalPagos: '', fechaPagoProgramada: '',
   estatus: 'Pendiente', notas: '', presupuestoId: '',
 }
@@ -218,7 +219,7 @@ export default function TransaccionesPage() {
     setDetailTx(null)
     setForm({
       fecha: tx.fecha.split('T')[0], descripcion: tx.descripcion,
-      categoriaId: tx.categoriaId.toString(), tipo: tx.tipo,
+      categoriaId: tx.categoriaId.toString(), tipo: tx.tipo, direccion: tx.direccion ?? 'Aporte',
       monto: tx.monto.toString(), quincenaId: tx.quincenaId.toString(),
       userId: tx.userId?.toString() ?? '', metodoPagoId: tx.metodoPagoId?.toString() ?? '',
       creditoId: tx.creditoId?.toString() ?? '', totalPagos: '', fechaPagoProgramada: '',
@@ -252,7 +253,8 @@ export default function TransaccionesPage() {
     try {
       const body = {
         fecha: form.fecha, descripcion: form.descripcion.trim(), categoriaId: form.categoriaId,
-        tipo: form.tipo, monto: form.monto, quincenaId: form.quincenaId, quincenaConsumoId: form.quincenaId,
+        tipo: form.tipo, direccion: esAhorro ? form.direccion : null,
+        monto: form.monto, quincenaId: form.quincenaId, quincenaConsumoId: form.quincenaId,
         userId: form.userId || null, metodoPagoId: form.metodoPagoId || null, creditoId: form.creditoId || null,
         totalPagos: form.totalPagos || null, fechaPagoProgramada: form.fechaPagoProgramada || null,
         estatus: form.estatus, notas: form.notas || null, source: 'dashboard',
@@ -342,6 +344,10 @@ export default function TransaccionesPage() {
   const fechaEnGap = form.fecha ? isDateInQuincenaGap(quincenas, form.fecha) : false
   const selectedMetodo = metodosPago.find(m => m.id.toString() === form.metodoPagoId)
   const isCredito = selectedMetodo?.nombre === 'Credito'
+  // Categoria "Ahorro" siempre implica tipo:'Ahorro' -- la direccion
+  // (aporte/retiro) sustituye al select de Tipo. Ver @/lib/transaccion-ahorro.
+  const categoriaSeleccionada = categorias.find(c => c.id.toString() === form.categoriaId)
+  const esAhorro = categoriaSeleccionada?.tipo === 'Ahorro'
 
   return (
     <div className="space-y-6">
@@ -729,19 +735,39 @@ export default function TransaccionesPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="tx-categoria">Categoría *</Label>
-              <select id="tx-categoria" value={form.categoriaId} onChange={e => setForm(f => ({ ...f, categoriaId: e.target.value, presupuestoId: '' }))} className={fieldClass(formErrors.categoriaId)}>
+              <select id="tx-categoria" value={form.categoriaId} onChange={e => {
+                const catId = e.target.value
+                const cat = categorias.find(c => c.id.toString() === catId)
+                setForm(f => ({
+                  ...f,
+                  categoriaId: catId,
+                  presupuestoId: '',
+                  tipo: cat?.tipo === 'Ahorro' ? 'Ahorro' : (f.tipo === 'Ahorro' ? 'Gasto' : f.tipo),
+                }))
+              }} className={fieldClass(formErrors.categoriaId)}>
                 <option value="">Seleccionar...</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
               {formErrors.categoriaId && <p className="text-xs text-rose-500 mt-1">{formErrors.categoriaId}</p>}
             </div>
             <div>
-              <Label htmlFor="tx-tipo">Tipo *</Label>
-              <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} className={fieldClass(formErrors.tipo)}>
-                <option value="Gasto">Gasto</option>
-                <option value="Ingreso">Ingreso</option>
-                <option value="Ahorro">Ahorro</option>
-              </select>
+              {esAhorro ? (
+                <>
+                  <Label htmlFor="tx-direccion">Dirección *</Label>
+                  <select id="tx-direccion" value={form.direccion} onChange={e => setForm(f => ({ ...f, direccion: e.target.value }))} className={fieldClass()}>
+                    <option value="Aporte">Aporte (suma al ahorro)</option>
+                    <option value="Retiro">Retiro (resta del ahorro)</option>
+                  </select>
+                </>
+              ) : (
+                <>
+                  <Label htmlFor="tx-tipo">Tipo *</Label>
+                  <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} className={fieldClass(formErrors.tipo)}>
+                    <option value="Gasto">Gasto</option>
+                    <option value="Ingreso">Ingreso</option>
+                  </select>
+                </>
+              )}
             </div>
           </div>
           <div>

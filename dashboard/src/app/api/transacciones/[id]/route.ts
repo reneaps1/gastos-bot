@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
 
 export async function GET(
   request: Request,
@@ -40,7 +41,27 @@ export async function PUT(
     }
 
     const body = await request.json()
-    const { fecha, quincenaId, userId, descripcion, categoriaId, tipo, monto, metodoPagoId, estatus, notas, presupuestoId } = body
+    const { fecha, quincenaId, userId, descripcion, categoriaId, tipo, direccion, apartadoId, monto, metodoPagoId, estatus, notas, presupuestoId } = body
+
+    // Si cambia la categoria, el tipo, o la direccion, hay que re-resolver
+    // contra la categoria efectiva para que una transaccion de "Ahorro"
+    // nunca pueda terminar con otro tipo (ver @/lib/transaccion-ahorro).
+    let tipoResuelto: string | undefined
+    let direccionResuelta: string | null | undefined
+    if (categoriaId !== undefined || tipo !== undefined || direccion !== undefined) {
+      const current = await prisma.transaccion.findUnique({ where: { id }, select: { categoriaId: true } })
+      if (!current) {
+        return NextResponse.json({ error: 'Transacción not found' }, { status: 404 })
+      }
+      const effectiveCategoriaId = categoriaId ? parseInt(categoriaId) : current.categoriaId
+      const categoria = await prisma.categoria.findUnique({ where: { id: effectiveCategoriaId } })
+      if (!categoria) {
+        return NextResponse.json({ error: 'Categoria not found' }, { status: 400 })
+      }
+      const resuelto = resolverTipoYDireccion(categoria.tipo, tipo, direccion)
+      tipoResuelto = resuelto.tipo
+      direccionResuelta = resuelto.direccion
+    }
 
     const transaccion = await prisma.transaccion.update({
       where: { id },
@@ -50,7 +71,8 @@ export async function PUT(
         ...(userId !== undefined && { userId: userId ? parseInt(userId) : null }),
         ...(descripcion && { descripcion }),
         ...(categoriaId && { categoriaId: parseInt(categoriaId) }),
-        ...(tipo && { tipo }),
+        ...(tipoResuelto !== undefined && { tipo: tipoResuelto, direccion: direccionResuelta }),
+        ...(apartadoId !== undefined && { apartadoId: apartadoId ? parseInt(apartadoId) : null }),
         ...(monto !== undefined && { monto: parseFloat(monto) }),
         ...(metodoPagoId !== undefined && { metodoPagoId: metodoPagoId ? parseInt(metodoPagoId) : null }),
         ...(estatus && { estatus }),
