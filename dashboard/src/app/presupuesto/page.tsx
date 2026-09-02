@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRightLeft, Coins } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
@@ -198,6 +198,12 @@ export default function PresupuestoPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [quincenaId, setQuincenaId] = useState('')
   const [quincenaActual, setQuincenaActual] = useState<Quincena | null>(null)
+  // Quincenas adicionales combinadas con `quincenaId` via Ctrl/Cmd+clic en
+  // los chips (vista Tarjetas). `quincenaId` sigue siendo "la" quincena para
+  // todo lo que solo tiene sentido para una sola (encabezado, Liquidez,
+  // Reporte, cierre de quincena) -- esto solo amplia que datos entran a los
+  // fetches y a las cards resumen.
+  const [extraQuincenaIds, setExtraQuincenaIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -276,8 +282,25 @@ export default function PresupuestoPage() {
 
   function selectQuincena(id: string) {
     setQuincenaId(id)
+    setExtraQuincenaIds(new Set())
     persistQuincenaId(id)
   }
+
+  function toggleExtraQuincena(id: string) {
+    if (id === quincenaId) return
+    setExtraQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Todas las quincenas combinadas para la vista Tarjetas: la primaria mas
+  // las agregadas via Ctrl/Cmd+clic.
+  const selectedQuincenaIds = useMemo(() => {
+    return Array.from(new Set([quincenaId, ...extraQuincenaIds].filter(Boolean)))
+  }, [quincenaId, extraQuincenaIds])
 
   const fetchPresupuestosTabla = useCallback(async () => {
     setTablaLoading(true)
@@ -343,26 +366,34 @@ export default function PresupuestoPage() {
   }
 
   const fetchPresupuestos = useCallback(async () => {
-    if (!quincenaId) return
+    if (selectedQuincenaIds.length === 0) return
     setLoading(true)
     try {
-      const [presupRes, txRes] = await Promise.all([
-        fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
-        fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=500`),
-      ])
-      const data: Presupuesto[] = await presupRes.json()
-      const txData = await txRes.json()
-      const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> = txData.data ?? []
+      // Un fetch por quincena seleccionada y se concatenan los resultados --
+      // calcularFaltaPorPagar/buildGrupos ya son agnosticos a quincena (cada
+      // fila trae su propio quincenaId), asi que combinan solas sin tocar
+      // los endpoints ni esas funciones.
+      const porQuincena = await Promise.all(selectedQuincenaIds.map(async id => {
+        const [presupRes, txRes] = await Promise.all([
+          fetch(`/api/presupuestos?quincenaId=${id}`),
+          fetch(`/api/transacciones?quincenaId=${id}&limit=500`),
+        ])
+        return { data: await presupRes.json() as Presupuesto[], txData: await txRes.json() }
+      }))
+
+      const data = porQuincena.flatMap(r => r.data)
+      const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> =
+        porQuincena.flatMap(r => r.txData.data ?? [])
 
       setPresupuestos(data)
-      setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
+      setQuincenaActual(quincenas.find(q => q.id.toString() === quincenaId) ?? data.find(p => p.quincenaId.toString() === quincenaId)?.quincena ?? null)
 
       setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
-      setGastoParaLimite(Number(txData.totales?.GastoParaLimite ?? 0))
+      setGastoParaLimite(porQuincena.reduce((s, r) => s + Number(r.txData.totales?.GastoParaLimite ?? 0), 0))
 
       setPendientePorPagar(calcularFaltaPorPagar(data))
     } finally { setLoading(false) }
-  }, [quincenaId, quincenas])
+  }, [selectedQuincenaIds, quincenaId, quincenas])
 
   useEffect(() => { fetchPresupuestos() }, [fetchPresupuestos])
 
@@ -583,12 +614,23 @@ export default function PresupuestoPage() {
 
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
+  const multiSelectActivo = selectedQuincenaIds.length > 1
   // Limite de referencia efectivo: el override propio de esta quincena
   // (configurable en Presupuesto → Análisis) si existe, si no el global de
-  // Configuración → Períodos de pago.
+  // Configuración → Períodos de pago. Con varias quincenas combinadas, se
+  // suma el limite efectivo de cada una (el "personalizado" pierde sentido
+  // cuando son varias, asi que solo se muestra con una sola seleccionada).
   const refEfectiva = resolveReferencia(qInfo, { limiteGastoReferencia: limiteReferencia })
-  // Presupuestos ya viene acotado a quincenaId (Tarjetas), asi que esto da a
-  // lo mas un grupo: el de la quincena seleccionada, si le falta cerrar algo.
+  const limiteGastoReferenciaEfectivo = multiSelectActivo
+    ? (() => {
+        const valores = selectedQuincenaIds
+          .map(id => resolveReferencia(quincenas.find(q => q.id.toString() === id), { limiteGastoReferencia: limiteReferencia }).limiteGastoReferencia)
+          .filter((v): v is number => v != null)
+        return valores.length > 0 ? valores.reduce((s, v) => s + v, 0) : null
+      })()
+    : refEfectiva.limiteGastoReferencia
+  // Presupuestos puede traer varias quincenas combinadas (Tarjetas con
+  // Ctrl/Cmd+clic); cada grupo de cierre queda por su propia quincena.
   const gruposCierre = quincenasPendientesDeCierre(presupuestos, today)
   const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
   const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
@@ -607,6 +649,11 @@ export default function PresupuestoPage() {
               {qInfo.codigo} · {formatDateStr(qInfo.fechaInicio, { day: '2-digit', month: 'long' })}
               {' — '}
               {formatDateStr(qInfo.fechaFin, { day: '2-digit', month: 'long' })}
+              {multiSelectActivo && (
+                <span className="ml-1.5 text-indigo-500 dark:text-indigo-400 font-medium">
+                  + {selectedQuincenaIds.length - 1} combinada{selectedQuincenaIds.length - 1 === 1 ? '' : 's'}
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -710,13 +757,26 @@ export default function PresupuestoPage() {
       ) : (
         <>
       {/* Selector de quincena */}
-      <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} />
+      <div className="flex items-center flex-wrap gap-2">
+        <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena}
+          extraSelectedIds={extraQuincenaIds} onToggleExtra={toggleExtraQuincena} />
+        {multiSelectActivo ? (
+          <button onClick={() => setExtraQuincenaIds(new Set())}
+            className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+            Quitar combinación
+          </button>
+        ) : (
+          <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+            Ctrl/Cmd+clic para combinar quincenas
+          </span>
+        )}
+      </div>
 
       <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className={`grid grid-cols-1 gap-4 ${refEfectiva.limiteGastoReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+        <div className={`grid grid-cols-1 gap-4 ${limiteGastoReferenciaEfectivo != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
           <KpiCard
             label="Ingresos" value={formatMXN(totalIngresoReal)}
             subtitle={`de ${formatMXN(totalIngresoPresupuestado)} presupuestado`}
@@ -770,15 +830,18 @@ export default function PresupuestoPage() {
             </p>
           </div>
 
-          {refEfectiva.limiteGastoReferencia != null && (() => {
-            const limiteEfectivo = refEfectiva.limiteGastoReferencia!
+          {limiteGastoReferenciaEfectivo != null && (() => {
+            const limiteEfectivo = limiteGastoReferenciaEfectivo!
             const pctLimite = limiteEfectivo > 0 ? (gastoParaLimite / limiteEfectivo) * 100 : 0
             return (
               <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1">
                   Límite de referencia
-                  {refEfectiva.limiteEsOverride && (
+                  {!multiSelectActivo && refEfectiva.limiteEsOverride && (
                     <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">personalizado</span>
+                  )}
+                  {multiSelectActivo && (
+                    <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">combinado</span>
                   )}
                   <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago, o personalizado para esta quincena en Presupuesto → Análisis). Es solo informativo, no bloquea nada.">ⓘ</span>
                 </p>
