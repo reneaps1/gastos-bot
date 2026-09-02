@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle, Download } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
@@ -88,6 +88,9 @@ export default function TransaccionesPage() {
   const [exporting, setExporting] = useState(false)
 
   const [quincenaId, setQuincenaId] = useState('')
+  // Quincenas extra combinadas via Ctrl/Cmd+clic (mismo patron que en
+  // Presupuesto). Sin efecto si quincenaId === ALL_QUINCENAS.
+  const [extraQuincenaIds, setExtraQuincenaIds] = useState<Set<string>>(new Set())
   const [tipo, setTipo] = useState('')
   const [categoriaId, setCategoriaId] = useState('')
   const [userId, setUserId] = useState('')
@@ -138,15 +141,35 @@ export default function TransaccionesPage() {
 
   function selectQuincena(id: string) {
     setQuincenaId(id)
+    setExtraQuincenaIds(new Set())
     setPage(1)
     if (id !== ALL_QUINCENAS) persistQuincenaId(id)
   }
+
+  function toggleExtraQuincena(id: string) {
+    if (id === quincenaId || quincenaId === ALL_QUINCENAS) return
+    setExtraQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    setPage(1)
+  }
+
+  // Todas las quincenas combinadas: la primaria mas las agregadas via
+  // Ctrl/Cmd+clic. Si la primaria es "Todas" (ALL_QUINCENAS), no hay nada
+  // que combinar -- ya trae todo.
+  const selectedQuincenaIds = useMemo(() => {
+    if (quincenaId === ALL_QUINCENAS) return []
+    return Array.from(new Set([quincenaId, ...extraQuincenaIds].filter(Boolean)))
+  }, [quincenaId, extraQuincenaIds])
 
   const fetchTxs = useCallback(async () => {
     if (!quincenaId) { setLoading(false); return }
     setLoading(true)
     const params = new URLSearchParams()
-    if (quincenaId && quincenaId !== ALL_QUINCENAS) params.set('quincenaId', quincenaId)
+    for (const id of selectedQuincenaIds) params.append('quincenaId', id)
     if (tipo) params.set('tipo', tipo)
     if (categoriaId) params.set('categoriaId', categoriaId)
     if (userId) params.set('userId', userId)
@@ -162,7 +185,7 @@ export default function TransaccionesPage() {
       setTotal(json.pagination?.total ?? 0)
       setTotales(json.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 })
     } finally { setLoading(false) }
-  }, [quincenaId, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
+  }, [quincenaId, selectedQuincenaIds, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void fetchTxs() }, 0)
@@ -301,7 +324,7 @@ export default function TransaccionesPage() {
     setExporting(true)
     try {
       const params = new URLSearchParams()
-      if (quincenaId && quincenaId !== ALL_QUINCENAS) params.set('quincenaId', quincenaId)
+      for (const id of selectedQuincenaIds) params.append('quincenaId', id)
       if (tipo) params.set('tipo', tipo)
       if (categoriaId) params.set('categoriaId', categoriaId)
       if (userId) params.set('userId', userId)
@@ -367,7 +390,20 @@ export default function TransaccionesPage() {
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
         {/* Chips de quincena */}
-        <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} showAll />
+        <div className="flex items-center flex-wrap gap-2">
+          <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} showAll
+            extraSelectedIds={extraQuincenaIds} onToggleExtra={toggleExtraQuincena} />
+          {extraQuincenaIds.size > 0 ? (
+            <button onClick={() => { setExtraQuincenaIds(new Set()); setPage(1) }}
+              className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+              Quitar combinación
+            </button>
+          ) : quincenaId !== ALL_QUINCENAS ? (
+            <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+              Ctrl/Cmd+clic para combinar quincenas
+            </span>
+          ) : null}
+        </div>
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-2">
           <FilterChip value={tipo} onChange={v => { setTipo(v); setPage(1) }} onClear={() => { setTipo(''); setPage(1) }} placeholder="Tipo">
