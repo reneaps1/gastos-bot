@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { cerrarSiCorresponde, conNota } from '@/lib/cierre-quincena-server'
+import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
 
 export async function POST(
   request: Request,
@@ -35,6 +36,12 @@ export async function POST(
       if (!fecha || monto === undefined) {
         return NextResponse.json({ error: 'fecha y monto son requeridos' }, { status: 400 })
       }
+      // 'Gasto' es el default correcto para la enorme mayoria de lineas, pero
+      // una linea presupuestada con categoria "Ahorro" (o Ingreso) no puede
+      // registrarse como Gasto sin quedar invisible en las cards que agregan
+      // por tipo — ver @/lib/transaccion-ahorro. Al resolver via
+      // "registrar_pagado" siempre se trata como Aporte (nunca retiro).
+      const { tipo: tipoResuelto, direccion } = resolverTipoYDireccion(current.categoria.tipo, 'Gasto', 'Aporte')
       await prisma.transaccion.create({
         data: {
           fecha: new Date(fecha),
@@ -42,7 +49,8 @@ export async function POST(
           quincenaConsumoId: current.quincenaId,
           descripcion: current.descripcion,
           categoriaId: current.categoriaId,
-          tipo: 'Gasto',
+          tipo: tipoResuelto,
+          direccion,
           monto: parseFloat(monto),
           estatus: 'Pagado',
           source: 'cierre-quincena',

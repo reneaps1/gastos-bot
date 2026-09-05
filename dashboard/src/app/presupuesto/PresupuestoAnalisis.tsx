@@ -7,6 +7,7 @@ import { useToast } from '@/components/Toast'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { QuincenaChips } from '@/components/ui/QuincenaChips'
+import { QuincenaRangeSlider } from '@/components/ui/QuincenaRangeSlider'
 import { resolveReferencia, normalizeReferencia, type ReferenciaValores } from '@/lib/referencia'
 import { colorForCategoria } from '@/lib/category-colors'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
@@ -72,14 +73,19 @@ function quincenasEnRango(quincenas: Quincena[], desdeId: string, hastaId: strin
   return ordenadas.slice(lo, hi + 1)
 }
 
-// Ultimas hasta-6 quincenas ya iniciadas, mismo criterio que usaba el preset
-// "Ultimas 6" -- sirve de default inicial para Desde/Hasta.
+// Rango centrado en la quincena actual: Q actual -1 (inicio) a Q actual +3
+// (fin) -- sirve de default inicial para Desde/Hasta. "Actual" usa el mismo
+// criterio que getDefaultQuincenaId (lib/quincena-selection.ts): la que
+// tiene hoy adentro, si no la siguiente por venir, si no la ultima.
 function defaultDesdeHasta(quincenas: Quincena[], today: string): { desde: string; hasta: string } | null {
   const ordenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
-  const empezadas = ordenadas.filter(q => q.fechaInicio <= today)
-  if (empezadas.length === 0) return null
-  const ultimas = empezadas.slice(-6)
-  return { desde: ultimas[0].id.toString(), hasta: ultimas[ultimas.length - 1].id.toString() }
+  if (ordenadas.length === 0) return null
+  const actualIdx = ordenadas.findIndex(q => q.fechaInicio <= today && today <= q.fechaFin)
+  const idx = actualIdx !== -1 ? actualIdx : ordenadas.findIndex(q => today <= q.fechaFin)
+  const base = idx !== -1 ? idx : ordenadas.length - 1
+  const desdeIdx = Math.max(0, base - 1)
+  const hastaIdx = Math.min(ordenadas.length - 1, base + 3)
+  return { desde: ordenadas[desdeIdx].id.toString(), hasta: ordenadas[hastaIdx].id.toString() }
 }
 
 function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global: ReferenciaValores, today: string): BalancePorQ[] {
@@ -333,8 +339,10 @@ export function PresupuestoAnalisis({
     })
   }
   // Colapsar/expandir toda la tabla, sin afectar expandedQ (el detalle por
-  // fila que estaba abierto sigue abierto al volver a expandir).
-  const [tablaColapsada, setTablaColapsada] = useState(false)
+  // fila que estaba abierto sigue abierto al volver a expandir). Colapsada
+  // por default -- Análisis se usa mas por la gráfica/analítica de arriba,
+  // esta tabla es un detalle que el usuario abre bajo demanda.
+  const [tablaColapsada, setTablaColapsada] = useState(true)
 
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
@@ -614,20 +622,11 @@ export function PresupuestoAnalisis({
       </div>
 
       {/* Filtros */}
-      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex flex-wrap items-end gap-3">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
         <div>
-          <Label htmlFor="an-desde">Desde</Label>
-          <select id="an-desde" value={desdeId} onChange={e => setDesdeId(e.target.value)}
-            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-            {quincenasOrdenadas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
-          </select>
-        </div>
-        <div>
-          <Label htmlFor="an-hasta">Hasta</Label>
-          <select id="an-hasta" value={hastaId} onChange={e => setHastaId(e.target.value)}
-            className="text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-            {quincenasOrdenadas.map(q => <option key={q.id} value={q.id}>{q.codigo}</option>)}
-          </select>
+          <p className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">Rango de quincenas</p>
+          <QuincenaRangeSlider quincenas={quincenasOrdenadas} desdeId={desdeId} hastaId={hastaId}
+            onChange={(d, h) => { setDesdeId(d); setHastaId(h) }} />
         </div>
         <FilterChip value={categoriaId} onChange={setCategoriaId} onClear={() => setCategoriaId('')} placeholder="Categoría">
           {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}

@@ -1,7 +1,9 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ArrowRightLeft, ArrowUpDown, XCircle, Pencil } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
+import { getMexicoDateString } from '@/lib/quincena-selection'
+import { useToast } from '@/components/Toast'
 
 // Detalle de las transacciones que componen el real de una partida de
 // presupuesto. Consulta solo por presupuestoId (sin filtro de tipo), que es
@@ -17,7 +19,33 @@ export interface PartidaDetalle {
   montoEfectivo: number
   real: number
   categoriaNombre: string
+  categoriaTipo: string
+  estadoLinea: string
   quincenaCodigo: string
+  recurrenciaGrupoId: string | null
+}
+
+interface OcurrenciaSerie {
+  id: number
+  real: number
+  quincena: { fechaInicio: string; fechaFin: string }
+}
+
+// Mismo calculo que proyeccion() en PresupuestoAnalisis.tsx (promedio +
+// desviacion poblacional de las ultimas hasta-3 quincenas YA CERRADAS), pero
+// aplicado al real de las ocurrencias pasadas de esta serie recurrente en vez
+// de al gasto total de la quincena -- misma nocion de "cerrada" (fechaFin <
+// hoy), sin depender de que alguien haya corrido el wizard de cierre.
+function historialSerie(ocurrencias: OcurrenciaSerie[], today: string) {
+  const cerradas = ocurrencias
+    .filter(o => o.quincena.fechaFin < today)
+    .sort((a, b) => a.quincena.fechaInicio.localeCompare(b.quincena.fechaInicio))
+  const ultimas = cerradas.slice(-3)
+  if (ultimas.length === 0) return null
+  const valores = ultimas.map(o => o.real)
+  const promedio = valores.reduce((s, v) => s + v, 0) / valores.length
+  const varianza = valores.reduce((s, v) => s + (v - promedio) ** 2, 0) / valores.length
+  return { promedio, desviacion: Math.sqrt(varianza), n: ultimas.length }
 }
 
 interface TransaccionRow {
@@ -31,11 +59,31 @@ interface TransaccionRow {
   user: { nombre: string } | null
 }
 
-export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
+interface DetalleGastoProps {
+  partida: PartidaDetalle
+  onTraspasar?: () => void
+  // Ajustar monto y Cancelar generalizan acciones que hoy solo viven en el
+  // panel de triage de deficit / el wizard de cierre de quincena (mismos
+  // endpoints, sin restriccion de servidor -- ver plan). onAjustado deja que
+  // el padre actualice `detalleP` en vivo con el nuevo monto sin cerrar este
+  // modal; onCancelado cierra el modal (una linea Cancelada deja de tener
+  // sentido seguir inspeccionando aqui) y refresca las listas.
+  onAjustado?: (nuevoMontoRevisado: number) => void
+  onCancelado?: () => void
+  onEditar?: () => void
+}
+
+export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancelado, onEditar }: DetalleGastoProps) {
+  const { toast } = useToast()
   const [rows, setRows] = useState<TransaccionRow[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [historial, setHistorial] = useState<ReturnType<typeof historialSerie>>(null)
+  const [accionActiva, setAccionActiva] = useState<'ajustar' | 'cancelar' | null>(null)
+  const [montoAjuste, setMontoAjuste] = useState('')
+  const [notaCancelar, setNotaCancelar] = useState('')
+  const [guardando, setGuardando] = useState(false)
 
   // El componente se monta por partida (va con `key` en el caller), asi que el
   // estado ya arranca en loading y el efecto solo dispara el fetch: no hace
@@ -67,6 +115,22 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
     return () => { cancelado = true }
   }, [partida.id])
 
+  // Historial de esta serie recurrente: solo aplica si la partida pertenece a
+  // un grupo (ver recurrenciaGrupoId). Se pide aparte de las transacciones de
+  // arriba porque es una consulta distinta (otras partidas, no otras
+  // transacciones) y no toda partida es recurrente.
+  useEffect(() => {
+    if (!partida.recurrenciaGrupoId) { setHistorial(null); return }
+    let cancelado = false
+    fetch(`/api/presupuestos?recurrenciaGrupoId=${partida.recurrenciaGrupoId}`)
+      .then(res => res.ok ? res.json() : [])
+      .then((data: OcurrenciaSerie[]) => {
+        if (!cancelado) setHistorial(historialSerie(data, getMexicoDateString()))
+      })
+      .catch(() => { if (!cancelado) setHistorial(null) })
+    return () => { cancelado = true }
+  }, [partida.recurrenciaGrupoId])
+
   const presupuestado = partida.montoEfectivo
   const fueRevisado = partida.montoRevisado != null && Number(partida.montoRevisado) !== Number(partida.montoPresupuestado)
   const restante = presupuestado - partida.real
@@ -74,9 +138,133 @@ export function DetalleGastoContent({ partida }: { partida: PartidaDetalle }) {
   // usa /api/presupuestos, asi que deberia coincidir con `real`. Si no coincide
   // se avisa en vez de mostrar dos numeros distintos sin explicacion.
   const descuadre = !loading && !error && Math.abs(total - partida.real) > 0.01
+  const esGastoAbierta = partida.categoriaTipo === 'Gasto' && partida.estadoLinea === 'Abierta'
+  // Mismo criterio que el boton de traspaso en presupuesto/page.tsx: solo
+  // lineas de Gasto abiertas con saldo sin gastar pueden donar.
+  const puedeTraspasar = onTraspasar != null && esGastoAbierta && restante > 0
+  const puedeAjustar = onAjustado != null && esGastoAbierta
+  const puedeCancelar = onCancelado != null && esGastoAbierta
+
+  async function guardarAjuste() {
+    const nuevo = parseFloat(montoAjuste)
+    if (isNaN(nuevo) || nuevo < partida.real) {
+      toast(`No puede quedar por debajo de lo ya gastado (${formatMXN(partida.real)})`, 'error')
+      return
+    }
+    setGuardando(true)
+    try {
+      const res = await fetch(`/api/presupuestos/${partida.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ montoRevisado: nuevo }),
+      })
+      if (!res.ok) throw new Error()
+      toast('Monto ajustado')
+      setAccionActiva(null)
+      onAjustado?.(nuevo)
+    } catch {
+      toast('Error al ajustar el monto', 'error')
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function guardarCancelacion() {
+    setGuardando(true)
+    try {
+      const res = await fetch(`/api/presupuestos/${partida.id}/resolver`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accion: 'cancelar', nota: notaCancelar || undefined }),
+      })
+      if (!res.ok) throw new Error()
+      toast('Línea cancelada')
+      onCancelado?.()
+    } catch {
+      toast('Error al cancelar la línea', 'error')
+      setGuardando(false)
+    }
+  }
 
   return (
     <div>
+      {(onEditar || puedeAjustar || puedeTraspasar || puedeCancelar) && (
+        <div className="mb-3">
+          {accionActiva === null ? (
+            <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-1.5">
+              {onEditar && (
+                <button onClick={onEditar}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:underline cursor-pointer">
+                  <Pencil size={13} /> Editar
+                </button>
+              )}
+              {puedeAjustar && (
+                <button onClick={() => { setMontoAjuste(String(presupuestado)); setAccionActiva('ajustar') }}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                  <ArrowUpDown size={13} /> Ajustar monto
+                </button>
+              )}
+              {puedeTraspasar && (
+                <button onClick={onTraspasar}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                  <ArrowRightLeft size={13} /> Traspasar saldo libre
+                </button>
+              )}
+              {puedeCancelar && (
+                <button onClick={() => setAccionActiva('cancelar')}
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-rose-600 dark:text-rose-400 hover:underline cursor-pointer">
+                  <XCircle size={13} /> Cancelar línea
+                </button>
+              )}
+            </div>
+          ) : accionActiva === 'ajustar' ? (
+            <div className="flex flex-wrap items-end gap-2 p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl">
+              <div>
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Nuevo monto comprometido</label>
+                <input type="number" min={partida.real} step="0.01" value={montoAjuste} onChange={e => setMontoAjuste(e.target.value)} autoFocus
+                  className="w-32 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+              </div>
+              <button onClick={guardarAjuste} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+                {guardando && <Loader2 size={12} className="animate-spin" />} Guardar
+              </button>
+              <button onClick={() => setAccionActiva(null)} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                Cancelar
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-xl">
+              <div className="flex-1 min-w-[160px]">
+                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">¿Por qué? (opcional)</label>
+                <input type="text" value={notaCancelar} onChange={e => setNotaCancelar(e.target.value)} autoFocus
+                  className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-400" />
+              </div>
+              <button onClick={guardarCancelacion} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+                {guardando && <Loader2 size={12} className="animate-spin" />} Sí, cancelar línea
+              </button>
+              <button onClick={() => setAccionActiva(null)} disabled={guardando}
+                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                Volver
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {partida.recurrenciaGrupoId && (
+        <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2 mb-4">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Historial de esta serie</p>
+          {historial ? (
+            <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">
+              prom. real {formatMXN(historial.promedio)}
+              <span className="text-slate-400 dark:text-slate-500 font-normal text-xs"> ± {formatMXN(historial.desviacion)} ({historial.n} quincenas)</span>
+            </p>
+          ) : (
+            <p className="text-sm text-slate-400 dark:text-slate-500">Historial insuficiente</p>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-3 gap-3 mb-4">
         <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
           <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Presupuestado</p>

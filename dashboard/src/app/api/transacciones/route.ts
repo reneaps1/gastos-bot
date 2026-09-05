@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { shiftMonth } from '@/lib/periodo'
+import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
 
 function addMonths(dateString: string, months: number) {
   return new Date(`${shiftMonth(dateString, months)}T00:00:00.000Z`)
@@ -16,7 +17,10 @@ async function findQuincenaIdForDate(date: Date): Promise<number | null> {
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
-    const quincenaId = searchParams.get('quincenaId')
+    // Uno o varios ?quincenaId= (para combinar quincenas en Presupuesto/
+    // Transacciones con Ctrl/Cmd+clic) -- un solo valor sigue siendo
+    // where.quincenaId = N como antes, no cambia nada para el resto de callers.
+    const quincenaIds = searchParams.getAll('quincenaId')
     const tipo = searchParams.get('tipo')
     const categoriaId = searchParams.get('categoriaId')
     const userId = searchParams.get('userId')
@@ -32,7 +36,8 @@ export async function GET(request: Request) {
     const fechaHasta = searchParams.get('fechaHasta')
 
     const where: any = {}
-    if (quincenaId) where.quincenaId = parseInt(quincenaId)
+    if (quincenaIds.length === 1) where.quincenaId = parseInt(quincenaIds[0])
+    else if (quincenaIds.length > 1) where.quincenaId = { in: quincenaIds.map(id => parseInt(id)) }
     if (fechaDesde || fechaHasta) {
       where.fecha = {}
       if (fechaDesde) where.fecha.gte = new Date(`${fechaDesde}T00:00:00.000Z`)
@@ -60,7 +65,7 @@ export async function GET(request: Request) {
       }),
       prisma.transaccion.count({ where }),
       prisma.transaccion.groupBy({
-        by: ['tipo', 'estatus'],
+        by: ['tipo', 'estatus', 'direccion'],
         where,
         _sum: { monto: true },
       }),
@@ -77,10 +82,17 @@ export async function GET(request: Request) {
     // Suma real (no paginada) por tipo, respetando los mismos filtros que la
     // lista — evita que las tarjetas de totales se calculen sobre solo la
     // página de resultados devuelta.
+    //
+    // Ahorro se "netea" por direccion (Aporte suma, Retiro resta) en vez de
+    // sumarse bruto: desde que toda transaccion de categoria Ahorro guarda
+    // tipo:'Ahorro' (ver @/lib/transaccion-ahorro), tanto aportaciones como
+    // retiros comparten ese tipo y solo se distinguen por `direccion`.
     const totales = { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0, IngresoPagado: 0, GastoParaLimite: Number(gastoParaLimiteAgg._sum.monto ?? 0) }
     for (const row of totalesPorTipo) {
       const monto = Number(row._sum.monto ?? 0)
-      if (row.tipo in totales) totales[row.tipo as 'Gasto' | 'Ingreso' | 'Ahorro'] += monto
+      if (row.tipo === 'Ahorro') totales.Ahorro += row.direccion === 'Retiro' ? -monto : monto
+      else if (row.tipo === 'Gasto') totales.Gasto += monto
+      else if (row.tipo === 'Ingreso') totales.Ingreso += monto
       if (row.tipo === 'Gasto' && row.estatus === 'Pagado') totales.GastoPagado += monto
       if (row.tipo === 'Ingreso' && row.estatus === 'Pagado') totales.IngresoPagado += monto
     }
@@ -104,11 +116,19 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, tipo, monto, metodoPagoId, creditoId, fechaPagoProgramada, totalPagos, estatus, notas, source, presupuestoId } = body
+    const { fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, tipo, direccion, apartadoId, monto, metodoPagoId, creditoId, fechaPagoProgramada, totalPagos, estatus, notas, source, presupuestoId } = body
 
     if (!fecha || !quincenaId || !descripcion || !categoriaId || !tipo || monto === undefined) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
+
+    const categoria = await prisma.categoria.findUnique({ where: { id: parseInt(categoriaId) } })
+    if (!categoria) {
+      return NextResponse.json({ error: 'Categoria not found' }, { status: 400 })
+    }
+    // Toda transaccion de categoria "Ahorro" siempre queda tipo:'Ahorro' sin
+    // importar lo que haya elegido el cliente — ver @/lib/transaccion-ahorro.
+    const { tipo: tipoResuelto, direccion: direccionResuelta } = resolverTipoYDireccion(categoria.tipo, tipo, direccion)
 
     const parsedMonto = parseFloat(monto)
     const parsedCreditoId = creditoId ? parseInt(creditoId) : null
@@ -171,7 +191,9 @@ export async function POST(request: Request) {
           userId: userId ? parseInt(userId) : null,
           descripcion,
           categoriaId: parseInt(categoriaId),
-          tipo,
+          tipo: tipoResuelto,
+          direccion: direccionResuelta,
+          apartadoId: apartadoId ? parseInt(apartadoId) : null,
           monto: parsedMonto,
           metodoPagoId: metodoPagoId ? parseInt(metodoPagoId) : null,
           creditoId: parsedCreditoId,

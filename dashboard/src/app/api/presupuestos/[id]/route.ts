@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
-import { computeQuincenasTarget } from '@/lib/recurrencia'
+import { computeQuincenasTarget, fechaDiaCobroEnQuincena } from '@/lib/recurrencia'
 import { conNota } from '@/lib/cierre-quincena-server'
 
 export async function GET(
@@ -89,6 +89,23 @@ export async function PUT(
     const finalFrecuencia = recurrente ? (frecuencia || current.frecuencia || 'CADA_QUINCENA') : null
     const finalNumOcurrencias = numOcurrencias !== undefined ? numOcurrencias : current.numOcurrencias
 
+    // La propia fila que se esta editando tambien puede ser MENSUAL con
+    // diaCobro -- sin esto, solo las ocurrencias hermanas que genera
+    // computeQuincenasTarget (mas abajo) traian Vence auto-derivado, y esta
+    // fila se quedaba en "—" aunque tuviera diaCobro. Una fecha explicita en
+    // el body siempre gana (ownData.fechaVencimiento ya la trae). Usa
+    // fechaDiaCobroEnQuincena (no computeQuincenasTarget) porque esta
+    // quincena ya es conocida -- no hace falta que el dia caiga en su
+    // sub-rango exacto para mostrar la fecha, a diferencia de ubicar una
+    // ocurrencia nueva.
+    if (!ownData.fechaVencimiento && finalFrecuencia === 'MENSUAL' && diaCobro_ != null) {
+      const ownQuincenaId = quincenaId ? parseInt(quincenaId) : current.quincenaId
+      const ownQuincena = ownQuincenaId === current.quincenaId
+        ? current.quincena
+        : await prisma.quincena.findUnique({ where: { id: ownQuincenaId } })
+      if (ownQuincena) ownData.fechaVencimiento = new Date(fechaDiaCobroEnQuincena(ownQuincena, diaCobro_))
+    }
+
     if (!current.recurrenciaGrupoId) {
       // Standalone item (not part of any recurring series).
       if (!recurrente) {
@@ -128,6 +145,7 @@ export async function PUT(
             recurrente: true,
             frecuencia: finalFrecuencia,
             diaCobro: diaCobro_,
+            fechaVencimiento: q.fechaVencimiento ? new Date(q.fechaVencimiento) : null,
             numOcurrencias: finalNumOcurrencias,
             recurrenciaGrupoId: grupoId,
             quincenaId: q.id,
@@ -184,6 +202,7 @@ export async function PUT(
             recurrente: true,
             frecuencia: finalFrecuencia,
             diaCobro: diaCobro_,
+            fechaVencimiento: q.fechaVencimiento ? new Date(q.fechaVencimiento) : null,
             numOcurrencias: finalNumOcurrencias,
             recurrenciaGrupoId: current.recurrenciaGrupoId,
             quincenaId: q.id,

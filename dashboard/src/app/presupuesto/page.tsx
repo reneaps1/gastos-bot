@@ -1,7 +1,7 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRight } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowRightLeft, Coins } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
@@ -14,11 +14,14 @@ import { KpiCard } from '@/components/ui/KpiCard'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
-import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
+import { useColumnVisibility } from '@/lib/use-column-visibility'
+import { calcularFaltaPorPagar, calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
 import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
+import { TraspasoModal } from '@/components/ui/TraspasoModal'
 import { PresupuestoAnalisis } from './PresupuestoAnalisis'
 import { PresupuestoConfiguracion } from './PresupuestoConfiguracion'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
@@ -28,6 +31,19 @@ const CAT_DOT: Record<string, string> = {
   Transporte: 'bg-sky-500', Suscripciones: 'bg-violet-500', Deudas: 'bg-red-500',
   Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
 }
+
+// Descripción/Presupuestado/Real/% usado/Restante/Acciones son el núcleo de
+// la tabla (no se pueden ocultar) -- el resto es opcional desde "Columnas".
+// Todas van visibles por default: agregar la opción no cambia el layout
+// actual hasta que el usuario decida ocultar algo.
+const PRESUPUESTO_TABLA_COLUMNS = [
+  { key: 'quincena', label: 'Quincena' },
+  { key: 'categoria', label: 'Categoría' },
+  { key: 'clasificacion', label: 'Clasificación' },
+  { key: 'recurrente', label: 'Recurrente' },
+  { key: 'vence', label: 'Vence' },
+]
+const PRESUPUESTO_TABLA_COLUMNS_DEFAULT = PRESUPUESTO_TABLA_COLUMNS.map(c => c.key)
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null; fechaCierre?: string | null }
 interface Categoria { id: number; nombre: string; tipo: string; activo: boolean }
@@ -182,6 +198,12 @@ export default function PresupuestoPage() {
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [quincenaId, setQuincenaId] = useState('')
   const [quincenaActual, setQuincenaActual] = useState<Quincena | null>(null)
+  // Quincenas adicionales combinadas con `quincenaId` via Ctrl/Cmd+clic en
+  // los chips (vista Tarjetas). `quincenaId` sigue siendo "la" quincena para
+  // todo lo que solo tiene sentido para una sola (encabezado, Liquidez,
+  // Reporte, cierre de quincena) -- esto solo amplia que datos entran a los
+  // fetches y a las cards resumen.
+  const [extraQuincenaIds, setExtraQuincenaIds] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -197,6 +219,9 @@ export default function PresupuestoPage() {
 
   const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis' | 'configuracion'>('tabla')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
+  // Igual que en Tarjetas: quincenas extra combinadas via Ctrl/Cmd+clic.
+  // Sin efecto si tablaQuincenaId === ALL_QUINCENAS (ya trae todo).
+  const [extraTablaQuincenaIds, setExtraTablaQuincenaIds] = useState<Set<string>>(new Set())
   const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
   const [tablaLoading, setTablaLoading] = useState(false)
   const [tablaCategoriaId, setTablaCategoriaId] = useState('')
@@ -239,6 +264,8 @@ export default function PresupuestoPage() {
   const [editScopeBody, setEditScopeBody] = useState<Record<string, unknown> | null>(null)
   // Partida cuyo detalle de gasto se esta viendo en la ventana flotante
   const [detalleP, setDetalleP] = useState<Presupuesto | null>(null)
+  // Partida de Gasto con saldo libre desde la que se esta traspasando hacia otra linea
+  const [traspasoOrigen, setTraspasoOrigen] = useState<Presupuesto | null>(null)
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
@@ -260,17 +287,63 @@ export default function PresupuestoPage() {
 
   function selectQuincena(id: string) {
     setQuincenaId(id)
+    setExtraQuincenaIds(new Set())
     persistQuincenaId(id)
   }
+
+  function toggleExtraQuincena(id: string) {
+    if (id === quincenaId) return
+    setExtraQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Todas las quincenas combinadas para la vista Tarjetas: la primaria mas
+  // las agregadas via Ctrl/Cmd+clic.
+  const selectedQuincenaIds = useMemo(() => {
+    return Array.from(new Set([quincenaId, ...extraQuincenaIds].filter(Boolean)))
+  }, [quincenaId, extraQuincenaIds])
+
+  function selectTablaQuincena(id: string) {
+    setTablaQuincenaId(id)
+    setExtraTablaQuincenaIds(new Set())
+  }
+
+  function toggleExtraTablaQuincena(id: string) {
+    if (id === tablaQuincenaId || tablaQuincenaId === ALL_QUINCENAS) return
+    setExtraTablaQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function clearExtraTablaQuincenas() {
+    setExtraTablaQuincenaIds(new Set())
+  }
+
+  const selectedTablaQuincenaIds = useMemo(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) return [ALL_QUINCENAS]
+    return Array.from(new Set([tablaQuincenaId, ...extraTablaQuincenaIds].filter(Boolean)))
+  }, [tablaQuincenaId, extraTablaQuincenaIds])
 
   const fetchPresupuestosTabla = useCallback(async () => {
     setTablaLoading(true)
     try {
-      const params = tablaQuincenaId !== ALL_QUINCENAS ? `?quincenaId=${tablaQuincenaId}` : ''
-      const res = await fetch(`/api/presupuestos${params}`)
-      setPresupuestosTabla(await res.json())
+      if (tablaQuincenaId === ALL_QUINCENAS) {
+        setPresupuestosTabla(await (await fetch('/api/presupuestos')).json())
+      } else {
+        const porQuincena = await Promise.all(
+          selectedTablaQuincenaIds.map(id => fetch(`/api/presupuestos?quincenaId=${id}`).then(r => r.json()))
+        )
+        setPresupuestosTabla(porQuincena.flat())
+      }
     } finally { setTablaLoading(false) }
-  }, [tablaQuincenaId])
+  }, [tablaQuincenaId, selectedTablaQuincenaIds])
 
   useEffect(() => {
     if (vista === 'tabla') fetchPresupuestosTabla()
@@ -327,32 +400,44 @@ export default function PresupuestoPage() {
   }
 
   const fetchPresupuestos = useCallback(async () => {
-    if (!quincenaId) return
+    if (selectedQuincenaIds.length === 0) return
     setLoading(true)
     try {
-      const [presupRes, txRes, liqRes] = await Promise.all([
-        fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
-        fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=500`),
+      // Un fetch por quincena seleccionada y se concatenan los resultados --
+      // calcularFaltaPorPagar/buildGrupos ya son agnosticos a quincena (cada
+      // fila trae su propio quincenaId), asi que combinan solas sin tocar
+      // los endpoints ni esas funciones. La liquidez sigue atada solo a
+      // `quincenaId` (la quincena "principal") -- no tiene un concepto
+      // natural de "combinada" entre varias quincenas.
+      const [porQuincena, liqRes] = await Promise.all([
+        Promise.all(selectedQuincenaIds.map(async id => {
+          const [presupRes, txRes] = await Promise.all([
+            fetch(`/api/presupuestos?quincenaId=${id}`),
+            fetch(`/api/transacciones?quincenaId=${id}&limit=500`),
+          ])
+          return { data: await presupRes.json() as Presupuesto[], txData: await txRes.json() }
+        })),
         fetch(`/api/liquidez?quincenaId=${quincenaId}`),
       ])
-      const data: Presupuesto[] = await presupRes.json()
-      const txData = await txRes.json()
-      const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> = txData.data ?? []
+
+      const data = porQuincena.flatMap(r => r.data)
+      const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> =
+        porQuincena.flatMap(r => r.txData.data ?? [])
       const liqData = await liqRes.json()
 
       setPresupuestos(data)
-      setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
+      setQuincenaActual(quincenas.find(q => q.id.toString() === quincenaId) ?? data.find(p => p.quincenaId.toString() === quincenaId)?.quincena ?? null)
 
       setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
-      setGastoParaLimite(Number(txData.totales?.GastoParaLimite ?? 0))
-      setIngresosReal(Number(txData.totales?.Ingreso ?? 0))
+      setGastoParaLimite(porQuincena.reduce((s, r) => s + Number(r.txData.totales?.GastoParaLimite ?? 0), 0))
+      setIngresosReal(porQuincena.reduce((s, r) => s + Number(r.txData.totales?.Ingreso ?? 0), 0))
 
       setPendientePorPagar(calcularFaltaPorPagar(data))
 
       const rawSnap = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
       setLiquidezSnapshot(rawSnap ? { ...normalizeMontos(rawSnap), faltaPagar: Number(rawSnap.faltaPagar) || 0 } : null)
     } finally { setLoading(false) }
-  }, [quincenaId, quincenas])
+  }, [selectedQuincenaIds, quincenaId, quincenas])
 
   useEffect(() => { fetchPresupuestos() }, [fetchPresupuestos])
 
@@ -599,12 +684,23 @@ export default function PresupuestoPage() {
 
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
+  const multiSelectActivo = selectedQuincenaIds.length > 1
   // Limite de referencia efectivo: el override propio de esta quincena
   // (configurable en Presupuesto → Análisis) si existe, si no el global de
-  // Configuración → Períodos de pago.
+  // Configuración → Períodos de pago. Con varias quincenas combinadas, se
+  // suma el limite efectivo de cada una (el "personalizado" pierde sentido
+  // cuando son varias, asi que solo se muestra con una sola seleccionada).
   const refEfectiva = resolveReferencia(qInfo, { limiteGastoReferencia: limiteReferencia })
-  // Presupuestos ya viene acotado a quincenaId (Tarjetas), asi que esto da a
-  // lo mas un grupo: el de la quincena seleccionada, si le falta cerrar algo.
+  const limiteGastoReferenciaEfectivo = multiSelectActivo
+    ? (() => {
+        const valores = selectedQuincenaIds
+          .map(id => resolveReferencia(quincenas.find(q => q.id.toString() === id), { limiteGastoReferencia: limiteReferencia }).limiteGastoReferencia)
+          .filter((v): v is number => v != null)
+        return valores.length > 0 ? valores.reduce((s, v) => s + v, 0) : null
+      })()
+    : refEfectiva.limiteGastoReferencia
+  // Presupuestos puede traer varias quincenas combinadas (Tarjetas con
+  // Ctrl/Cmd+clic); cada grupo de cierre queda por su propia quincena.
   const gruposCierre = quincenasPendientesDeCierre(presupuestos, today)
   const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
   const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
@@ -626,6 +722,11 @@ export default function PresupuestoPage() {
               {qInfo.codigo} · {formatDateStr(qInfo.fechaInicio, { day: '2-digit', month: 'long' })}
               {' — '}
               {formatDateStr(qInfo.fechaFin, { day: '2-digit', month: 'long' })}
+              {multiSelectActivo && (
+                <span className="ml-1.5 text-indigo-500 dark:text-indigo-400 font-medium">
+                  + {selectedQuincenaIds.length - 1} combinada{selectedQuincenaIds.length - 1 === 1 ? '' : 's'}
+                </span>
+              )}
             </p>
           )}
         </div>
@@ -694,7 +795,10 @@ export default function PresupuestoPage() {
       {vista === 'tabla' ? (
         <PresupuestoTabla
           quincenas={quincenas} categorias={categorias} today={today}
-          tablaQuincenaId={tablaQuincenaId} setTablaQuincenaId={setTablaQuincenaId}
+          tablaQuincenaId={tablaQuincenaId} setTablaQuincenaId={selectTablaQuincena}
+          extraTablaQuincenaIds={extraTablaQuincenaIds} onToggleExtraTablaQuincena={toggleExtraTablaQuincena}
+          onClearExtraTablaQuincenas={clearExtraTablaQuincenas}
+          selectedTablaQuincenaIds={selectedTablaQuincenaIds}
           presupuestosTabla={presupuestosTabla} tablaLoading={tablaLoading}
           tablaCategoriaId={tablaCategoriaId} setTablaCategoriaId={setTablaCategoriaId}
           tablaClasificacion={tablaClasificacion} setTablaClasificacion={setTablaClasificacion}
@@ -705,7 +809,7 @@ export default function PresupuestoPage() {
           tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
-          openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP}
+          openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP} setTraspasoOrigen={setTraspasoOrigen}
         />
       ) : vista === 'analisis' ? (
         <PresupuestoAnalisis
@@ -729,18 +833,43 @@ export default function PresupuestoPage() {
       ) : (
         <>
       {/* Selector de quincena */}
-      <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} />
+      <div className="flex items-center flex-wrap gap-2">
+        <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena}
+          extraSelectedIds={extraQuincenaIds} onToggleExtra={toggleExtraQuincena} />
+        {multiSelectActivo ? (
+          <button onClick={() => setExtraQuincenaIds(new Set())}
+            className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+            Quitar combinación
+          </button>
+        ) : (
+          <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+            Ctrl/Cmd+clic para combinar quincenas
+          </span>
+        )}
+      </div>
 
       <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
 
       {/* Summary cards */}
       {grupos.length > 0 && (
-        <div className={`grid grid-cols-1 gap-4 ${refEfectiva.limiteGastoReferencia != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+        <div className={`grid grid-cols-1 gap-4 ${limiteGastoReferenciaEfectivo != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
           <KpiCard
-            label="Ingresos" value={formatMXN(totalIngresoPresupuestado)}
-            subtitle={`real ${formatMXN(totalIngresoReal)}`}
+            label="Ingresos" value={formatMXN(totalIngresoReal)}
+            subtitle={`de ${formatMXN(totalIngresoPresupuestado)} presupuestado`}
             icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
             color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+            action={(() => {
+              const pct = totalIngresoPresupuestado > 0 ? (totalIngresoReal / totalIngresoPresupuestado) * 100 : 0
+              const cumplido = pct >= 100
+              return (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                    <div className={`h-1.5 rounded-full transition-all ${cumplido ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                  </div>
+                  <span className={`text-[10px] font-semibold tabular-nums ${cumplido ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{pct.toFixed(0)}%</span>
+                </div>
+              )
+            })()}
           />
 
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
@@ -777,15 +906,18 @@ export default function PresupuestoPage() {
             </p>
           </div>
 
-          {refEfectiva.limiteGastoReferencia != null && (() => {
-            const limiteEfectivo = refEfectiva.limiteGastoReferencia!
+          {limiteGastoReferenciaEfectivo != null && (() => {
+            const limiteEfectivo = limiteGastoReferenciaEfectivo!
             const pctLimite = limiteEfectivo > 0 ? (gastoParaLimite / limiteEfectivo) * 100 : 0
             return (
               <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1">
                   Límite de referencia
-                  {refEfectiva.limiteEsOverride && (
+                  {!multiSelectActivo && refEfectiva.limiteEsOverride && (
                     <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">personalizado</span>
+                  )}
+                  {multiSelectActivo && (
+                    <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">combinado</span>
                   )}
                   <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago, o personalizado para esta quincena en Presupuesto → Análisis). Es solo informativo, no bloquea nada.">ⓘ</span>
                 </p>
@@ -1162,6 +1294,12 @@ export default function PresupuestoPage() {
                       </div>
                       {!isMulti && (
                         <>
+                          {singleItem.categoria.tipo === 'Gasto' && singleItem.montoEfectivo - singleItem.real > 0 && (
+                            <button onClick={() => setTraspasoOrigen(singleItem)}
+                              className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                              <ArrowRightLeft size={14} />
+                            </button>
+                          )}
                           <button onClick={() => openEdit(singleItem)}
                             className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                             <Pencil size={14} />
@@ -1229,6 +1367,12 @@ export default function PresupuestoPage() {
                               </button>
                               <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(item.montoEfectivo)}</span>
                             </span>
+                            {item.categoria.tipo === 'Gasto' && item.montoEfectivo - item.real > 0 && (
+                              <button onClick={() => setTraspasoOrigen(item)}
+                                className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                                <ArrowRightLeft size={13} />
+                              </button>
+                            )}
                             <button onClick={() => openEdit(item)}
                               className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                               <Pencil size={13} />
@@ -1575,11 +1719,28 @@ export default function PresupuestoPage() {
               montoEfectivo: detalleP.montoEfectivo,
               real: detalleP.real,
               categoriaNombre: detalleP.categoria.nombre,
+              categoriaTipo: detalleP.categoria.tipo,
+              estadoLinea: detalleP.estadoLinea,
               quincenaCodigo: detalleP.quincena.codigo,
+              recurrenciaGrupoId: detalleP.recurrenciaGrupoId,
             }}
+            onTraspasar={() => { const p = detalleP; setDetalleP(null); setTraspasoOrigen(p) }}
+            onEditar={() => { const p = detalleP; setDetalleP(null); openEdit(p) }}
+            onAjustado={nuevo => {
+              setDetalleP(p => p && { ...p, montoRevisado: nuevo, montoEfectivo: nuevo, excedido: Math.max(p.real - nuevo, 0) })
+              fetchPresupuestos(); fetchPresupuestosTabla()
+            }}
+            onCancelado={() => { setDetalleP(null); fetchPresupuestos(); fetchPresupuestosTabla() }}
           />
         )}
       </FormModal>
+
+      <TraspasoModal
+        open={traspasoOrigen != null}
+        onOpenChange={open => !open && setTraspasoOrigen(null)}
+        origen={traspasoOrigen && { id: traspasoOrigen.id, descripcion: traspasoOrigen.descripcion, quincenaId: traspasoOrigen.quincenaId, disponible: traspasoOrigen.montoEfectivo - traspasoOrigen.real }}
+        onDone={() => { fetchPresupuestos(); fetchPresupuestosTabla() }}
+      />
 
       {/* Non-recurring delete — simple confirm */}
       <ConfirmDialog
@@ -1747,6 +1908,9 @@ function SortableTh({ label, sortKeyName, align, sortKey, sortDir, onSort }: {
 interface PresupuestoTablaProps {
   quincenas: Quincena[]; categorias: Categoria[]; today: string
   tablaQuincenaId: string; setTablaQuincenaId: (id: string) => void
+  extraTablaQuincenaIds: Set<string>; onToggleExtraTablaQuincena: (id: string) => void
+  onClearExtraTablaQuincenas: () => void
+  selectedTablaQuincenaIds: string[]
   presupuestosTabla: Presupuesto[]; tablaLoading: boolean
   tablaCategoriaId: string; setTablaCategoriaId: (v: string) => void
   tablaClasificacion: string; setTablaClasificacion: (v: string) => void
@@ -1760,18 +1924,29 @@ interface PresupuestoTablaProps {
   openEdit: (p: Presupuesto) => void
   setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
   setDetalleP: (p: Presupuesto | null) => void
+  setTraspasoOrigen: (p: Presupuesto | null) => void
 }
 
 function PresupuestoTabla({
   quincenas, categorias, today,
-  tablaQuincenaId, setTablaQuincenaId, presupuestosTabla, tablaLoading,
+  tablaQuincenaId, setTablaQuincenaId, extraTablaQuincenaIds, onToggleExtraTablaQuincena,
+  onClearExtraTablaQuincenas, selectedTablaQuincenaIds,
+  presupuestosTabla, tablaLoading,
   tablaCategoriaId, setTablaCategoriaId, tablaClasificacion, setTablaClasificacion,
   tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
-  openEdit, setDeleteTarget, setDetalleP,
+  openEdit, setDeleteTarget, setDetalleP, setTraspasoOrigen,
 }: PresupuestoTablaProps) {
+  const { visible: colVisible, toggle: toggleCol } = useColumnVisibility('milo:columns:presupuesto-tabla', PRESUPUESTO_TABLA_COLUMNS_DEFAULT)
+  // Descripción + las columnas opcionales del grupo inicial (Quincena,
+  // Categoría, Clasificación) van antes de Presupuestado; Recurrente/Vence +
+  // Acciones van despues de Restante -- estos conteos alimentan el colSpan
+  // del tfoot, que si no se ajustara quedaria desalineado apenas se oculte
+  // alguna columna.
+  const leadingCols = 1 + ['quincena', 'categoria', 'clasificacion'].filter(k => colVisible.has(k)).length
+  const trailingCols = 1 + ['recurrente', 'vence'].filter(k => colVisible.has(k)).length
   const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
   const filasTabla = presupuestosTabla
     .filter(p => matchesFiltrosTabla(p, filtros))
@@ -1814,6 +1989,12 @@ function PresupuestoTabla({
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
   const balanceReal = totalIngresoRealFijo - totalRealFijo
 
+  const multiSelectTablaActivo = selectedTablaQuincenaIds.length > 1
+
+  // Liquidez es un corte puntual de cuentas bancarias (una foto en el
+  // tiempo), no un flujo -- sumar el snapshot de varias quincenas no
+  // significaria nada (no es "cuanto dinero tuviste en total"). Se queda
+  // atada solo a tablaQuincenaId (la primaria), igual que en Tarjetas.
   const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
   useEffect(() => {
     if (tablaQuincenaId === ALL_QUINCENAS) { setLiquidezSnapshot(null); return }
@@ -1826,10 +2007,44 @@ function PresupuestoTabla({
   }, [tablaQuincenaId])
   const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
 
+  // Ingreso real total (asignado o no) y gasto sin presupuestar, agregados no
+  // paginados del servidor -- misma fuente que usa el dashboard para
+  // "Disponible real"/"según presupuesto", ver calcularLibreSinAsignar. A
+  // diferencia de Liquidez, esto SI es un flujo y se puede sumar entre las
+  // quincenas combinadas.
+  const [totalesTx, setTotalesTx] = useState<{ ingreso: number; gasto: number } | null>(null)
+  useEffect(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) { setTotalesTx(null); return }
+    Promise.all(selectedTablaQuincenaIds.map(id => fetch(`/api/transacciones?quincenaId=${id}&limit=1`).then(r => r.json())))
+      .then(datas => setTotalesTx(datas.reduce((acc, data) => ({
+        ingreso: acc.ingreso + Number(data?.totales?.Ingreso ?? 0),
+        gasto: acc.gasto + Number(data?.totales?.Gasto ?? 0),
+      }), { ingreso: 0, gasto: 0 })))
+  }, [tablaQuincenaId, selectedTablaQuincenaIds])
+  // gastoTotal (todo el Gasto real, asignado o no) menos totalRealFijo (el ya
+  // contabilizado en lineas de Gasto) = lo que quedo sin presupuestoId -- evita
+  // un segundo fetch con asignado=no.
+  const libreSinAsignar = totalesTx != null
+    ? calcularLibreSinAsignar(totalesTx.ingreso, presupuestosTabla, Math.max(totalesTx.gasto - totalRealFijo, 0))
+    : null
+
   return (
     <div className="space-y-4">
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
-        <QuincenaChips quincenas={quincenas} quincenaId={tablaQuincenaId} today={today} onSelect={setTablaQuincenaId} showAll />
+        <div className="flex items-center flex-wrap gap-2">
+          <QuincenaChips quincenas={quincenas} quincenaId={tablaQuincenaId} today={today} onSelect={setTablaQuincenaId} showAll
+            extraSelectedIds={extraTablaQuincenaIds} onToggleExtra={onToggleExtraTablaQuincena} />
+          {multiSelectTablaActivo ? (
+            <button onClick={onClearExtraTablaQuincenas}
+              className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+              Quitar combinación
+            </button>
+          ) : tablaQuincenaId !== ALL_QUINCENAS ? (
+            <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+              Ctrl/Cmd+clic para combinar quincenas
+            </span>
+          ) : null}
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           <FilterChip value={tablaCategoriaId} onChange={setTablaCategoriaId} onClear={() => setTablaCategoriaId('')} placeholder="Categoría">
             {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -1872,39 +2087,73 @@ function PresupuestoTabla({
               className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400" />
             Ocultar ingresos
           </label>
+          <ColumnsMenu columns={PRESUPUESTO_TABLA_COLUMNS} visible={colVisible} onToggle={toggleCol} />
         </div>
         <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className={`grid grid-cols-2 gap-3 ${tablaQuincenaId !== ALL_QUINCENAS ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
         <KpiCard
-          label="Ingresos" value={formatMXN(totalIngresoPresupuestadoFijo)}
-          subtitle={`real ${formatMXN(totalIngresoRealFijo)}`}
+          label="Ingresos" value={formatMXN(totalIngresoRealFijo)}
+          subtitle={`de ${formatMXN(totalIngresoPresupuestadoFijo)} presupuestado`}
           icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
           color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+          action={(() => {
+            const pct = totalIngresoPresupuestadoFijo > 0 ? (totalIngresoRealFijo / totalIngresoPresupuestadoFijo) * 100 : 0
+            const cumplido = pct >= 100
+            return (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                  <div className={`h-1.5 rounded-full transition-all ${cumplido ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <span className={`text-[10px] font-semibold tabular-nums ${cumplido ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{pct.toFixed(0)}%</span>
+              </div>
+            )
+          })()}
         />
         <KpiCard
-          label="Gastos" value={formatMXN(totalPresupuestado)}
-          subtitle={`real ${formatMXN(totalReal)}`}
+          label="Gastos" value={formatMXN(totalReal)}
+          subtitle={`de ${formatMXN(totalPresupuestado)} presupuestado`}
           icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
           color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
+          action={(() => {
+            const pct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
+            return (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                  <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
+              </div>
+            )
+          })()}
         />
         <KpiCard
-          label="Balance (plan)" value={formatMXN(balancePresupuestado)}
-          subtitle={`real ${formatMXN(balanceReal)}`}
-          subtitleColor={balanceReal < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
-          icon={<Scale size={20} className={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
-          color={balancePresupuestado >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
-          bg={balancePresupuestado >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+          label="Balance (plan)" value={formatMXN(balanceReal)}
+          subtitle={`plan ${formatMXN(balancePresupuestado)}`}
+          icon={<Scale size={20} className={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
+          color={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
+          bg={balanceReal >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
         />
         {tablaQuincenaId !== ALL_QUINCENAS && (
           liquidezSnapshot ? (
             <KpiCard
-              label="Liquidez" value={formatMXN(totalLiquidez)}
+              label={multiSelectTablaActivo ? 'Liquidez (Q primaria)' : 'Liquidez'} value={formatMXN(totalLiquidez)}
               subtitle={`falta por cubrir ${formatMXN(totalFaltaPorPagar)}`}
               subtitleColor={totalFaltaPorPagar > totalLiquidez ? 'text-rose-500 dark:text-rose-400' : undefined}
               icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
               color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
+              action={(() => {
+                const pct = totalLiquidez > 0 ? (totalFaltaPorPagar / totalLiquidez) * 100 : 0
+                return (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                      <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                    </div>
+                    <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
+                  </div>
+                )
+              })()}
             />
           ) : (
             <Link href={`/configuracion/liquidez?quincenaId=${tablaQuincenaId}`}>
@@ -1915,6 +2164,16 @@ function PresupuestoTabla({
               />
             </Link>
           )
+        )}
+        {tablaQuincenaId !== ALL_QUINCENAS && libreSinAsignar != null && (
+          <KpiCard
+            label={multiSelectTablaActivo ? 'Libre / sin asignar (combinado)' : 'Libre / sin asignar'} value={formatMXN(Math.abs(libreSinAsignar))}
+            subtitle={libreSinAsignar < 0 ? 'de más' : 'de tus ingresos reales'}
+            subtitleColor={libreSinAsignar < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
+            icon={<Coins size={20} className={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'} />}
+            color={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
+            bg={libreSinAsignar >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+          />
         )}
       </div>
 
@@ -1963,6 +2222,12 @@ function PresupuestoTabla({
                     <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pendiente de pago</p>
                   )}
                   <div className="mt-2 flex items-center justify-end gap-1">
+                    {p.categoria.tipo === 'Gasto' && p.montoEfectivo - p.real > 0 && (
+                      <button onClick={() => setTraspasoOrigen(p)} aria-label="Traspasar saldo libre"
+                        className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors">
+                        <ArrowRightLeft size={13} />
+                      </button>
+                    )}
                     <button onClick={() => openEdit(p)} aria-label="Editar"
                       className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors">
                       <Pencil size={13} />
@@ -2007,36 +2272,38 @@ function PresupuestoTabla({
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                   <tr>
-                    <SortableTh label="Quincena" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Categoría" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    {colVisible.has('quincena') && <SortableTh label="Quincena" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    {colVisible.has('categoria') && <SortableTh label="Categoría" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                     <SortableTh label="Descripción" sortKeyName="descripcion" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Clasificación</th>
+                    {colVisible.has('clasificacion') && <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Clasificación</th>}
                     <SortableTh label="Presupuestado" sortKeyName="presupuestado" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="Real" sortKeyName="real" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="% usado" sortKeyName="pct" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                     <SortableTh label="Restante/Excedido" sortKeyName="restante" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    {colVisible.has('recurrente') && <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    {colVisible.has('vence') && <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
                     <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
                   {filasTabla.map(p => (
                     <tr key={p.id} className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors">
-                      <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{p.quincena.codigo}</span></td>
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                          <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
-                          {p.categoria.nombre}
-                        </span>
-                      </td>
+                      {colVisible.has('quincena') && <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{p.quincena.codigo}</span></td>}
+                      {colVisible.has('categoria') && (
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                            {p.categoria.nombre}
+                          </span>
+                        </td>
+                      )}
                       <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px]">
                         <div className="flex items-center gap-1.5">
                           <span className="truncate">{p.descripcion}</span>
                           {estadoLineaBadge(p.estadoLinea)}
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>
+                      {colVisible.has('clasificacion') && <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>}
                       <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(p.montoEfectivo)}</td>
                       <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
                         <button onClick={() => setDetalleP(p)}
@@ -2052,14 +2319,24 @@ function PresupuestoTabla({
                       <td className={`px-4 py-3 text-right font-semibold tabular-nums ${p.excedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                         {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(p.montoEfectivo - p.real)}
                       </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                        {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}
-                      </td>
-                      <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                        {p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short' }) : '—'}
-                      </td>
+                      {colVisible.has('recurrente') && (
+                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}
+                        </td>
+                      )}
+                      {colVisible.has('vence') && (
+                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short' }) : '—'}
+                        </td>
+                      )}
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1">
+                          {p.categoria.tipo === 'Gasto' && p.montoEfectivo - p.real > 0 && (
+                            <button onClick={() => setTraspasoOrigen(p)}
+                              className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                              <ArrowRightLeft size={14} />
+                            </button>
+                          )}
                           <button onClick={() => openEdit(p)}
                             className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
                             <Pencil size={14} />
@@ -2075,7 +2352,7 @@ function PresupuestoTabla({
                 </tbody>
                 <tfoot className="bg-slate-50 dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-700">
                   <tr>
-                    <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                    <td colSpan={leadingCols} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                       Total · {gastoFilasTabla.length} {gastoFilasTabla.length === 1 ? 'partida' : 'partidas'}
                     </td>
                     <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">{formatMXN(totalPresupuestado)}</td>
@@ -2089,16 +2366,16 @@ function PresupuestoTabla({
                     <td className={`px-4 py-3 text-right font-bold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                       {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
                     </td>
-                    <td colSpan={3}></td>
+                    <td colSpan={trailingCols}></td>
                   </tr>
                   <tr className="bg-amber-50/70 dark:bg-amber-950/20 border-t border-amber-200/60 dark:border-amber-900/40">
-                    <td colSpan={7} className="px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                    <td colSpan={leadingCols + 4} className="px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
                       Falta por pagar <span className="font-normal text-amber-600/80 dark:text-amber-500/80">— pendiente de pago + presupuesto que aún no registras</span>
                     </td>
                     <td className="px-4 py-2.5 text-right font-bold tabular-nums text-amber-700 dark:text-amber-400">
                       {formatMXN(totalFaltaPorPagar)}
                     </td>
-                    <td colSpan={3}></td>
+                    <td colSpan={trailingCols}></td>
                   </tr>
                 </tfoot>
               </table>

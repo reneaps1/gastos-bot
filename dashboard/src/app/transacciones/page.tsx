@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle, Download } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
@@ -10,6 +10,8 @@ import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
+import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
+import { useColumnVisibility } from '@/lib/use-column-visibility'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -32,6 +34,7 @@ interface Credito { id: number; nombre: string; tipoCredito: string; acreedor: s
 interface PresupuestoOption { id: number; descripcion: string; montoEfectivo: number }
 interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: 'Gasto' | 'Ingreso' | 'Ahorro'
+  direccion: 'Aporte' | 'Retiro' | null
   monto: number; estatus: 'Pagado' | 'Pendiente'; notas: string | null
   categoria: Categoria; user: User | null; quincena: Quincena; metodoPago: MetodoPago | null
   presupuesto: { id: number; descripcion: string } | null
@@ -41,12 +44,27 @@ interface Transaccion {
 
 const EMPTY_FORM = {
   fecha: getMexicoDateString(), descripcion: '', categoriaId: '',
-  tipo: 'Gasto', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
+  tipo: 'Gasto', direccion: 'Aporte', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
   creditoId: '', totalPagos: '', fechaPagoProgramada: '',
   estatus: 'Pendiente', notas: '', presupuestoId: '',
 }
 
 const LIMIT = 25
+
+// Descripción y Monto son las columnas núcleo (no se pueden ocultar) --
+// el resto es opcional, elegible desde el menú "Columnas". Método de pago
+// va visible por default junto con las demás.
+const TX_COLUMNS = [
+  { key: 'categoria', label: 'Categoría' },
+  { key: 'presupuesto', label: 'Presupuesto' },
+  { key: 'quincena', label: 'Quincena' },
+  { key: 'fecha', label: 'Fecha' },
+  { key: 'usuario', label: 'Usuario' },
+  { key: 'metodoPago', label: 'Método de pago' },
+  { key: 'tipo', label: 'Tipo' },
+  { key: 'estatus', label: 'Estatus' },
+]
+const TX_COLUMNS_DEFAULT = TX_COLUMNS.map(c => c.key)
 
 function fieldClass(error?: string) {
   return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${error ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
@@ -70,6 +88,9 @@ export default function TransaccionesPage() {
   const [exporting, setExporting] = useState(false)
 
   const [quincenaId, setQuincenaId] = useState('')
+  // Quincenas extra combinadas via Ctrl/Cmd+clic (mismo patron que en
+  // Presupuesto). Sin efecto si quincenaId === ALL_QUINCENAS.
+  const [extraQuincenaIds, setExtraQuincenaIds] = useState<Set<string>>(new Set())
   const [tipo, setTipo] = useState('')
   const [categoriaId, setCategoriaId] = useState('')
   const [userId, setUserId] = useState('')
@@ -93,6 +114,8 @@ export default function TransaccionesPage() {
 
   const [form, setForm] = useState(EMPTY_FORM)
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  const { visible: colVisible, toggle: toggleCol } = useColumnVisibility('milo:columns:transacciones', TX_COLUMNS_DEFAULT)
 
   useEffect(() => {
     const t = setTimeout(() => { setDebouncedSearch(busqueda); setPage(1) }, 300)
@@ -118,15 +141,35 @@ export default function TransaccionesPage() {
 
   function selectQuincena(id: string) {
     setQuincenaId(id)
+    setExtraQuincenaIds(new Set())
     setPage(1)
     if (id !== ALL_QUINCENAS) persistQuincenaId(id)
   }
+
+  function toggleExtraQuincena(id: string) {
+    if (id === quincenaId || quincenaId === ALL_QUINCENAS) return
+    setExtraQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+    setPage(1)
+  }
+
+  // Todas las quincenas combinadas: la primaria mas las agregadas via
+  // Ctrl/Cmd+clic. Si la primaria es "Todas" (ALL_QUINCENAS), no hay nada
+  // que combinar -- ya trae todo.
+  const selectedQuincenaIds = useMemo(() => {
+    if (quincenaId === ALL_QUINCENAS) return []
+    return Array.from(new Set([quincenaId, ...extraQuincenaIds].filter(Boolean)))
+  }, [quincenaId, extraQuincenaIds])
 
   const fetchTxs = useCallback(async () => {
     if (!quincenaId) { setLoading(false); return }
     setLoading(true)
     const params = new URLSearchParams()
-    if (quincenaId && quincenaId !== ALL_QUINCENAS) params.set('quincenaId', quincenaId)
+    for (const id of selectedQuincenaIds) params.append('quincenaId', id)
     if (tipo) params.set('tipo', tipo)
     if (categoriaId) params.set('categoriaId', categoriaId)
     if (userId) params.set('userId', userId)
@@ -142,7 +185,7 @@ export default function TransaccionesPage() {
       setTotal(json.pagination?.total ?? 0)
       setTotales(json.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 })
     } finally { setLoading(false) }
-  }, [quincenaId, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
+  }, [quincenaId, selectedQuincenaIds, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void fetchTxs() }, 0)
@@ -199,7 +242,7 @@ export default function TransaccionesPage() {
     setDetailTx(null)
     setForm({
       fecha: tx.fecha.split('T')[0], descripcion: tx.descripcion,
-      categoriaId: tx.categoriaId.toString(), tipo: tx.tipo,
+      categoriaId: tx.categoriaId.toString(), tipo: tx.tipo, direccion: tx.direccion ?? 'Aporte',
       monto: tx.monto.toString(), quincenaId: tx.quincenaId.toString(),
       userId: tx.userId?.toString() ?? '', metodoPagoId: tx.metodoPagoId?.toString() ?? '',
       creditoId: tx.creditoId?.toString() ?? '', totalPagos: '', fechaPagoProgramada: '',
@@ -233,7 +276,8 @@ export default function TransaccionesPage() {
     try {
       const body = {
         fecha: form.fecha, descripcion: form.descripcion.trim(), categoriaId: form.categoriaId,
-        tipo: form.tipo, monto: form.monto, quincenaId: form.quincenaId, quincenaConsumoId: form.quincenaId,
+        tipo: form.tipo, direccion: esAhorro ? form.direccion : null,
+        monto: form.monto, quincenaId: form.quincenaId, quincenaConsumoId: form.quincenaId,
         userId: form.userId || null, metodoPagoId: form.metodoPagoId || null, creditoId: form.creditoId || null,
         totalPagos: form.totalPagos || null, fechaPagoProgramada: form.fechaPagoProgramada || null,
         estatus: form.estatus, notas: form.notas || null, source: 'dashboard',
@@ -280,7 +324,7 @@ export default function TransaccionesPage() {
     setExporting(true)
     try {
       const params = new URLSearchParams()
-      if (quincenaId && quincenaId !== ALL_QUINCENAS) params.set('quincenaId', quincenaId)
+      for (const id of selectedQuincenaIds) params.append('quincenaId', id)
       if (tipo) params.set('tipo', tipo)
       if (categoriaId) params.set('categoriaId', categoriaId)
       if (userId) params.set('userId', userId)
@@ -323,12 +367,17 @@ export default function TransaccionesPage() {
   const fechaEnGap = form.fecha ? isDateInQuincenaGap(quincenas, form.fecha) : false
   const selectedMetodo = metodosPago.find(m => m.id.toString() === form.metodoPagoId)
   const isCredito = selectedMetodo?.nombre === 'Credito'
+  // Categoria "Ahorro" siempre implica tipo:'Ahorro' -- la direccion
+  // (aporte/retiro) sustituye al select de Tipo. Ver @/lib/transaccion-ahorro.
+  const categoriaSeleccionada = categorias.find(c => c.id.toString() === form.categoriaId)
+  const esAhorro = categoriaSeleccionada?.tipo === 'Ahorro'
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
         <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Transacciones</h2>
         <div className="flex items-center gap-2">
+          <ColumnsMenu columns={TX_COLUMNS} visible={colVisible} onToggle={toggleCol} />
           <button onClick={handleExportCsv} disabled={exporting || total === 0}
             className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-4 py-2.5 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
             <Download size={16} /> {exporting ? 'Exportando...' : 'Descargar CSV'}
@@ -341,7 +390,20 @@ export default function TransaccionesPage() {
 
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
         {/* Chips de quincena */}
-        <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} showAll />
+        <div className="flex items-center flex-wrap gap-2">
+          <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} showAll
+            extraSelectedIds={extraQuincenaIds} onToggleExtra={toggleExtraQuincena} />
+          {extraQuincenaIds.size > 0 ? (
+            <button onClick={() => { setExtraQuincenaIds(new Set()); setPage(1) }}
+              className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+              Quitar combinación
+            </button>
+          ) : quincenaId !== ALL_QUINCENAS ? (
+            <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+              Ctrl/Cmd+clic para combinar quincenas
+            </span>
+          ) : null}
+        </div>
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-2">
           <FilterChip value={tipo} onChange={v => { setTipo(v); setPage(1) }} onClear={() => { setTipo(''); setPage(1) }} placeholder="Tipo">
@@ -441,22 +503,21 @@ export default function TransaccionesPage() {
                       <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
                       {tx.categoria?.nombre}
                     </span>
-                    {tx.tipo === 'Gasto' ? (
-                      tx.presupuestoId ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
-                          <Check size={11} /> Asignada
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                          <AlertCircle size={11} /> Sin asignar
-                        </span>
-                      )
-                    ) : (
+                    {tx.tipo !== 'Gasto' && (
                       <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-1 rounded-full ${
                         tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                       }`}>
                         {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : <Wallet size={11} />}
                         {tx.tipo}
+                      </span>
+                    )}
+                    {tx.presupuestoId ? (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
+                        <Check size={11} /> Asignada
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                        <AlertCircle size={11} /> Sin asignar
                       </span>
                     )}
                     <button
@@ -478,13 +539,14 @@ export default function TransaccionesPage() {
               <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
                   <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Presup.</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>
-                  <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>
-                  <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estatus</th>
+                  {colVisible.has('categoria') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>}
+                  {colVisible.has('presupuesto') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Presup.</th>}
+                  {colVisible.has('quincena') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>}
+                  {colVisible.has('fecha') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>}
+                  {colVisible.has('usuario') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>}
+                  {colVisible.has('metodoPago') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Método de pago</th>}
+                  {colVisible.has('tipo') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>}
+                  {colVisible.has('estatus') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estatus</th>}
                   <th className="text-right px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Monto</th>
                 </tr>
               </thead>
@@ -497,15 +559,17 @@ export default function TransaccionesPage() {
                       <td className="px-5 py-3.5">
                         <span className="font-medium text-slate-800 dark:text-slate-100 group-hover:text-indigo-700 transition-colors max-w-[200px] block truncate">{tx.descripcion}</span>
                       </td>
-                      <td className="px-4 py-3.5">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
-                          {tx.categoria?.nombre}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 text-center">
-                        {tx.tipo === 'Gasto' ? (
-                          tx.presupuestoId ? (
+                      {colVisible.has('categoria') && (
+                        <td className="px-4 py-3.5">
+                          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
+                            {tx.categoria?.nombre}
+                          </span>
+                        </td>
+                      )}
+                      {colVisible.has('presupuesto') && (
+                        <td className="px-4 py-3.5 text-center">
+                          {tx.presupuestoId ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400" title={tx.presupuesto?.descripcion}>
                               <Check size={10} /> Asignada
                             </span>
@@ -513,32 +577,37 @@ export default function TransaccionesPage() {
                             <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
                               <AlertCircle size={10} /> Sin asignar
                             </span>
-                          )
-                        ) : (
-                          <span className="text-slate-300 dark:text-slate-600 text-xs">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3.5">
-                        <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
-                      </td>
-                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(tx.fecha)}</td>
-                      <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>
-                      <td className="px-4 py-3.5 text-center">
-                        <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
-                          tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400'
-                        }`}>
-                          {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : tx.tipo === 'Ahorro' ? <Wallet size={11} /> : <ArrowDownRight size={11} />}
-                          {tx.tipo}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3.5 text-center">
-                        <button onClick={e => { e.stopPropagation(); toggleEstatus(tx) }} disabled={togglingId === tx.id}
-                          className={`text-xs font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors ${
-                            tx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
-                          } disabled:opacity-50`}>
-                          {togglingId === tx.id ? '...' : tx.estatus}
-                        </button>
-                      </td>
+                          )}
+                        </td>
+                      )}
+                      {colVisible.has('quincena') && (
+                        <td className="px-4 py-3.5">
+                          <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
+                        </td>
+                      )}
+                      {colVisible.has('fecha') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(tx.fecha)}</td>}
+                      {colVisible.has('usuario') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>}
+                      {colVisible.has('metodoPago') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.metodoPago?.nombre ?? '—'}</td>}
+                      {colVisible.has('tipo') && (
+                        <td className="px-4 py-3.5 text-center">
+                          <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
+                            tx.tipo === 'Ingreso' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400' : 'bg-rose-100 dark:bg-rose-900/30 text-rose-700 dark:text-rose-400'
+                          }`}>
+                            {tx.tipo === 'Ingreso' ? <ArrowUpRight size={11} /> : tx.tipo === 'Ahorro' ? <Wallet size={11} /> : <ArrowDownRight size={11} />}
+                            {tx.tipo}
+                          </span>
+                        </td>
+                      )}
+                      {colVisible.has('estatus') && (
+                        <td className="px-4 py-3.5 text-center">
+                          <button onClick={e => { e.stopPropagation(); toggleEstatus(tx) }} disabled={togglingId === tx.id}
+                            className={`text-xs font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors ${
+                              tx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
+                            } disabled:opacity-50`}>
+                            {togglingId === tx.id ? '...' : tx.estatus}
+                          </button>
+                        </td>
+                      )}
                       <td className={`px-4 py-3.5 text-right font-bold tabular-nums ${
                         tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-rose-600 dark:text-rose-400'
                       }`}>
@@ -603,13 +672,11 @@ export default function TransaccionesPage() {
                   <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{detailTx.quincena.codigo}</span>
                 } />
                 <DetailRow icon={<div className={`w-2 h-2 rounded-full ${(CAT_COLORS[detailTx.categoria?.nombre] ?? DEFAULT_CAT_COLOR).dot}`} />} label="Categoría" value={detailTx.categoria?.nombre} />
-                {detailTx.tipo === 'Gasto' && (
-                  <DetailRow icon={<Wallet size={16} />} label="Partida de presupuesto" value={
-                    detailTx.presupuesto
-                      ? <span className="text-indigo-600 dark:text-indigo-400">{detailTx.presupuesto.descripcion}</span>
-                      : <span className="text-amber-600 dark:text-amber-400">Sin asignar</span>
-                  } />
-                )}
+                <DetailRow icon={<Wallet size={16} />} label="Partida de presupuesto" value={
+                  detailTx.presupuesto
+                    ? <span className="text-indigo-600 dark:text-indigo-400">{detailTx.presupuesto.descripcion}</span>
+                    : <span className="text-amber-600 dark:text-amber-400">Sin asignar</span>
+                } />
                 <DetailRow icon={<User size={16} />} label="Usuario" value={detailTx.user?.nombre ?? 'Sin asignar'} />
                 {detailTx.metodoPago && (
                   <DetailRow icon={<CreditCard size={16} />} label="Método de pago" value={detailTx.metodoPago.nombre} />
@@ -704,35 +771,53 @@ export default function TransaccionesPage() {
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="tx-categoria">Categoría *</Label>
-              <select id="tx-categoria" value={form.categoriaId} onChange={e => setForm(f => ({ ...f, categoriaId: e.target.value, presupuestoId: '' }))} className={fieldClass(formErrors.categoriaId)}>
+              <select id="tx-categoria" value={form.categoriaId} onChange={e => {
+                const catId = e.target.value
+                const cat = categorias.find(c => c.id.toString() === catId)
+                setForm(f => ({
+                  ...f,
+                  categoriaId: catId,
+                  presupuestoId: '',
+                  tipo: cat?.tipo === 'Ahorro' ? 'Ahorro' : (f.tipo === 'Ahorro' ? 'Gasto' : f.tipo),
+                }))
+              }} className={fieldClass(formErrors.categoriaId)}>
                 <option value="">Seleccionar...</option>
                 {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
               </select>
               {formErrors.categoriaId && <p className="text-xs text-rose-500 mt-1">{formErrors.categoriaId}</p>}
             </div>
             <div>
-              <Label htmlFor="tx-tipo">Tipo *</Label>
-              <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value, presupuestoId: e.target.value === 'Gasto' ? f.presupuestoId : '' }))} className={fieldClass(formErrors.tipo)}>
-                <option value="Gasto">Gasto</option>
-                <option value="Ingreso">Ingreso</option>
-                <option value="Ahorro">Ahorro</option>
-              </select>
-            </div>
-          </div>
-          {form.tipo === 'Gasto' && (
-            <div>
-              <Label htmlFor="tx-presupuesto">Línea de presupuesto</Label>
-              <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.categoriaId || !form.quincenaId}>
-                <option value="">Sin asignar</option>
-                {presupuestoOpciones.map(p => (
-                  <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(p.montoEfectivo)})</option>
-                ))}
-              </select>
-              {form.categoriaId && form.quincenaId && presupuestoOpciones.length === 0 && (
-                <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Esta categoría no tiene partidas de presupuesto en esta quincena.</p>
+              {esAhorro ? (
+                <>
+                  <Label htmlFor="tx-direccion">Dirección *</Label>
+                  <select id="tx-direccion" value={form.direccion} onChange={e => setForm(f => ({ ...f, direccion: e.target.value }))} className={fieldClass()}>
+                    <option value="Aporte">Aporte (suma al ahorro)</option>
+                    <option value="Retiro">Retiro (resta del ahorro)</option>
+                  </select>
+                </>
+              ) : (
+                <>
+                  <Label htmlFor="tx-tipo">Tipo *</Label>
+                  <select id="tx-tipo" value={form.tipo} onChange={e => setForm(f => ({ ...f, tipo: e.target.value }))} className={fieldClass(formErrors.tipo)}>
+                    <option value="Gasto">Gasto</option>
+                    <option value="Ingreso">Ingreso</option>
+                  </select>
+                </>
               )}
             </div>
-          )}
+          </div>
+          <div>
+            <Label htmlFor="tx-presupuesto">Línea de presupuesto</Label>
+            <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.categoriaId || !form.quincenaId}>
+              <option value="">Sin asignar</option>
+              {presupuestoOpciones.map(p => (
+                <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(p.montoEfectivo)})</option>
+              ))}
+            </select>
+            {form.categoriaId && form.quincenaId && presupuestoOpciones.length === 0 && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Esta categoría no tiene partidas de presupuesto en esta quincena.</p>
+            )}
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="tx-monto">Monto (MXN) *</Label>
