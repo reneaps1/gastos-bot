@@ -684,6 +684,14 @@ export default function PresupuestoPage() {
 
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
+  // El encabezado (titulo, Liquidez, Reporte) es compartido por todas las
+  // vistas, pero Tabla tiene su propio selector de quincena (tablaQuincenaId)
+  // independiente de `quincenaId` (el de Tarjetas) -- sin esto, el encabezado
+  // seguia mostrando la quincena de Tarjetas aunque el usuario hubiera
+  // elegido otra en Tabla, y el Reporte salia de la quincena equivocada.
+  const qInfoHeader = (vista === 'tabla' && tablaQuincenaId !== ALL_QUINCENAS)
+    ? quincenas.find(q => q.id.toString() === tablaQuincenaId) ?? qInfo
+    : qInfo
   const multiSelectActivo = selectedQuincenaIds.length > 1
   // Limite de referencia efectivo: el override propio de esta quincena
   // (configurable en Presupuesto → Análisis) si existe, si no el global de
@@ -717,12 +725,12 @@ export default function PresupuestoPage() {
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Presupuesto</h2>
-          {qInfo && (
+          {qInfoHeader && (
             <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              {qInfo.codigo} · {formatDateStr(qInfo.fechaInicio, { day: '2-digit', month: 'long' })}
+              {qInfoHeader.codigo} · {formatDateStr(qInfoHeader.fechaInicio, { day: '2-digit', month: 'long' })}
               {' — '}
-              {formatDateStr(qInfo.fechaFin, { day: '2-digit', month: 'long' })}
-              {multiSelectActivo && (
+              {formatDateStr(qInfoHeader.fechaFin, { day: '2-digit', month: 'long' })}
+              {vista !== 'tabla' && multiSelectActivo && (
                 <span className="ml-1.5 text-indigo-500 dark:text-indigo-400 font-medium">
                   + {selectedQuincenaIds.length - 1} combinada{selectedQuincenaIds.length - 1 === 1 ? '' : 's'}
                 </span>
@@ -731,13 +739,13 @@ export default function PresupuestoPage() {
           )}
         </div>
         <div className="flex items-center flex-wrap gap-3">
-          {qInfo && (
-            <Link href={`/quincena/${qInfo.codigo}`}
+          {qInfoHeader && (
+            <Link href={`/quincena/${qInfoHeader.codigo}`}
               className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg transition-colors">
               <Droplets size={14} /> Liquidez
             </Link>
           )}
-          {qInfo && <ReporteButton quincenaId={qInfo.id} quincenaCodigo={qInfo.codigo} fechaInicio={qInfo.fechaInicio} fechaFin={qInfo.fechaFin} />}
+          {qInfoHeader && <ReporteButton quincenaId={qInfoHeader.id} quincenaCodigo={qInfoHeader.codigo} fechaInicio={qInfoHeader.fechaInicio} fechaFin={qInfoHeader.fechaFin} />}
           {presupuestos.length === 0 && !loading && (
             <button onClick={handleCopiar} disabled={copying}
               className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
