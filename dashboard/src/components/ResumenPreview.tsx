@@ -107,12 +107,19 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   // segun lo que se muestre en la tabla), pero la tabla en si solo lista lo
   // que todavia no esta cubierto -- lo ya pagado al 100% no aporta nada a un
   // reporte que existe para ver que falta.
-  const totalPresupuestado = rows.filter(cuentaParaAgregados).reduce((s, r) => s + Number(r.montoEfectivo), 0)
-  const totalPagado = rows.filter(cuentaParaAgregados).reduce((s, r) => s + r.pagado, 0)
+  // Solo Gasto: este reporte es un tracker de "que debo pagar todavia", igual
+  // que calcularFaltaPorPagar (que ya filtra por tipo internamente) -- sumar
+  // Ingreso/Ahorro aqui inflaba "Pagado" con dinero que entro, no que salio.
+  const gastoRows = rows.filter(r => r.categoria.tipo === 'Gasto' && cuentaParaAgregados(r))
+  const totalPresupuestado = gastoRows.reduce((s, r) => s + Number(r.montoEfectivo), 0)
+  const totalPagado = gastoRows.reduce((s, r) => s + r.pagado, 0)
   const totalFalta = calcularFaltaPorPagar(rows)
   const filasPorCubrir = rows.filter(r => r.estado !== 'Cubierto')
   // El pie de la tabla suma solo lo que se ve en la tabla (lo pendiente), no
-  // la quincena completa -- si no, no cuadraria con las filas visibles.
+  // la quincena completa -- si no, no cuadraria con las filas visibles. Las
+  // filas de la tabla ya son puro Gasto (Ingreso/Ahorro siempre cierran en
+  // 'Cubierto' porque calcularFaltaPorPagar les da falta=0), asi que no hace
+  // falta filtrar de nuevo por tipo aqui.
   const totalPresupuestadoPendiente = filasPorCubrir.reduce((s, r) => s + Number(r.montoEfectivo), 0)
   const totalPagadoPendiente = filasPorCubrir.reduce((s, r) => s + r.pagado, 0)
   const totalFaltaPendiente = calcularFaltaPorPagar(filasPorCubrir)
