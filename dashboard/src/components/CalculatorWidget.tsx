@@ -13,12 +13,20 @@ const VARIANT_CLASS: Record<Variant, string> = {
   primary: 'bg-indigo-600 hover:bg-indigo-700 text-white',
 }
 
-function CalcButton({ label, onClick, variant = 'default', className = '' }: {
-  label: string; onClick: () => void; variant?: Variant; className?: string
+// Id "canonico" de cada tecla/boton (independiente del label que se muestra),
+// para poder resaltar el boton correcto sin importar si vino de un clic o del
+// atajo de teclado -- ver CalculatorWidget.
+type KeyId = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9' | '.' | '+' | '-' | '×' | '÷' | '=' | 'C' | '⌫' | '%'
+
+function CalcButton({ id, label, onClick, activeId, variant = 'default', className = '' }: {
+  id: KeyId; label: string; onClick: () => void; activeId: KeyId | null; variant?: Variant; className?: string
 }) {
+  const pressed = activeId === id
   return (
     <button onClick={onClick}
-      className={`h-9 rounded-lg text-sm font-medium cursor-pointer transition-colors ${VARIANT_CLASS[variant]} ${className}`}>
+      className={`h-9 rounded-lg text-sm font-medium cursor-pointer transition-all active:scale-95 ${VARIANT_CLASS[variant]} ${
+        pressed ? 'ring-2 ring-indigo-400 dark:ring-indigo-500 scale-95' : ''
+      } ${className}`}>
       {label}
     </button>
   )
@@ -29,10 +37,20 @@ function CalcButton({ label, onClick, variant = 'default', className = '' }: {
 // -- en movil no hay espacio para un panel anclado al lateral.
 export function CalculatorWidget() {
   const [open, setOpen] = useState(false)
+  const [activeId, setActiveId] = useState<KeyId | null>(null)
+  const flashTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const lastInputRef = useRef<HTMLInputElement | null>(null)
   const { toast } = useToast()
-  const { display, error, inputDigit, operate, percent, equals, clear, backspace } = useCalculator()
+  const { display, expression, error, inputDigit, operate, percent, equals, clear, backspace } = useCalculator()
+
+  // Resalta brevemente el boton correspondiente -- asi se ve que tecla se
+  // registro tambien cuando se usa el teclado, no solo al hacer clic.
+  function flash(id: KeyId) {
+    if (flashTimeout.current) clearTimeout(flashTimeout.current)
+    setActiveId(id)
+    flashTimeout.current = setTimeout(() => setActiveId(null), 150)
+  }
 
   // Recuerda el ultimo input numerico enfocado en CUALQUIER parte de la app
   // (incluyendo dentro de un FormModal abierto) para que "Usar aqui" sepa
@@ -63,16 +81,16 @@ export function CalculatorWidget() {
     function onKeyDown(e: KeyboardEvent) {
       if (isEditing(document.activeElement)) return
       const key = e.key
-      if (key >= '0' && key <= '9') { e.preventDefault(); inputDigit(key); return }
-      if (key === '.' || key === ',') { e.preventDefault(); inputDigit('.'); return }
-      if (key === '+') { e.preventDefault(); operate('+'); return }
-      if (key === '-') { e.preventDefault(); operate('-'); return }
-      if (key === '*' || key.toLowerCase() === 'x') { e.preventDefault(); operate('×'); return }
-      if (key === '/') { e.preventDefault(); operate('÷'); return }
-      if (key === '%') { e.preventDefault(); percent(); return }
-      if (key === 'Enter' || key === '=') { e.preventDefault(); equals(); return }
-      if (key === 'Backspace') { e.preventDefault(); backspace(); return }
-      if (key.toLowerCase() === 'c') { e.preventDefault(); clear(); return }
+      if (key >= '0' && key <= '9') { e.preventDefault(); flash(key as KeyId); inputDigit(key); return }
+      if (key === '.' || key === ',') { e.preventDefault(); flash('.'); inputDigit('.'); return }
+      if (key === '+') { e.preventDefault(); flash('+'); operate('+'); return }
+      if (key === '-') { e.preventDefault(); flash('-'); operate('-'); return }
+      if (key === '*' || key.toLowerCase() === 'x') { e.preventDefault(); flash('×'); operate('×'); return }
+      if (key === '/') { e.preventDefault(); flash('÷'); operate('÷'); return }
+      if (key === '%') { e.preventDefault(); flash('%'); percent(); return }
+      if (key === 'Enter' || key === '=') { e.preventDefault(); flash('='); equals(); return }
+      if (key === 'Backspace') { e.preventDefault(); flash('⌫'); backspace(); return }
+      if (key.toLowerCase() === 'c') { e.preventDefault(); flash('C'); clear(); return }
       if (key === 'Escape') { e.preventDefault(); setOpen(false); return }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -120,7 +138,10 @@ export function CalculatorWidget() {
           </div>
 
           <div className="px-4 pt-3 pb-2">
-            <div className="bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-3 text-right overflow-hidden">
+            <div className="bg-slate-50 dark:bg-slate-900 rounded-lg px-3 py-2 text-right overflow-hidden min-h-[68px] flex flex-col justify-end">
+              <span className="h-4 text-xs text-slate-400 dark:text-slate-500 tabular-nums truncate">
+                {expression || ' '}
+              </span>
               <span className={`text-2xl font-semibold tabular-nums break-all ${error ? 'text-rose-600 dark:text-rose-400' : 'text-slate-800 dark:text-slate-100'}`}>
                 {display}
               </span>
@@ -128,29 +149,29 @@ export function CalculatorWidget() {
           </div>
 
           <div className="grid grid-cols-4 gap-1.5 px-4 pb-3">
-            <CalcButton label="C" onClick={clear} variant="muted" />
-            <CalcButton label="⌫" onClick={backspace} variant="muted" />
-            <CalcButton label="%" onClick={percent} variant="muted" />
-            <CalcButton label="÷" onClick={() => operate('÷')} variant="operator" />
+            <CalcButton id="C" label="C" onClick={clear} activeId={activeId} variant="muted" />
+            <CalcButton id="⌫" label="⌫" onClick={backspace} activeId={activeId} variant="muted" />
+            <CalcButton id="%" label="%" onClick={percent} activeId={activeId} variant="muted" />
+            <CalcButton id="÷" label="÷" onClick={() => operate('÷')} activeId={activeId} variant="operator" />
 
-            <CalcButton label="7" onClick={() => inputDigit('7')} />
-            <CalcButton label="8" onClick={() => inputDigit('8')} />
-            <CalcButton label="9" onClick={() => inputDigit('9')} />
-            <CalcButton label="×" onClick={() => operate('×')} variant="operator" />
+            <CalcButton id="7" label="7" onClick={() => inputDigit('7')} activeId={activeId} />
+            <CalcButton id="8" label="8" onClick={() => inputDigit('8')} activeId={activeId} />
+            <CalcButton id="9" label="9" onClick={() => inputDigit('9')} activeId={activeId} />
+            <CalcButton id="×" label="×" onClick={() => operate('×')} activeId={activeId} variant="operator" />
 
-            <CalcButton label="4" onClick={() => inputDigit('4')} />
-            <CalcButton label="5" onClick={() => inputDigit('5')} />
-            <CalcButton label="6" onClick={() => inputDigit('6')} />
-            <CalcButton label="−" onClick={() => operate('-')} variant="operator" />
+            <CalcButton id="4" label="4" onClick={() => inputDigit('4')} activeId={activeId} />
+            <CalcButton id="5" label="5" onClick={() => inputDigit('5')} activeId={activeId} />
+            <CalcButton id="6" label="6" onClick={() => inputDigit('6')} activeId={activeId} />
+            <CalcButton id="-" label="−" onClick={() => operate('-')} activeId={activeId} variant="operator" />
 
-            <CalcButton label="1" onClick={() => inputDigit('1')} />
-            <CalcButton label="2" onClick={() => inputDigit('2')} />
-            <CalcButton label="3" onClick={() => inputDigit('3')} />
-            <CalcButton label="+" onClick={() => operate('+')} variant="operator" />
+            <CalcButton id="1" label="1" onClick={() => inputDigit('1')} activeId={activeId} />
+            <CalcButton id="2" label="2" onClick={() => inputDigit('2')} activeId={activeId} />
+            <CalcButton id="3" label="3" onClick={() => inputDigit('3')} activeId={activeId} />
+            <CalcButton id="+" label="+" onClick={() => operate('+')} activeId={activeId} variant="operator" />
 
-            <CalcButton label="0" onClick={() => inputDigit('0')} className="col-span-2" />
-            <CalcButton label="." onClick={() => inputDigit('.')} />
-            <CalcButton label="=" onClick={equals} variant="primary" />
+            <CalcButton id="0" label="0" onClick={() => inputDigit('0')} activeId={activeId} className="col-span-2" />
+            <CalcButton id="." label="." onClick={() => inputDigit('.')} activeId={activeId} />
+            <CalcButton id="=" label="=" onClick={equals} activeId={activeId} variant="primary" />
           </div>
 
           <div className="flex gap-2 px-4 pb-4">
