@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle, Download } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
@@ -12,6 +12,7 @@ import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
 import { useColumnVisibility } from '@/lib/use-column-visibility'
+import { useSearchShortcut } from '@/lib/use-search-shortcut'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -98,6 +99,8 @@ export default function TransaccionesPage() {
   const [asignacion, setAsignacion] = useState('')
   const [busqueda, setBusqueda] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const busquedaInputRef = useRef<HTMLInputElement>(null)
+  useSearchShortcut(busquedaInputRef)
 
   const [quincenas, setQuincenas] = useState<Quincena[]>([])
   const [categorias, setCategorias] = useState<Categoria[]>([])
@@ -427,7 +430,7 @@ export default function TransaccionesPage() {
           </FilterChip>
           <div className="relative flex-1 min-w-[160px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-            <input type="text" placeholder="Buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            <input ref={busquedaInputRef} type="text" placeholder="Buscar..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
               className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
             {busqueda && (
               <button type="button" onClick={() => setBusqueda('')} aria-label="Quitar búsqueda"

@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import Link from 'next/link'
 import { Pencil, ExternalLink, PauseCircle, Trash2, AlertTriangle, Repeat, Layers, Search, X, ChevronUp, ChevronDown } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
@@ -8,6 +8,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { colorForCategoria } from '@/lib/category-colors'
+import { useSearchShortcut } from '@/lib/use-search-shortcut'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
@@ -118,6 +119,8 @@ export function LineasRecurrentesTable<T extends RecurrenteRow>({ rows, today, l
   const [categoriaFiltro, setCategoriaFiltro] = useState('')
   const [estadoFiltro, setEstadoFiltro] = useState('')
   const [busqueda, setBusqueda] = useState('')
+  const busquedaInputRef = useRef<HTMLInputElement>(null)
+  useSearchShortcut(busquedaInputRef)
   // sortKey empieza en null a propósito: sin tocar ningún encabezado, el
   // orden es exactamente el que ya devuelve buildGrupos (activas primero,
   // más recientes arriba) -- este cambio no altera la vista por default.
@@ -204,7 +207,7 @@ export function LineasRecurrentesTable<T extends RecurrenteRow>({ rows, today, l
             </FilterChip>
             <div className="relative flex-1 min-w-[160px]">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-              <input type="text" placeholder="Buscar por descripción o categoría..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+              <input ref={busquedaInputRef} type="text" placeholder="Buscar por descripción o categoría..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
                 className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
               {busqueda && (
                 <button type="button" onClick={() => setBusqueda('')} aria-label="Quitar búsqueda"

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
 import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowRightLeft, Coins } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
@@ -16,6 +16,7 @@ import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
 import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
 import { useColumnVisibility } from '@/lib/use-column-visibility'
+import { useSearchShortcut } from '@/lib/use-search-shortcut'
 import { calcularFaltaPorPagar, calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
@@ -211,6 +212,8 @@ export default function PresupuestoPage() {
   const [wizardCierreOpen, setWizardCierreOpen] = useState(false)
 
   const [busqueda, setBusqueda] = useState('')
+  const busquedaInputRef = useRef<HTMLInputElement>(null)
+  useSearchShortcut(busquedaInputRef)
   const [pendientePorPagar, setPendientePorPagar] = useState(0)
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
@@ -1213,7 +1216,7 @@ export default function PresupuestoPage() {
       {!loading && grupos.length > 0 && (
         <div className="relative">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-          <input type="text" placeholder="Buscar por categoría o descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+          <input ref={busquedaInputRef} type="text" placeholder="Buscar por categoría o descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
             className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           {busqueda && (
             <button type="button" onClick={() => setBusqueda('')} aria-label="Quitar búsqueda"
@@ -1947,6 +1950,8 @@ function PresupuestoTabla({
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
   openEdit, setDeleteTarget, setDetalleP, setTraspasoOrigen,
 }: PresupuestoTablaProps) {
+  const busquedaTablaInputRef = useRef<HTMLInputElement>(null)
+  useSearchShortcut(busquedaTablaInputRef)
   const { visible: colVisible, toggle: toggleCol } = useColumnVisibility('milo:columns:presupuesto-tabla', PRESUPUESTO_TABLA_COLUMNS_DEFAULT)
   // Descripción + las columnas opcionales del grupo inicial (Quincena,
   // Categoría, Clasificación) van antes de Presupuestado; Recurrente/Vence +
@@ -2081,7 +2086,7 @@ function PresupuestoTabla({
           </FilterChip>
           <div className="relative flex-1 min-w-[160px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-            <input type="text" placeholder="Buscar por categoría o descripción..." value={busquedaTabla} onChange={e => setBusquedaTabla(e.target.value)}
+            <input ref={busquedaTablaInputRef} type="text" placeholder="Buscar por categoría o descripción..." value={busquedaTabla} onChange={e => setBusquedaTabla(e.target.value)}
               className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
             {busquedaTabla && (
               <button type="button" onClick={() => setBusquedaTabla('')} aria-label="Quitar búsqueda"

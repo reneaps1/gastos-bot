@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2, Search, Filter, Download, Upload, GripVertical, C
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
+import { useSearchShortcut } from '@/lib/use-search-shortcut'
 
 interface Categoria {
   id: number
@@ -56,6 +57,8 @@ export default function AdminCategoriasPage() {
   const [deleting, setDeleting] = useState(false)
 
   const [search, setSearch] = useState('')
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  useSearchShortcut(searchInputRef)
   const [filterTipo, setFilterTipo] = useState('')
   const [filterEstado, setFilterEstado] = useState('')
 
@@ -316,7 +319,7 @@ export default function AdminCategoriasPage() {
         <div className="flex flex-wrap gap-3">
           <div className="relative flex-1 min-w-[200px]">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
-            <input type="text" placeholder="Buscar categoría..." value={search} onChange={e => setSearch(e.target.value)}
+            <input ref={searchInputRef} type="text" placeholder="Buscar categoría..." value={search} onChange={e => setSearch(e.target.value)}
               className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-9 pr-3 py-2 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
           </div>
           <select value={filterTipo} onChange={e => setFilterTipo(e.target.value)}
