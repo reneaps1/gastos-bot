@@ -49,6 +49,36 @@ export function CalculatorWidget() {
     return () => window.removeEventListener('focusin', onFocusIn)
   }, [])
 
+  // Soporte de teclado clasico de calculadora, solo mientras el panel esta
+  // abierto. Si el foco esta en un campo editable (ej. escribiendo en Monto
+  // con el panel abierto encima), se deja pasar sin tocar -- de lo contrario
+  // "5" en el campo tambien le pegaria a la calculadora.
+  useEffect(() => {
+    if (!open) return
+    function isEditing(el: Element | null) {
+      if (!el) return false
+      const tag = el.tagName
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (el as HTMLElement).isContentEditable
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (isEditing(document.activeElement)) return
+      const key = e.key
+      if (key >= '0' && key <= '9') { e.preventDefault(); inputDigit(key); return }
+      if (key === '.' || key === ',') { e.preventDefault(); inputDigit('.'); return }
+      if (key === '+') { e.preventDefault(); operate('+'); return }
+      if (key === '-') { e.preventDefault(); operate('-'); return }
+      if (key === '*' || key.toLowerCase() === 'x') { e.preventDefault(); operate('×'); return }
+      if (key === '/') { e.preventDefault(); operate('÷'); return }
+      if (key === '%') { e.preventDefault(); percent(); return }
+      if (key === 'Enter' || key === '=') { e.preventDefault(); equals(); return }
+      if (key === 'Backspace') { e.preventDefault(); backspace(); return }
+      if (key.toLowerCase() === 'c') { e.preventDefault(); clear(); return }
+      if (key === 'Escape') { e.preventDefault(); setOpen(false); return }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [open, inputDigit, operate, percent, equals, clear, backspace])
+
   function handleCopy() {
     navigator.clipboard.writeText(display)
       .then(() => toast('Copiado al portapapeles'))
