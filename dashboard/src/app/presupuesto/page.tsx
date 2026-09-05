@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRight } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
@@ -192,6 +192,8 @@ export default function PresupuestoPage() {
   const [pendientePorPagar, setPendientePorPagar] = useState(0)
   const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
   const [gastoParaLimite, setGastoParaLimite] = useState(0)
+  const [ingresosReal, setIngresosReal] = useState(0)
+  const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
 
   const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis' | 'configuracion'>('tabla')
   const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
@@ -328,21 +330,27 @@ export default function PresupuestoPage() {
     if (!quincenaId) return
     setLoading(true)
     try {
-      const [presupRes, txRes] = await Promise.all([
+      const [presupRes, txRes, liqRes] = await Promise.all([
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
         fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=500`),
+        fetch(`/api/liquidez?quincenaId=${quincenaId}`),
       ])
       const data: Presupuesto[] = await presupRes.json()
       const txData = await txRes.json()
       const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> = txData.data ?? []
+      const liqData = await liqRes.json()
 
       setPresupuestos(data)
       setQuincenaActual(data[0]?.quincena ?? quincenas.find(q => q.id.toString() === quincenaId) ?? null)
 
       setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
       setGastoParaLimite(Number(txData.totales?.GastoParaLimite ?? 0))
+      setIngresosReal(Number(txData.totales?.Ingreso ?? 0))
 
       setPendientePorPagar(calcularFaltaPorPagar(data))
+
+      const rawSnap = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
+      setLiquidezSnapshot(rawSnap ? { ...normalizeMontos(rawSnap), faltaPagar: Number(rawSnap.faltaPagar) || 0 } : null)
     } finally { setLoading(false) }
   }, [quincenaId, quincenas])
 
@@ -563,6 +571,32 @@ export default function PresupuestoPage() {
   const totalIngresoPresupuestado = ingresoGrupos.reduce((s, g) => s + g.montoPresupuestado, 0)
   const totalIngresoReal = ingresoGrupos.reduce((s, g) => s + g.real, 0)
 
+  // "Lo que sobra" -- mismo cálculo que "Planificación del presupuesto" del
+  // Dashboard (dashboard/src/app/page.tsx), replicado aquí para la vista
+  // Tarjetas: cuánto de los ingresos reales no tiene partida asignada
+  // (según presupuesto) y cuánto queda libre de verdad (según liquidez).
+  const ahorroComprometido = presupuestos
+    .filter(p => p.categoria.tipo === 'Ahorro' && cuentaParaAgregados(p))
+    .reduce((s, p) => s + p.montoEfectivo, 0)
+  const gastosNoCubiertos = txSinPresupuesto
+    .filter(t => t.tipo === 'Gasto')
+    .reduce((s, t) => s + Number(t.monto), 0)
+  const totalExcedidoLineas = presupuestos
+    .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+    .reduce((s, p) => s + (p.excedido ?? 0), 0)
+  const sinAsignar = ingresosReal - totalPresupuestado - ahorroComprometido
+  const totalComprometido = totalPresupuestado + gastosNoCubiertos + totalExcedidoLineas + ahorroComprometido
+  const disponibleSegunPresupuesto = ingresosReal - totalComprometido
+  const totalLiquidoSnap = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
+  const disponibleEfectivo = totalLiquidoSnap - pendientePorPagar
+  const pctPresupAsignado = ingresosReal > 0 ? (totalPresupuestado / ingresosReal) * 100 : 0
+  const pctSinPresupuesto = ingresosReal > 0 ? (gastosNoCubiertos / ingresosReal) * 100 : 0
+  const pctExcedidoLineasRatio = ingresosReal > 0 ? (totalExcedidoLineas / ingresosReal) * 100 : 0
+  const pctExcedidoBar = totalExcedidoLineas > 0 ? Math.max(pctExcedidoLineasRatio, 1) : 0
+  const pctDisponibleReal = ingresosReal > 0 && disponibleSegunPresupuesto > 0 ? (disponibleSegunPresupuesto / ingresosReal) * 100 : 0
+  const pctSinPresupuestoBar = Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))
+  const pctExcedidoBarClamped = Math.min(pctExcedidoBar, Math.max(0, 100 - pctPresupAsignado - pctSinPresupuestoBar))
+
   const today = getMexicoDateString()
   const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
   // Limite de referencia efectivo: el override propio de esta quincena
@@ -768,6 +802,139 @@ export default function PresupuestoPage() {
               </div>
             )
           })()}
+        </div>
+      )}
+
+      {/* Lo que sobra -- mismo bloque "Planificación del presupuesto" que el
+          Dashboard (Ingresos, Presupuestado, Sin destino en el presupuesto,
+          Disponible real), replicado aquí para esta quincena. */}
+      {ingresosReal > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Lo que sobra</h3>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Ingresos</p>
+              <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(ingresosReal)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Presupuestado</p>
+              <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalPresupuestado)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Sin destino en el presupuesto</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">de tus ingresos, esto no tiene partida asignada</p>
+              <p className={`text-base font-bold tabular-nums mt-0.5 ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
+              {gastosNoCubiertos > 0 && (
+                <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-md px-1.5 py-0.5 inline-block">
+                  ⚠ incluye {formatMXN(gastosNoCubiertos)} sin presupuestar
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Disponible real</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">
+                {liquidezSnapshot ? 'tu efectivo hoy, menos lo que aún debes' : 'captura tu corte de liquidez para verlo'}
+              </p>
+              {liquidezSnapshot ? (
+                <>
+                  <p className={`text-base font-bold tabular-nums mt-0.5 ${disponibleEfectivo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {formatMXN(Math.abs(disponibleEfectivo))}{disponibleEfectivo < 0 ? ' de más' : ''}
+                  </p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                    {formatMXN(totalLiquidoSnap)} en cuentas − {formatMXN(pendientePorPagar)} comprometido
+                  </p>
+                </>
+              ) : (
+                <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+                  Capturar corte <ArrowRight size={10} />
+                </Link>
+              )}
+              <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
+                según presupuesto:
+                <span className={`font-semibold tabular-nums ${disponibleSegunPresupuesto < 0 ? 'text-rose-500 dark:text-rose-400' : ''}`}>{formatMXN(disponibleSegunPresupuesto)}</span>
+              </p>
+              {ahorroComprometido > 0 && (
+                <p className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-md px-1.5 py-0.5 inline-block">
+                  incluye {formatMXN(ahorroComprometido)} de ahorro comprometido
+                </p>
+              )}
+            </div>
+          </div>
+          {/* Stacked bar con tooltips */}
+          <div className="relative mt-1">
+            <div className="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden flex">
+              <div className="h-full transition-all bg-indigo-400 dark:bg-indigo-500" style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }} />
+              {gastosNoCubiertos > 0 && (
+                <div className="h-full bg-amber-400 dark:bg-amber-500 transition-all" style={{ width: `${pctSinPresupuestoBar}%` }} />
+              )}
+              {totalExcedidoLineas > 0 && (
+                <div className="h-full bg-rose-500 dark:bg-rose-500 transition-all" style={{ width: `${pctExcedidoBarClamped}%` }} />
+              )}
+              {pctDisponibleReal > 0 && (
+                <div className="h-full bg-emerald-400 dark:bg-emerald-500 transition-all" style={{ width: `${pctDisponibleReal}%` }} />
+              )}
+            </div>
+            <div className="absolute inset-0 flex">
+              <div className="relative group/budget h-full cursor-default" style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}>
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/budget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                  <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-indigo-400" />
+                  Presupuestado: <span className="font-semibold">{formatMXN(totalPresupuestado)}</span> · {pctPresupAsignado.toFixed(0)}%
+                </div>
+              </div>
+              {gastosNoCubiertos > 0 && (
+                <div className="relative group/unbudget h-full cursor-default" style={{ width: `${pctSinPresupuestoBar}%` }}>
+                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/unbudget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-amber-400" />
+                    Sin presupuesto: <span className="font-semibold">{formatMXN(gastosNoCubiertos)}</span> · {pctSinPresupuesto.toFixed(1)}%
+                  </div>
+                </div>
+              )}
+              {totalExcedidoLineas > 0 && (
+                <div className="relative group/excedido h-full cursor-default" style={{ width: `${pctExcedidoBarClamped}%` }}>
+                  <div className="absolute bottom-full mb-2 right-0 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/excedido:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-500" />
+                    Excedido: <span className="font-semibold">{formatMXN(totalExcedidoLineas)}</span> sobre partidas presupuestadas
+                  </div>
+                </div>
+              )}
+              {pctDisponibleReal > 0 && (
+                <div className="relative group/free h-full cursor-default" style={{ width: `${pctDisponibleReal}%` }}>
+                  <div className="absolute bottom-full mb-2 right-0 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/free:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-emerald-400" />
+                    Saldo libre: <span className="font-semibold">{formatMXN(disponibleSegunPresupuesto)}</span> · {pctDisponibleReal.toFixed(1)}%
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Legend */}
+          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+            <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+              <span className="w-2 h-2 rounded-full shrink-0 bg-indigo-400" />
+              {pctPresupAsignado.toFixed(0)}% presupuestado
+            </span>
+            {gastosNoCubiertos > 0 && (
+              <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                <span className="w-2 h-2 rounded-full shrink-0 bg-amber-400" />
+                {pctSinPresupuesto.toFixed(1)}% sin presupuesto
+              </span>
+            )}
+            {totalExcedidoLineas > 0 && (
+              <span className="flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
+                <TrendingUp size={11} className="shrink-0" />
+                {formatMXN(totalExcedidoLineas)} excedido en partidas
+              </span>
+            )}
+            {pctDisponibleReal > 0 && (
+              <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-400" />
+                {pctDisponibleReal.toFixed(1)}% saldo libre
+              </span>
+            )}
+          </div>
         </div>
       )}
 
