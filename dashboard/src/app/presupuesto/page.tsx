@@ -577,7 +577,10 @@ export default function PresupuestoPage() {
   // El compromiso original ya no se toca a mano una vez que la linea esta en
   // curso (algo real registrado, o ya se le hizo un traspaso) -- de ahi en
   // adelante el ajuste pasa por Recortar/traspaso, que dejan rastro en notas.
-  const montoOriginalBloqueado = editingP != null && (editingP.real > 0 || editingP.montoRevisado != null)
+  // Ese flujo (DeficitTriagePanel) solo opera sobre partidas de Gasto, asi que
+  // el bloqueo no aplica a Ingreso/Ahorro -- de lo contrario quedarian sin
+  // forma de corregir el monto una vez que entra el primer movimiento real.
+  const montoOriginalBloqueado = editingP != null && editingP.tipo === 'Gasto' && (editingP.real > 0 || editingP.montoRevisado != null)
 
   return (
     <div className="space-y-6">
