@@ -29,18 +29,16 @@ export interface ReporteTransaccionRow {
   usuario: string
 }
 
+export interface ReporteLiquidezCuenta {
+  nombre: string
+  monto: number
+  nota: string | null
+}
+
 export interface ReporteLiquidez {
   fechaCorte: string
   validado: boolean
-  bbva: number
-  banamex: number
-  uala: number
-  ualaInversion: number
-  efectivo: number
-  valesDespensa: number
-  valesGasolina: number
-  otros: number
-  otrosNota: string | null
+  cuentas: ReporteLiquidezCuenta[]
   totalLiquido: number
   faltaPagar: number
   pagosQuincena: number
@@ -84,14 +82,9 @@ export async function downloadReporteExcel(data: ReporteData) {
     resumen.addRow(['Falta por pagar (ejecucion de presupuesto)', money(l.faltaPagar)]).getCell(2).numFmt = moneyFmt
     resumen.addRow(['Delta (liquido neto)', money(l.delta)]).getCell(2).numFmt = moneyFmt
     resumen.addRow([])
-    resumen.addRow(['BBVA', money(l.bbva)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Banamex', money(l.banamex)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Uala', money(l.uala)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Uala Inversion', money(l.ualaInversion)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Efectivo', money(l.efectivo)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Vales despensa', money(l.valesDespensa)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow(['Vales gasolina', money(l.valesGasolina)]).getCell(2).numFmt = moneyFmt
-    resumen.addRow([l.otrosNota ? `Otros (${l.otrosNota})` : 'Otros', money(l.otros)]).getCell(2).numFmt = moneyFmt
+    for (const c of l.cuentas) {
+      resumen.addRow([c.nota ? `${c.nombre} (${c.nota})` : c.nombre, money(c.monto)]).getCell(2).numFmt = moneyFmt
+    }
     resumen.addRow([])
   }
 

@@ -14,7 +14,10 @@ export async function GET(request: Request) {
 
     const snapshots = await prisma.liquidezSnapshot.findMany({
       where,
-      include: { quincena: true },
+      include: {
+        quincena: true,
+        montos: { include: { cuenta: true }, orderBy: { cuenta: { orden: 'asc' } } },
+      },
       orderBy: [
         { fechaCorte: 'desc' },
         { fechaRegistro: 'desc' },
@@ -32,11 +35,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const {
-      fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
-      efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      teorico, notas, validado
-    } = body
+    const { fechaCorte, quincenaId, montos, teorico, notas, validado } = body
 
     if (!fechaCorte || !quincenaId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -54,19 +53,20 @@ export async function POST(request: Request) {
       calcularGastosAlCorte(quincenaIdNum, fechaCorteDate),
     ])
 
+    const montosList: { cuentaId: number; monto: number; nota: string | null }[] = Array.isArray(montos)
+      ? montos
+          .map((m: { cuentaId: number | string; monto?: number | string; nota?: string | null }) => ({
+            cuentaId: parseInt(String(m.cuentaId)),
+            monto: parseFloat(String(m.monto ?? 0)) || 0,
+            nota: m.nota || null,
+          }))
+          .filter(m => !isNaN(m.cuentaId))
+      : []
+
     const snapshot = await prisma.liquidezSnapshot.create({
       data: {
         fechaCorte: fechaCorteDate,
         quincenaId: quincenaIdNum,
-        bbva: bbva ? parseFloat(bbva) : 0,
-        banamex: banamex ? parseFloat(banamex) : 0,
-        uala: uala ? parseFloat(uala) : 0,
-        ualaInversion: ualaInversion ? parseFloat(ualaInversion) : 0,
-        efectivo: efectivo ? parseFloat(efectivo) : 0,
-        valesDespensa: valesDespensa ? parseFloat(valesDespensa) : 0,
-        valesGasolina: valesGasolina ? parseFloat(valesGasolina) : 0,
-        otros: otros ? parseFloat(otros) : 0,
-        otrosNota: otrosNota ?? null,
         faltaPagar: faltaPagarCalc,
         pagosQuincena: pagosQuincenaCalc.pagosQuincena,
         gastosReales: gastosAlCorte.gastosReales,
@@ -74,8 +74,9 @@ export async function POST(request: Request) {
         teorico: teorico ? parseFloat(teorico) : null,
         notas,
         validado: validado ?? false,
+        montos: { create: montosList },
       },
-      include: { quincena: true },
+      include: { quincena: true, montos: { include: { cuenta: true } } },
     })
 
     return NextResponse.json(snapshot, { status: 201 })

@@ -46,13 +46,14 @@ async function main() {
 
   await prisma.cuenta.createMany({
     data: [
-      { nombre: 'BBVA',           tipo: 'Banco' },
-      { nombre: 'Banamex',        tipo: 'Banco' },
-      { nombre: 'Ualá',           tipo: 'Digital' },
-      { nombre: 'Ualá Inversión', tipo: 'Digital' },
-      { nombre: 'Efectivo',       tipo: 'Efectivo' },
-      { nombre: 'Vales Despensa', tipo: 'Vales' },
-      { nombre: 'Vales Gasolina', tipo: 'Vales' },
+      { nombre: 'BBVA',           tipo: 'Debito',    icono: 'Landmark',    color: 'blue',    orden: 1 },
+      { nombre: 'Banamex',        tipo: 'Debito',    icono: 'Landmark',    color: 'rose',    orden: 2 },
+      { nombre: 'Ualá',           tipo: 'Debito',    icono: 'Wallet',      color: 'violet',  orden: 3 },
+      { nombre: 'Ualá Inversión', tipo: 'Inversion', icono: 'TrendingUp',  color: 'emerald', orden: 4 },
+      { nombre: 'Efectivo',       tipo: 'Efectivo',  icono: 'Banknote',    color: 'teal',    orden: 5 },
+      { nombre: 'Vales Despensa', tipo: 'Vales',     icono: 'ShoppingBag', color: 'amber',   orden: 6 },
+      { nombre: 'Vales Gasolina', tipo: 'Vales',     icono: 'Fuel',        color: 'orange',  orden: 7 },
+      { nombre: 'Otros',          tipo: 'Otro',      icono: 'CircleDollarSign', color: 'slate', orden: 8 },
     ],
     skipDuplicates: true,
   })

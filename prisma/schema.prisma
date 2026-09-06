@@ -153,12 +153,27 @@ model Configuracion {
   @@map("configuracion")
 }
 
+// Catálogo configurable de cuentas (bancos, efectivo, vales, inversión...).
+// Se usa como cuenta de pago de un Crédito y como las líneas de un corte de
+// liquidez (ver LiquidezSnapshotCuenta) -- un mismo catálogo para ambos usos,
+// en vez de duplicar nombres de cuentas en dos lados. activo=false la oculta
+// de los selectores nuevos sin borrar su historial; orden controla el orden
+// de despliegue en Configuración > Cuentas y en el formulario de liquidez.
 model Cuenta {
-  id     Int     @id @default(autoincrement())
-  nombre String  @unique @db.VarChar(50)
-  tipo   String? @db.VarChar(30)
+  id            Int      @id @default(autoincrement())
+  nombre        String   @unique @db.VarChar(50)
+  // Tipo de cuenta: Debito, Credito, Efectivo, Vales, Inversion, Otro (ver
+  // @/lib/cuenta-icons: TIPOS_CUENTA). Texto libre en DB por compatibilidad
+  // con datos existentes, pero la UI solo ofrece ese set fijo.
+  tipo          String?  @db.VarChar(30)
+  icono         String?  @db.VarChar(30)
+  color         String?  @db.VarChar(20)
+  activo        Boolean  @default(true)
+  orden         Int      @default(0)
+  fechaCreacion DateTime @default(now()) @map("fecha_creacion") @db.Timestamptz()
 
-  creditos Credito[]
+  creditos       Credito[]
+  liquidezMontos LiquidezSnapshotCuenta[]
 
   @@map("cuentas")
 }
@@ -461,15 +476,6 @@ model LiquidezSnapshot {
   id            Int      @id @default(autoincrement())
   fechaCorte    DateTime @map("fecha_corte") @db.Timestamptz()
   quincenaId    Int      @map("quincena_id")
-  bbva          Decimal  @default(0) @db.Decimal(12, 2)
-  banamex       Decimal  @default(0) @db.Decimal(12, 2)
-  uala          Decimal  @default(0) @db.Decimal(12, 2)
-  ualaInversion Decimal  @default(0) @map("uala_inversion") @db.Decimal(12, 2)
-  efectivo      Decimal  @default(0) @db.Decimal(12, 2)
-  valesDespensa Decimal  @default(0) @map("vales_despensa") @db.Decimal(12, 2)
-  valesGasolina Decimal  @default(0) @map("vales_gasolina") @db.Decimal(12, 2)
-  otros         Decimal  @default(0) @db.Decimal(12, 2)
-  otrosNota     String?  @map("otros_nota")
   faltaPagar    Decimal  @default(0) @map("falta_pagar") @db.Decimal(12, 2)
   pagosQuincena Decimal  @default(0) @map("pagos_quincena") @db.Decimal(12, 2)
   gastosReales Decimal?  @map("gastos_reales") @db.Decimal(12, 2)
@@ -479,8 +485,28 @@ model LiquidezSnapshot {
   validado      Boolean  @default(false)
   fechaRegistro DateTime @default(now()) @map("fecha_registro") @db.Timestamptz()
 
-  quincena Quincena @relation(fields: [quincenaId], references: [id])
+  quincena Quincena                 @relation(fields: [quincenaId], references: [id])
+  montos   LiquidezSnapshotCuenta[]
 
   @@index([quincenaId], name: "idx_liquidez_quincena")
   @@map("liquidez_snapshots")
+}
+
+// Una línea por cuenta activa al momento de capturar un corte de liquidez
+// (reemplaza las columnas fijas bbva/banamex/uala/... que existían antes).
+// nota es de uso libre por línea -- generaliza el otrosNota que antes solo
+// existía para la cuenta "Otros".
+model LiquidezSnapshotCuenta {
+  id         Int      @id @default(autoincrement())
+  snapshotId Int      @map("snapshot_id")
+  cuentaId   Int      @map("cuenta_id")
+  monto      Decimal  @default(0) @db.Decimal(12, 2)
+  nota       String?
+
+  snapshot LiquidezSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  cuenta   Cuenta           @relation(fields: [cuentaId], references: [id])
+
+  @@unique([snapshotId, cuentaId])
+  @@index([cuentaId], name: "idx_liquidez_snapshot_cuentas_cuenta")
+  @@map("liquidez_snapshot_cuentas")
 }

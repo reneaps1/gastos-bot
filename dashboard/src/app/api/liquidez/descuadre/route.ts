@@ -2,26 +2,8 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { calcularDescuadre } from '@/lib/liquidez-descuadre'
 
-function totalSnapshot(snapshot: {
-  bbva: unknown
-  banamex: unknown
-  uala: unknown
-  ualaInversion: unknown
-  efectivo: unknown
-  valesDespensa: unknown
-  valesGasolina: unknown
-  otros: unknown
-}) {
-  return [
-    snapshot.bbva,
-    snapshot.banamex,
-    snapshot.uala,
-    snapshot.ualaInversion,
-    snapshot.efectivo,
-    snapshot.valesDespensa,
-    snapshot.valesGasolina,
-    snapshot.otros,
-  ].reduce<number>((total, monto) => total + Number(monto), 0)
+function totalSnapshot(snapshot: { montos: { monto: unknown }[] }) {
+  return snapshot.montos.reduce<number>((total, m) => total + Number(m.monto), 0)
 }
 
 function limitesDiaUtc(fecha: Date) {
@@ -40,7 +22,7 @@ export async function GET(request: Request) {
 
     const actual = await prisma.liquidezSnapshot.findUnique({
       where: { id: snapshotId },
-      include: { quincena: true },
+      include: { quincena: true, montos: true },
     })
     if (!actual) {
       return NextResponse.json({ error: 'Snapshot no encontrado' }, { status: 404 })
@@ -50,7 +32,7 @@ export async function GET(request: Request) {
     const [anterior, capturasMismaFecha] = await Promise.all([
       prisma.liquidezSnapshot.findFirst({
         where: { fechaCorte: { lt: diaActual.inicio } },
-        include: { quincena: true },
+        include: { quincena: true, montos: true },
         orderBy: [
           { fechaCorte: 'desc' },
           { fechaRegistro: 'desc' },

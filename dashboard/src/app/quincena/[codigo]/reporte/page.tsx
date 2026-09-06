@@ -38,7 +38,6 @@ interface TransaccionRow {
   presupuesto: { descripcion: string } | null
 }
 interface Snapshot extends LiquidezMontos {
-  otrosNota: string | null
   faltaPagar: number
   pagosQuincena: number
   validado: boolean
@@ -208,9 +207,7 @@ export default function ReporteQuincenaPage() {
         liquidez: snapshot ? {
           fechaCorte: snapshot.fechaCorte,
           validado: snapshot.validado,
-          bbva: snapshot.bbva, banamex: snapshot.banamex, uala: snapshot.uala, ualaInversion: snapshot.ualaInversion,
-          efectivo: snapshot.efectivo, valesDespensa: snapshot.valesDespensa, valesGasolina: snapshot.valesGasolina,
-          otros: snapshot.otros, otrosNota: snapshot.otrosNota,
+          cuentas: snapshot.montos.map(m => ({ nombre: m.cuenta?.nombre ?? 'Cuenta', monto: m.monto, nota: m.nota })),
           totalLiquido: efectivo.totalLiquido, faltaPagar: efectivo.faltaPagar, pagosQuincena: pagosQuincenaVivo, delta,
         } : null,
       })
@@ -284,16 +281,10 @@ export default function ReporteQuincenaPage() {
                 </div>
               </div>
               <div className="grid grid-cols-3 md:grid-cols-5 gap-3">
-                {[
-                  { label: 'BBVA', value: snapshot.bbva },
-                  { label: 'Banamex', value: snapshot.banamex },
-                  { label: 'Ualá', value: snapshot.uala },
-                  { label: 'Efectivo', value: snapshot.efectivo },
-                  ...(snapshot.otros > 0 ? [{ label: snapshot.otrosNota ?? 'Otros', value: snapshot.otros }] : []),
-                ].map(c => (
-                  <div key={c.label} className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-center">
-                    <p className="text-[10px] text-slate-500">{c.label}</p>
-                    <p className="text-xs font-bold text-slate-800 tabular-nums">{formatMXN(c.value)}</p>
+                {snapshot.montos.filter(m => m.monto > 0).map(m => (
+                  <div key={m.cuentaId} className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-center">
+                    <p className="text-[10px] text-slate-500">{m.cuenta?.nombre ?? 'Cuenta'}{m.nota ? ` (${m.nota})` : ''}</p>
+                    <p className="text-xs font-bold text-slate-800 tabular-nums">{formatMXN(m.monto)}</p>
                   </div>
                 ))}
               </div>

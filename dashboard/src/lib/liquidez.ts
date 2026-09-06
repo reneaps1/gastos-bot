@@ -1,18 +1,18 @@
 import { calcularFaltaPorPagar, type PresupuestoParaTotales } from '@/lib/presupuesto-totales'
 
+export interface LiquidezMontoLinea {
+  cuentaId: number
+  monto: number
+  nota: string | null
+  cuenta?: { id: number; nombre: string; tipo: string | null; icono: string | null; color: string | null }
+}
+
 export interface LiquidezMontos {
-  bbva: number
-  banamex: number
-  uala: number
-  ualaInversion: number
-  efectivo: number
-  valesDespensa: number
-  valesGasolina: number
-  otros: number
+  montos: LiquidezMontoLinea[]
 }
 
 export function sumLiquidez(s: LiquidezMontos): number {
-  return s.bbva + s.banamex + s.uala + s.ualaInversion + s.efectivo + s.valesDespensa + s.valesGasolina + s.otros
+  return s.montos.reduce((total, m) => total + m.monto, 0)
 }
 
 // Conciliación de efectivo disponible (base caja, no base presupuesto): lo
@@ -32,15 +32,17 @@ export function calcularEfectivoDisponible(
 // Los campos Decimal de Prisma llegan como string por la API (Decimal.toJSON
 // serializa a string), asi que hay que convertirlos a number antes de
 // sumarlos o se concatenan como texto en vez de sumarse.
-export function normalizeMontos(s: { [K in keyof LiquidezMontos]: unknown }): LiquidezMontos {
+export function normalizeMontos(s: { montos?: unknown }): LiquidezMontos {
+  const raw = Array.isArray(s.montos) ? s.montos : []
   return {
-    bbva: Number(s.bbva) || 0,
-    banamex: Number(s.banamex) || 0,
-    uala: Number(s.uala) || 0,
-    ualaInversion: Number(s.ualaInversion) || 0,
-    efectivo: Number(s.efectivo) || 0,
-    valesDespensa: Number(s.valesDespensa) || 0,
-    valesGasolina: Number(s.valesGasolina) || 0,
-    otros: Number(s.otros) || 0,
+    montos: raw.map((m): LiquidezMontoLinea => {
+      const line = m as { cuentaId?: unknown; monto?: unknown; nota?: unknown; cuenta?: LiquidezMontoLinea['cuenta'] }
+      return {
+        cuentaId: Number(line.cuentaId) || 0,
+        monto: Number(line.monto) || 0,
+        nota: (line.nota as string | null | undefined) ?? null,
+        cuenta: line.cuenta,
+      }
+    }),
   }
 }

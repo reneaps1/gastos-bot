@@ -10,7 +10,7 @@ import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { KpiCard } from '@/components/ui/KpiCard'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { type Granularidad, getPeriodoRange, shiftPeriodo } from '@/lib/periodo'
-import { normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
+import { normalizeMontos, calcularEfectivoDisponible, type LiquidezMontos } from '@/lib/liquidez'
 import { quincenasPendientesDeCierre, cuentaParaAgregados, type GrupoCierre } from '@/lib/cierre-quincena'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 import { calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
@@ -28,9 +28,8 @@ interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: string; monto: number; estatus: string
   categoria: Categoria; user: User | null; presupuestoId: number | null
 }
-interface Snapshot {
-  id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
-  efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; faltaPagar: number
+interface Snapshot extends LiquidezMontos {
+  id: number; faltaPagar: number
   pagosQuincena: number
   teorico: number | null; quincena: Quincena
 }
@@ -1162,16 +1161,10 @@ export default function DashboardPage() {
                 </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                {[
-                  { label: 'BBVA', value: snapshot.bbva },
-                  { label: 'Banamex', value: snapshot.banamex },
-                  { label: 'Ualá', value: snapshot.uala },
-                  { label: 'Efectivo', value: snapshot.efectivo },
-                  ...(snapshot.otros > 0 ? [{ label: 'Otros', value: snapshot.otros }] : []),
-                ].map(c => (
-                  <div key={c.label} className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">
-                    <p className="text-xs text-slate-500 dark:text-slate-400">{c.label}</p>
-                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(c.value)}</p>
+                {snapshot.montos.filter(m => m.monto > 0).map(m => (
+                  <div key={m.cuentaId} className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 text-center">
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{m.cuenta?.nombre ?? 'Cuenta'}</p>
+                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(m.monto)}</p>
                   </div>
                 ))}
               </div>
