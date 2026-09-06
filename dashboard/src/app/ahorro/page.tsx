@@ -1,11 +1,12 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
-import { PiggyBank, TrendingUp, TrendingDown, Pencil, Trash2, Plus, Target } from 'lucide-react'
+import { PiggyBank, TrendingUp, TrendingDown, Pencil, Trash2, Plus, Target, Wallet } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { FormModal } from '@/components/ui/FormModal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { getInitialQuincenaId, getMexicoDateString } from '@/lib/quincena-selection'
+import { APARTADO_COLORS, APARTADO_ICONS, DEFAULT_COLOR_KEY, DEFAULT_ICON_NAME, resolveApartadoColor, resolveApartadoIcon } from '@/lib/apartado-icons'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string }
@@ -17,7 +18,7 @@ interface Transaccion {
   balanceAcumulado: number
 }
 interface PorQuincena { quincena: Quincena; aportado: number; retirado: number }
-interface ApartadoInfo { id: number; nombre: string; metaMonto: number | null }
+interface ApartadoInfo { id: number; nombre: string; metaMonto: number | null; icono: string | null; color: string | null }
 interface PorApartado { apartado: ApartadoInfo | null; aportado: number; retirado: number; balance: number }
 interface AhorroData {
   total: number
@@ -69,7 +70,7 @@ export default function AhorroPage() {
 
   const [apartadoModalOpen, setApartadoModalOpen] = useState(false)
   const [editingApartado, setEditingApartado] = useState<ApartadoInfo | null>(null)
-  const [apartadoForm, setApartadoForm] = useState({ nombre: '', metaMonto: '' })
+  const [apartadoForm, setApartadoForm] = useState({ nombre: '', metaMonto: '', icono: DEFAULT_ICON_NAME, color: DEFAULT_COLOR_KEY })
   const [apartadoFormErrors, setApartadoFormErrors] = useState<Record<string, string>>({})
   const [savingApartado, setSavingApartado] = useState(false)
   const [deleteApartadoId, setDeleteApartadoId] = useState<number | null>(null)
@@ -181,14 +182,17 @@ export default function AhorroPage() {
 
   function openCreateApartado() {
     setEditingApartado(null)
-    setApartadoForm({ nombre: '', metaMonto: '' })
+    setApartadoForm({ nombre: '', metaMonto: '', icono: DEFAULT_ICON_NAME, color: DEFAULT_COLOR_KEY })
     setApartadoFormErrors({})
     setApartadoModalOpen(true)
   }
 
   function openEditApartado(a: ApartadoInfo) {
     setEditingApartado(a)
-    setApartadoForm({ nombre: a.nombre, metaMonto: a.metaMonto != null ? a.metaMonto.toString() : '' })
+    setApartadoForm({
+      nombre: a.nombre, metaMonto: a.metaMonto != null ? a.metaMonto.toString() : '',
+      icono: a.icono ?? DEFAULT_ICON_NAME, color: a.color ?? DEFAULT_COLOR_KEY,
+    })
     setApartadoFormErrors({})
     setApartadoModalOpen(true)
   }
@@ -205,7 +209,10 @@ export default function AhorroPage() {
     if (Object.keys(errors).length) { setApartadoFormErrors(errors); return }
     setSavingApartado(true)
     try {
-      const body = { nombre: apartadoForm.nombre.trim(), metaMonto: apartadoForm.metaMonto || null }
+      const body = {
+        nombre: apartadoForm.nombre.trim(), metaMonto: apartadoForm.metaMonto || null,
+        icono: apartadoForm.icono, color: apartadoForm.color,
+      }
       const res = editingApartado
         ? await fetch(`/api/apartados/${editingApartado.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
         : await fetch('/api/apartados', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -364,13 +371,20 @@ export default function AhorroPage() {
         {(data?.porApartado ?? []).map(p => {
           const meta = p.apartado?.metaMonto != null ? Number(p.apartado.metaMonto) : null
           const progreso = meta ? Math.min(100, Math.max(0, (p.balance / meta) * 100)) : null
+          const Icon = p.apartado ? resolveApartadoIcon(p.apartado.icono) : Wallet
+          const colorClasses = p.apartado ? resolveApartadoColor(p.apartado.color) : resolveApartadoColor(null)
           return (
             <div key={p.apartado?.id ?? 'general'}
               className="rounded-xl border border-slate-100 dark:border-slate-700 p-3">
               <div className="flex items-start justify-between gap-2 mb-1.5">
-                <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
-                  {p.apartado?.nombre ?? 'General'}
-                </p>
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className={`w-8 h-8 rounded-lg ${colorClasses.badgeBg} flex items-center justify-center shrink-0`}>
+                    <Icon size={16} className={colorClasses.iconText} />
+                  </div>
+                  <p className="text-sm font-medium text-slate-700 dark:text-slate-200 truncate">
+                    {p.apartado?.nombre ?? 'General'}
+                  </p>
+                </div>
                 {p.apartado && (
                   <div className="flex items-center gap-0.5 shrink-0">
                     <button onClick={() => openEditApartado(p.apartado!)} aria-label="Editar apartado"
@@ -384,11 +398,11 @@ export default function AhorroPage() {
                   </div>
                 )}
               </div>
-              <p className="text-xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">{formatMXN(p.balance)}</p>
+              <p className={`text-xl font-bold tabular-nums ${colorClasses.text}`}>{formatMXN(p.balance)}</p>
               {meta != null && (
                 <div className="mt-2">
                   <div className="h-1.5 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                    <div className="h-full bg-blue-500 rounded-full" style={{ width: `${progreso}%` }} />
+                    <div className={`h-full ${colorClasses.swatch} rounded-full`} style={{ width: `${progreso}%` }} />
                   </div>
                   <p className="text-xs text-slate-400 dark:text-slate-500 mt-1 flex items-center gap-1">
                     <Target size={11} /> Meta {formatMXN(meta)}
@@ -424,6 +438,34 @@ export default function AhorroPage() {
             value={apartadoForm.metaMonto} onChange={e => setApartadoForm(f => ({ ...f, metaMonto: e.target.value }))}
             className={fieldClass(apartadoFormErrors.metaMonto)} />
           {apartadoFormErrors.metaMonto && <p className="text-xs text-rose-500 mt-1">{apartadoFormErrors.metaMonto}</p>}
+        </div>
+        <div>
+          <Label htmlFor="ap-icono">Icono</Label>
+          <div id="ap-icono" className="flex flex-wrap gap-2">
+            {APARTADO_ICONS.map(({ name, Icon }) => (
+              <button key={name} type="button" onClick={() => setApartadoForm(f => ({ ...f, icono: name }))}
+                aria-label={name}
+                className={`w-9 h-9 rounded-lg flex items-center justify-center cursor-pointer transition-all ${
+                  apartadoForm.icono === name
+                    ? `${resolveApartadoColor(apartadoForm.color).badgeBg} ${resolveApartadoColor(apartadoForm.color).iconText} ring-2 ring-offset-2 ring-indigo-500 dark:ring-offset-slate-800`
+                    : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-600'
+                }`}>
+                <Icon size={16} />
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="ap-color">Color</Label>
+          <div id="ap-color" className="flex flex-wrap gap-2">
+            {APARTADO_COLORS.map(c => (
+              <button key={c.key} type="button" onClick={() => setApartadoForm(f => ({ ...f, color: c.key }))}
+                className={`w-8 h-8 rounded-full ${c.swatch} cursor-pointer transition-all ${
+                  apartadoForm.color === c.key ? 'ring-2 ring-offset-2 ring-indigo-500 dark:ring-offset-slate-800 scale-110' : 'hover:scale-105'
+                }`}
+                aria-label={c.key} />
+            ))}
+          </div>
         </div>
         <div className="flex gap-3 justify-end pt-2">
           <button type="button" onClick={() => setApartadoModalOpen(false)} disabled={savingApartado}

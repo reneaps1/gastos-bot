@@ -172,6 +172,12 @@ model Apartado {
   id            Int      @id @default(autoincrement())
   nombre        String   @unique @db.VarChar(50)
   metaMonto     Decimal? @map("meta_monto") @db.Decimal(12, 2)
+  // Icono y color elegidos al crear/editar el apartado (ver
+  // @/lib/apartado-icons: APARTADO_ICONS, APARTADO_COLORS). NULL en filas
+  // creadas antes de esta feature -- resolveApartadoIcon()/resolveApartadoColor()
+  // caen al PiggyBank azul de siempre en ese caso.
+  icono         String?  @db.VarChar(30)
+  color         String?  @db.VarChar(20)
   activo        Boolean  @default(true)
   fechaCreacion DateTime @default(now()) @map("fecha_creacion") @db.Timestamptz()
 

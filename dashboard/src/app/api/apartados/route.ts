@@ -16,6 +16,8 @@ export async function GET() {
       id: a.id,
       nombre: a.nombre,
       metaMonto: a.metaMonto,
+      icono: a.icono,
+      color: a.color,
       activo: a.activo,
       fechaCreacion: a.fechaCreacion,
       transaccionesCount: a._count.transacciones,
@@ -31,7 +33,7 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = await request.json()
-    const { nombre, metaMonto } = body
+    const { nombre, metaMonto, icono, color } = body
 
     if (!nombre) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -46,6 +48,8 @@ export async function POST(request: Request) {
       data: {
         nombre,
         metaMonto: metaMonto !== undefined && metaMonto !== null && metaMonto !== '' ? parseFloat(metaMonto) : null,
+        icono: icono || null,
+        color: color || null,
       },
     })
 
