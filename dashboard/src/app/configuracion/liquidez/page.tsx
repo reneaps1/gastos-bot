@@ -30,6 +30,8 @@ interface Snapshot {
   otrosNota: string | null
   faltaPagar: number
   pagosQuincena: number
+  gastosReales: number | null
+  gastosPronosticados: number | null
   teorico: number | null
   notas: string | null
   validado: boolean
@@ -158,6 +160,8 @@ function LiquidezConfigContent() {
         ...normalizeMontos(s),
         faltaPagar: Number(s.faltaPagar) || 0,
         pagosQuincena: Number(s.pagosQuincena) || 0,
+        gastosReales: s.gastosReales != null ? Number(s.gastosReales) : null,
+        gastosPronosticados: s.gastosPronosticados != null ? Number(s.gastosPronosticados) : null,
         teorico: s.teorico != null ? Number(s.teorico) : null,
       })))
     } finally {
@@ -536,6 +540,27 @@ function LiquidezConfigContent() {
         </div>
       )}
 
+      {!loading && latestSnapshot && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <KpiCard
+            label="Gasto real al corte"
+            value={latestSnapshot.gastosReales == null ? 'Sin dato histórico' : formatMXN(latestSnapshot.gastosReales)}
+            subtitle={`fotografía del ${formatDate(latestSnapshot.fechaCorte)}`}
+            icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
+            color="text-rose-600 dark:text-rose-400"
+            bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
+          />
+          <KpiCard
+            label="Gasto pronosticado al corte"
+            value={latestSnapshot.gastosPronosticados == null ? 'Sin dato histórico' : formatMXN(latestSnapshot.gastosPronosticados)}
+            subtitle="presupuesto vigente, excedentes y gastos sin partida"
+            icon={<TrendingUp size={20} className="text-violet-600 dark:text-violet-300" />}
+            color="text-violet-600 dark:text-violet-400"
+            bg="bg-violet-50 dark:bg-violet-950/50 dark:ring-1 dark:ring-violet-800/50"
+          />
+        </div>
+      )}
+
       {previousSnapshot && descuadreData && (
         <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
           <div className="mb-3">
@@ -593,6 +618,8 @@ function LiquidezConfigContent() {
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Efectivo</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Total</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Falta por pagar</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Gasto real</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Pronóstico</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Teórico</th>
                   <th className="text-center px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Validado</th>
                   <th className="px-4 py-3" />
@@ -620,6 +647,12 @@ function LiquidezConfigContent() {
                           ? <span className="text-amber-600 dark:text-amber-400">{formatMXN(s.faltaPagar)}</span>
                           : <span className="text-slate-400 dark:text-slate-500">{formatMXN(0)}</span>
                         }
+                      </td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">
+                        {s.gastosReales == null ? '—' : formatMXN(s.gastosReales)}
+                      </td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">
+                        {s.gastosPronosticados == null ? '—' : formatMXN(s.gastosPronosticados)}
                       </td>
                       <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">
                         {formatMXN(teorico)}
