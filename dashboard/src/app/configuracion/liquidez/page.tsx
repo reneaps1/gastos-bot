@@ -34,7 +34,23 @@ interface Snapshot {
   notas: string | null
   validado: boolean
   fechaCorte: string
+  fechaRegistro: string
   quincena: Quincena
+}
+
+interface Conciliacion {
+  saldoAnterior: number
+  ingresosPagados: number
+  gastosPagados: number
+  saldoActual: number
+  saldoEsperado: number
+  descuadre: number
+}
+
+interface DescuadreResponse {
+  anterior: Snapshot | null
+  capturasMismaFecha: number
+  conciliacion: Conciliacion | null
 }
 
 const EMPTY_FORM = {
@@ -75,7 +91,6 @@ function LiquidezConfigContent() {
   const quincenaIdParam = searchParams.get('quincenaId')
 
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [allSnapshots, setAllSnapshots] = useState<Snapshot[]>([])
   const [quincenas, setQuincenas] = useState<Quincena[]>([])
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [quincenaId, setQuincenaId] = useState('')
@@ -97,7 +112,9 @@ function LiquidezConfigContent() {
   // segun el corte anterior (cualquier quincena) mas los movimientos ya
   // registrados entre ambas fechas. Distinto del Delta de arriba, que compara
   // contra "falta por pagar" (cobertura hacia adelante).
-  const [descuadreData, setDescuadreData] = useState<{ descuadre: number; previousSnapshot: Snapshot } | null>(null)
+  const [descuadreData, setDescuadreData] = useState<Conciliacion | null>(null)
+  const [previousSnapshot, setPreviousSnapshot] = useState<Snapshot | null>(null)
+  const [capturasMismaFecha, setCapturasMismaFecha] = useState(0)
   const [descuadreLoading, setDescuadreLoading] = useState(false)
   const [ajusteModalOpen, setAjusteModalOpen] = useState(false)
   const [ajusteTipo, setAjusteTipo] = useState<'Gasto' | 'Ingreso'>('Gasto')
@@ -118,23 +135,6 @@ function LiquidezConfigContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Historial completo (todas las quincenas) para poder ubicar el corte
-  // inmediatamente anterior por fecha al que se esta viendo, sin importar si
-  // cae en otra quincena — no siempre se captura un corte por quincena.
-  const fetchAllSnapshots = useCallback(async () => {
-    const res = await fetch('/api/liquidez')
-    const data: Snapshot[] = await res.json()
-    setAllSnapshots(data.map(s => ({
-      ...s,
-      ...normalizeMontos(s),
-      faltaPagar: Number(s.faltaPagar) || 0,
-      pagosQuincena: Number(s.pagosQuincena) || 0,
-      teorico: s.teorico != null ? Number(s.teorico) : null,
-    })))
-  }, [])
-
-  useEffect(() => { fetchAllSnapshots() }, [fetchAllSnapshots])
-
   function selectQuincena(id: string) {
     setQuincenaId(id)
     persistQuincenaId(id)
@@ -148,10 +148,16 @@ function LiquidezConfigContent() {
       if (quincenaId) params.set('quincenaId', quincenaId)
       const res = await fetch(`/api/liquidez?${params}`)
       const data: Snapshot[] = await res.json()
+      if (data.length === 0) {
+        setDescuadreData(null)
+        setPreviousSnapshot(null)
+        setCapturasMismaFecha(0)
+      }
       setSnapshots(data.map(s => ({
         ...s,
         ...normalizeMontos(s),
         faltaPagar: Number(s.faltaPagar) || 0,
+        pagosQuincena: Number(s.pagosQuincena) || 0,
         teorico: s.teorico != null ? Number(s.teorico) : null,
       })))
     } finally {
@@ -298,7 +304,6 @@ function LiquidezConfigContent() {
       toast(editing ? 'Snapshot actualizado' : 'Snapshot creado')
       setModalOpen(false)
       fetchData()
-      fetchAllSnapshots()
       fetchPagosQuincenaVivo()
     } catch {
       toast('Error al guardar', 'error')
@@ -316,7 +321,6 @@ function LiquidezConfigContent() {
       toast('Snapshot eliminado')
       setConfirmId(null)
       fetchData()
-      fetchAllSnapshots()
     } catch {
       toast('Error al eliminar', 'error')
     } finally {
@@ -331,23 +335,23 @@ function LiquidezConfigContent() {
   // ha entrado ni salido del bolsillo. No se restan movimientos de Ahorro:
   // si el destino tipico es Uala Inversion, que ya es una de las cuentas
   // contadas, restarlo tambien lo restaria dos veces.
-  async function fetchDescuadre(previous: Snapshot, latest: Snapshot) {
+  const fetchDescuadre = useCallback(async (snapshotId: number) => {
     setDescuadreLoading(true)
     try {
-      const desde = previous.fechaCorte.split('T')[0]
-      const hasta = latest.fechaCorte.split('T')[0]
-      const res = await fetch(`/api/transacciones?fechaDesde=${desde}&fechaHasta=${hasta}&limit=1`)
-      const data = await res.json()
-      const ingresos = Number(data.totales?.IngresoPagado ?? 0)
-      const gastoPagado = Number(data.totales?.GastoPagado ?? 0)
-      const teoricoEsperado = sumLiquidez(previous) + ingresos - gastoPagado
-      setDescuadreData({ descuadre: sumLiquidez(latest) - teoricoEsperado, previousSnapshot: previous })
+      const res = await fetch(`/api/liquidez/descuadre?snapshotId=${snapshotId}`)
+      if (!res.ok) throw new Error()
+      const data: DescuadreResponse = await res.json()
+      setPreviousSnapshot(data.anterior)
+      setCapturasMismaFecha(data.capturasMismaFecha)
+      setDescuadreData(data.conciliacion)
     } catch {
       setDescuadreData(null)
+      setPreviousSnapshot(null)
+      setCapturasMismaFecha(0)
     } finally {
       setDescuadreLoading(false)
     }
-  }
+  }, [])
 
   function openAjusteModal(descuadre: number) {
     if (!latestSnapshot) return
@@ -381,7 +385,7 @@ function LiquidezConfigContent() {
       if (!res.ok) throw new Error()
       toast('Ajuste registrado')
       setAjusteModalOpen(false)
-      fetchDescuadre(previousSnapshot, latestSnapshot)
+      fetchDescuadre(latestSnapshot.id)
     } catch {
       toast('Error al registrar el ajuste', 'error')
     } finally {
@@ -401,20 +405,12 @@ function LiquidezConfigContent() {
   const deltaLiquido = efectivo.totalLiquido - pagosQuincenaVivo
   const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
 
-  // Corte inmediatamente anterior por fecha (no por quincena) al mas
-  // reciente de la seleccion actual — base para el descuadre real.
-  const previousSnapshot = latestSnapshot
-    ? allSnapshots.find(s => new Date(s.fechaCorte).getTime() < new Date(latestSnapshot.fechaCorte).getTime()) ?? null
-    : null
-
   useEffect(() => {
-    if (!latestSnapshot || !previousSnapshot) { setDescuadreData(null); return }
-    fetchDescuadre(previousSnapshot, latestSnapshot)
-    // Solo debe recalcular cuando cambian los snapshots (filtro de quincena,
-    // guardar/editar/borrar) — fetchDescuadre se redefine cada render pero no
-    // debe disparar el efecto por si solo.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapshots, allSnapshots])
+    if (!latestSnapshot) return
+    // La conciliacion sincroniza esta vista con el snapshot seleccionado.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchDescuadre(latestSnapshot.id)
+  }, [latestSnapshot, fetchDescuadre])
 
   const DESCUADRE_TOLERANCIA = 1
   const descuadreCuadra = descuadreData != null && Math.abs(descuadreData.descuadre) < DESCUADRE_TOLERANCIA
@@ -465,13 +461,13 @@ function LiquidezConfigContent() {
           />
           <KpiCard
             label="Falta por pagar" value={formatMXN(efectivo.faltaPagar)}
-            subtitle="calculado en vivo"
+            subtitle={`en vivo · al corte ${formatMXN(latestSnapshot.faltaPagar)}`}
             icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
           <KpiCard
             label="Pagos que caen esta quincena" value={formatMXN(pagosQuincenaVivo)}
-            subtitle="incluye abonos de tarjeta/MSI"
+            subtitle={`en vivo · al corte ${formatMXN(latestSnapshot.pagosQuincena)}`}
             icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
@@ -533,6 +529,39 @@ function LiquidezConfigContent() {
         </div>
       )}
 
+      {!loading && latestSnapshot && capturasMismaFecha > 1 && (
+        <div className="flex gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+          Hay {capturasMismaFecha} snapshots con fecha de corte {formatDate(latestSnapshot.fechaCorte)}. Se usa la captura registrada más recientemente; la conciliación parte del último día anterior.
+        </div>
+      )}
+
+      {previousSnapshot && descuadreData && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+          <div className="mb-3">
+            <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Conciliación entre fotografías</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Movimientos pagados después del {formatDate(previousSnapshot.fechaCorte)} y hasta el {formatDate(latestSnapshot.fechaCorte)}, inclusive.
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
+            {[
+              ['Saldo anterior', descuadreData.saldoAnterior],
+              ['Ingresos', descuadreData.ingresosPagados],
+              ['Gastos', descuadreData.gastosPagados],
+              ['Saldo esperado', descuadreData.saldoEsperado],
+              ['Saldo capturado', descuadreData.saldoActual],
+              ['Diferencia', descuadreData.descuadre],
+            ].map(([label, value]) => (
+              <div key={String(label)} className="rounded-lg bg-slate-50 p-3 dark:bg-slate-900/60">
+                <p className="text-xs text-slate-500 dark:text-slate-400">{label}</p>
+                <p className="mt-1 font-semibold text-slate-800 dark:text-slate-100">{formatMXN(Number(value))}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {loading ? (
@@ -557,6 +586,7 @@ function LiquidezConfigContent() {
               <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
+                  <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Corte</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">BBVA</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Banamex</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Ualá</th>
@@ -571,9 +601,7 @@ function LiquidezConfigContent() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                 {snapshots.map(s => {
                   const total = sumLiquidez(s)
-                  // Falta por pagar es la misma para todas las filas: es una
-                  // cifra en vivo de la quincena filtrada, no una foto por corte.
-                  const teorico = s.teorico ?? (total - efectivo.faltaPagar)
+                  const teorico = s.teorico ?? (total - s.faltaPagar)
                   return (
                     <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <td className="px-4 py-3.5">
@@ -581,14 +609,15 @@ function LiquidezConfigContent() {
                           {s.quincena.codigo}
                         </span>
                       </td>
+                      <td className="whitespace-nowrap px-3 py-3.5 text-slate-600 dark:text-slate-400">{formatDate(s.fechaCorte)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.bbva)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden md:table-cell">{formatMXN(s.banamex)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">{formatMXN(s.uala)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.efectivo)}</td>
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden sm:table-cell">{formatMXN(total)}</td>
                       <td className="px-3 py-3.5 text-right hidden sm:table-cell">
-                        {efectivo.faltaPagar > 0
-                          ? <span className="text-amber-600 dark:text-amber-400">{formatMXN(efectivo.faltaPagar)}</span>
+                        {s.faltaPagar > 0
+                          ? <span className="text-amber-600 dark:text-amber-400">{formatMXN(s.faltaPagar)}</span>
                           : <span className="text-slate-400 dark:text-slate-500">{formatMXN(0)}</span>
                         }
                       </td>
@@ -774,7 +803,7 @@ function LiquidezConfigContent() {
           quincenaId={currentQuincena.id}
           quincenaCodigo={currentQuincena.codigo}
           quincenas={quincenas}
-          onChanged={() => { fetchData(); fetchAllSnapshots(); fetchPresupuestosQ(); fetchPagosQuincenaVivo() }}
+          onChanged={() => { fetchData(); fetchPresupuestosQ(); fetchPagosQuincenaVivo() }}
         />
       )}
     </div>

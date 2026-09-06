@@ -8,13 +8,17 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const quincenaId = searchParams.get('quincenaId')
 
-    const where: any = {}
+    const where: { quincenaId?: number } = {}
     if (quincenaId) where.quincenaId = parseInt(quincenaId)
 
     const snapshots = await prisma.liquidezSnapshot.findMany({
       where,
       include: { quincena: true },
-      orderBy: { fechaCorte: 'desc' },
+      orderBy: [
+        { fechaCorte: 'desc' },
+        { fechaRegistro: 'desc' },
+        { id: 'desc' },
+      ],
     })
 
     return NextResponse.json(snapshots)
