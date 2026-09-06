@@ -30,13 +30,15 @@ export async function PUT(
     if (isNaN(id)) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 
     const body = await request.json()
-    const { nombre, metaMonto, activo } = body
+    const { nombre, metaMonto, icono, color, activo } = body
 
     const apartado = await prisma.apartado.update({
       where: { id },
       data: {
         ...(nombre !== undefined && { nombre }),
         ...(metaMonto !== undefined && { metaMonto: metaMonto === null || metaMonto === '' ? null : parseFloat(metaMonto) }),
+        ...(icono !== undefined && { icono: icono || null }),
+        ...(color !== undefined && { color: color || null }),
         ...(activo !== undefined && { activo }),
       },
     })
