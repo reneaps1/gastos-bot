@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import { ArrowLeft, FileDown, FileSpreadsheet, Image as ImageIcon, FileText, Loader2 } from 'lucide-react'
-import { formatMXN } from '@/lib/utils'
+import { formatMXN, formatDate } from '@/lib/utils'
 import { formatQuincenaRange, getMexicoDateString } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
@@ -64,8 +64,13 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   // "Libre / sin asignar" de Presupuesto -> Tabla: el liquido crudo del
   // corte, y cuanto de eso ya esta comprometido a salir del banco ESTA
   // quincena. `disponible` (abajo) es lo que se muestra -- nunca el liquido
-  // crudo solo, que no es lo mismo que "disponible".
-  const [liquidez, setLiquidez] = useState<{ totalLiquido: number; pagosQuincena: number } | null>(null)
+  // crudo solo, que no es lo mismo que "disponible". `totalLiquido` en si se
+  // muestra aparte como "Real" (lo que de verdad hay en cuentas, sin restar
+  // pagos pendientes), junto con `teorico` (lo que "deberia" haber segun el
+  // corte anterior, ver Configuracion -> Liquidez) y la fecha de ese corte.
+  const [liquidez, setLiquidez] = useState<{
+    totalLiquido: number; pagosQuincena: number; teorico: number | null; fechaCorte: string | null
+  } | null>(null)
   const [exportingKind, setExportingKind] = useState<ExportKind | null>(null)
 
   useEffect(() => {
@@ -85,10 +90,14 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           const estado: Fila['estado'] = falta <= 0 ? 'Cubierto' : pagado > 0 ? 'Parcial' : 'Pendiente'
           return { ...p, pagado, falta, estado }
         }))
-        const raw = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
+        const raw = Array.isArray(liqData) && liqData.length > 0
+          ? liqData[0] as Parameters<typeof normalizeMontos>[0] & { teorico: unknown; fechaCorte: unknown }
+          : null
         setLiquidez(raw ? {
-          totalLiquido: sumLiquidez(normalizeMontos(raw as Parameters<typeof normalizeMontos>[0])),
+          totalLiquido: sumLiquidez(normalizeMontos(raw)),
           pagosQuincena: typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0,
+          teorico: raw.teorico != null ? Number(raw.teorico) : null,
+          fechaCorte: typeof raw.fechaCorte === 'string' ? raw.fechaCorte : null,
         } : null)
       } finally {
         if (!cancelled) setLoading(false)
@@ -204,8 +213,22 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
               ya paso una vez con la version con icono. Este patron simple es
               el que ya se sabe que captura bien. */}
           <div className="grid grid-cols-4 gap-2.5">
+            <div className="rounded-lg p-2.5 text-center" style={{ border: `1px solid ${C.slate300}` }}>
+              <p className="text-[10px]" style={{ color: C.slate500 }}>Liquidez disponible</p>
+              <p className="text-sm font-bold tabular-nums" style={{ color: C.slate900 }}>{disponible != null ? formatMXN(disponible) : '—'}</p>
+              {liquidez && (
+                <div className="mt-1 pt-1" style={{ borderTop: `1px solid ${C.slate200}` }}>
+                  <p className="text-[9px] tabular-nums" style={{ color: C.slate600 }}>Real {formatMXN(liquidez.totalLiquido)}</p>
+                  {liquidez.teorico != null && (
+                    <p className="text-[9px] tabular-nums" style={{ color: C.slate600 }}>Teórico {formatMXN(liquidez.teorico)}</p>
+                  )}
+                  {liquidez.fechaCorte && (
+                    <p className="text-[8px] mt-0.5" style={{ color: C.slate400 }}>corte {formatDate(liquidez.fechaCorte)}</p>
+                  )}
+                </div>
+              )}
+            </div>
             {[
-              { label: 'Liquidez disponible', value: disponible },
               { label: 'Presupuestado', value: totalPresupuestado },
               { label: 'Pagado', value: totalPagado },
               { label: 'Falta por cubrir', value: totalFalta },
