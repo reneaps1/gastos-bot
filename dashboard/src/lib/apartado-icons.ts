@@ -1,14 +1,16 @@
 import {
   PiggyBank, Wallet, Target, TrendingUp, Coins, Landmark, CreditCard,
   HandCoins, DollarSign, Banknote, Gem, Vault, CircleDollarSign, Home,
+  PawPrint, PartyPopper, Palmtree, Baby, School, GraduationCap, ShoppingBag,
   type LucideIcon,
 } from 'lucide-react'
 
-// Set curado de iconos con tematica financiera para elegir por Apartado (meta
-// de ahorro). No existe resolucion dinamica de iconos por string en el
-// proyecto -- se guarda el nombre-clave en Apartado.icono y se resuelve aqui
-// contra este arreglo, en vez de importar lucide-react dinamicamente por
-// nombre (mas fragil y sin tipos).
+// Set curado de iconos para elegir por Apartado (meta de ahorro): financieros
+// de base mas unos tematicos para metas comunes (mascotas, diversion, playa,
+// bebe, escuela, estudios, shopping). No existe resolucion dinamica de iconos
+// por string en el proyecto -- se guarda el nombre-clave en Apartado.icono y
+// se resuelve aqui contra este arreglo, en vez de importar lucide-react
+// dinamicamente por nombre (mas fragil y sin tipos).
 export const APARTADO_ICONS: { name: string; Icon: LucideIcon }[] = [
   { name: 'PiggyBank', Icon: PiggyBank },
   { name: 'Wallet', Icon: Wallet },
@@ -24,6 +26,13 @@ export const APARTADO_ICONS: { name: string; Icon: LucideIcon }[] = [
   { name: 'Vault', Icon: Vault },
   { name: 'CircleDollarSign', Icon: CircleDollarSign },
   { name: 'Home', Icon: Home },
+  { name: 'PawPrint', Icon: PawPrint },
+  { name: 'PartyPopper', Icon: PartyPopper },
+  { name: 'Palmtree', Icon: Palmtree },
+  { name: 'Baby', Icon: Baby },
+  { name: 'School', Icon: School },
+  { name: 'GraduationCap', Icon: GraduationCap },
+  { name: 'ShoppingBag', Icon: ShoppingBag },
 ]
 
 const DEFAULT_ICON_NAME = 'PiggyBank'
