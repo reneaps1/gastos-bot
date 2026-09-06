@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { faltaPorPagarDeQuincena } from '@/lib/cierre-quincena-server'
 import { calcularPagosQuincena } from '@/lib/pagos-quincena'
+import { calcularGastosAlCorte } from '@/lib/gastos-snapshot'
 
 export async function GET(request: Request) {
   try {
@@ -46,14 +47,16 @@ export async function POST(request: Request) {
     // vivo contra el presupuesto/creditos reales de la quincena, para que un
     // snapshot nunca nazca ya desactualizado. Ver
     // dashboard/src/lib/cierre-quincena-server.ts y lib/pagos-quincena.ts.
-    const [faltaPagarCalc, pagosQuincenaCalc] = await Promise.all([
+    const fechaCorteDate = new Date(fechaCorte)
+    const [faltaPagarCalc, pagosQuincenaCalc, gastosAlCorte] = await Promise.all([
       faltaPorPagarDeQuincena(quincenaIdNum),
       calcularPagosQuincena(quincenaIdNum),
+      calcularGastosAlCorte(quincenaIdNum, fechaCorteDate),
     ])
 
     const snapshot = await prisma.liquidezSnapshot.create({
       data: {
-        fechaCorte: new Date(fechaCorte),
+        fechaCorte: fechaCorteDate,
         quincenaId: quincenaIdNum,
         bbva: bbva ? parseFloat(bbva) : 0,
         banamex: banamex ? parseFloat(banamex) : 0,
@@ -66,6 +69,8 @@ export async function POST(request: Request) {
         otrosNota: otrosNota ?? null,
         faltaPagar: faltaPagarCalc,
         pagosQuincena: pagosQuincenaCalc.pagosQuincena,
+        gastosReales: gastosAlCorte.gastosReales,
+        gastosPronosticados: gastosAlCorte.gastosPronosticados,
         teorico: teorico ? parseFloat(teorico) : null,
         notas,
         validado: validado ?? false,
