@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2, ArrowRightLeft, ArrowUpDown, XCircle, Pencil } from 'lucide-react'
+import { Loader2, ArrowRightLeft, ArrowUpDown, XCircle, Pencil, MessageSquare, Send } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { getMexicoDateString } from '@/lib/quincena-selection'
 import { useToast } from '@/components/Toast'
@@ -59,6 +59,22 @@ interface TransaccionRow {
   user: { nombre: string } | null
 }
 
+interface UserOption { id: number; nombre: string }
+interface Comentario {
+  id: number
+  texto: string
+  fechaCreacion: string
+  user: { id: number; nombre: string } | null
+}
+
+// fechaCreacion es un timestamp real (no una fecha-sin-hora como Quincena),
+// asi que se muestra en la hora local del navegador -- formatDateStr/formatDate
+// de @/lib/utils estan pensados para columnas @db.Date y truncarian/forzarian
+// UTC, perdiendo la hora real del comentario.
+function formatComentarioFecha(iso: string) {
+  return new Date(iso).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
 interface DetalleGastoProps {
   partida: PartidaDetalle
   onTraspasar?: () => void
@@ -84,6 +100,13 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
   const [montoAjuste, setMontoAjuste] = useState('')
   const [notaCancelar, setNotaCancelar] = useState('')
   const [guardando, setGuardando] = useState(false)
+
+  const [comentarios, setComentarios] = useState<Comentario[]>([])
+  const [comentariosLoading, setComentariosLoading] = useState(true)
+  const [users, setUsers] = useState<UserOption[]>([])
+  const [nuevoTexto, setNuevoTexto] = useState('')
+  const [nuevoUserId, setNuevoUserId] = useState('')
+  const [enviandoComentario, setEnviandoComentario] = useState(false)
 
   // El componente se monta por partida (va con `key` en el caller), asi que el
   // estado ya arranca en loading y el efecto solo dispara el fetch: no hace
@@ -130,6 +153,48 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
       .catch(() => { if (!cancelado) setHistorial(null) })
     return () => { cancelado = true }
   }, [partida.recurrenciaGrupoId])
+
+  // Comentarios de esta partida. Igual que el estado de `loading` de arriba,
+  // arranca en true por useState y el componente se remonta por partida (key
+  // en el caller) -- no hace falta resetear el flag a mano aqui.
+  useEffect(() => {
+    let cancelado = false
+    fetch(`/api/presupuestos/${partida.id}/comentarios`)
+      .then(res => res.ok ? res.json() : [])
+      .then((data: Comentario[]) => { if (!cancelado) setComentarios(data) })
+      .catch(() => { if (!cancelado) setComentarios([]) })
+      .finally(() => { if (!cancelado) setComentariosLoading(false) })
+    return () => { cancelado = true }
+  }, [partida.id])
+
+  // Lista de usuarios para el selector "quien comenta" -- no depende de la
+  // partida, se pide una sola vez.
+  useEffect(() => {
+    fetch('/api/users')
+      .then(res => res.ok ? res.json() : [])
+      .then((data: UserOption[]) => setUsers(data))
+      .catch(() => setUsers([]))
+  }, [])
+
+  async function enviarComentario() {
+    const texto = nuevoTexto.trim()
+    if (!texto) return
+    setEnviandoComentario(true)
+    try {
+      const res = await fetch(`/api/presupuestos/${partida.id}/comentarios`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ texto, userId: nuevoUserId || null }),
+      })
+      if (!res.ok) throw new Error()
+      const creado: Comentario = await res.json()
+      setComentarios(prev => [...prev, creado])
+      setNuevoTexto('')
+    } catch {
+      toast('Error al publicar el comentario', 'error')
+    } finally {
+      setEnviandoComentario(false)
+    }
+  }
 
   const presupuestado = partida.montoEfectivo
   const fueRevisado = partida.montoRevisado != null && Number(partida.montoRevisado) !== Number(partida.montoPresupuestado)
@@ -378,6 +443,47 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
           </div>
         </>
       )}
+
+      <div className="mt-5 pt-4 border-t border-slate-200 dark:border-slate-700">
+        <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mb-2">
+          <MessageSquare size={13} /> Comentarios
+        </p>
+
+        {comentariosLoading ? (
+          <p className="text-sm text-slate-400 dark:text-slate-500">Cargando...</p>
+        ) : comentarios.length === 0 ? (
+          <p className="text-sm text-slate-400 dark:text-slate-500 mb-3">Sin comentarios todavía.</p>
+        ) : (
+          <ul className="space-y-2 mb-3 max-h-56 overflow-y-auto pr-1">
+            {comentarios.map(c => (
+              <li key={c.id} className="rounded-lg bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{c.user?.nombre ?? 'Sin usuario'}</span>
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">{formatComentarioFecha(c.fechaCreacion)}</span>
+                </div>
+                <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5 whitespace-pre-wrap break-words">{c.texto}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="space-y-2">
+          <select value={nuevoUserId} onChange={e => setNuevoUserId(e.target.value)}
+            className="text-xs border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <option value="">¿Quién comenta?</option>
+            {users.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+          </select>
+          <div className="flex gap-2">
+            <textarea value={nuevoTexto} onChange={e => setNuevoTexto(e.target.value)} rows={2}
+              placeholder="Escribe un comentario..."
+              className="flex-1 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none" />
+            <button onClick={enviarComentario} disabled={enviandoComentario || !nuevoTexto.trim()} aria-label="Enviar comentario"
+              className="self-end px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 cursor-pointer transition-colors">
+              {enviandoComentario ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

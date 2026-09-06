@@ -72,11 +72,12 @@ model User {
   activo        Boolean  @default(true)
   fechaRegistro DateTime @default(now()) @map("fecha_registro") @db.Timestamptz()
 
-  transacciones Transaccion[]
-  whatsappMsgs  WhatsappMessage[]
-  importBatches ImportBatch[]
-  auditLogs     AuditLog[]
-  creditos      Credito[]
+  transacciones          Transaccion[]
+  whatsappMsgs           WhatsappMessage[]
+  importBatches          ImportBatch[]
+  auditLogs              AuditLog[]
+  creditos               Credito[]
+  comentariosPresupuesto ComentarioPresupuesto[]
 
   @@map("users")
 }
@@ -258,10 +259,32 @@ model Presupuesto {
   categoria     Categoria     @relation(fields: [categoriaId], references: [id])
   creditoPagos  CreditoPago[]
   transacciones Transaccion[]
+  comentarios   ComentarioPresupuesto[]
 
   @@index([quincenaId], name: "idx_presupuesto_quincena")
   @@index([recurrenciaGrupoId], name: "idx_presupuesto_grupo")
   @@map("presupuesto")
+}
+
+// Hilo de comentarios de una linea de presupuesto (autor + fecha + texto),
+// distinto del campo `notas` de arriba (una sola nota que se sobreescribe,
+// sin autor). Pensado para que las dos personas del hogar dejen mensajes tipo
+// "ya deposite mi parte" sobre una partida especifica. La sesion de este
+// dashboard es un login unico compartido (ver @/lib/auth), no hay forma de
+// inferir quien escribe -- el autor se elige a mano en un <select>, igual que
+// ya hace Transaccion.userId.
+model ComentarioPresupuesto {
+  id            Int      @id @default(autoincrement())
+  presupuestoId Int      @map("presupuesto_id")
+  userId        Int?     @map("user_id")
+  texto         String
+  fechaCreacion DateTime @default(now()) @map("fecha_creacion") @db.Timestamptz()
+
+  presupuesto Presupuesto @relation(fields: [presupuestoId], references: [id], onDelete: Cascade)
+  user        User?       @relation(fields: [userId], references: [id])
+
+  @@index([presupuestoId], name: "idx_comentario_presupuesto")
+  @@map("comentarios_presupuesto")
 }
 
 model Credito {
