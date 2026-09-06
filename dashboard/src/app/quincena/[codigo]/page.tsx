@@ -7,15 +7,14 @@ import { formatMXN, formatDate } from '@/lib/utils'
 import { getMexicoDateString, formatQuincenaRange } from '@/lib/quincena-selection'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { KpiCard } from '@/components/ui/KpiCard'
-import { normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
+import { normalizeMontos, calcularEfectivoDisponible, type LiquidezMontos } from '@/lib/liquidez'
 import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
 import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Presupuesto { montoEfectivo: number; real: number; pendiente: number; categoria: { tipo: string }; estadoLinea: string }
-interface Snapshot {
-  id: number; bbva: number; banamex: number; uala: number; ualaInversion: number
-  efectivo: number; valesDespensa: number; valesGasolina: number; otros: number; otrosNota: string | null
+interface Snapshot extends LiquidezMontos {
+  id: number
   faltaPagar: number; pagosQuincena: number; teorico: number | null; validado: boolean; fechaCorte: string
 }
 interface Totales { Gasto: number; Ingreso: number; Ahorro: number; GastoPagado: number; GastoParaLimite: number }
@@ -117,13 +116,11 @@ export default function QuincenaResumenPage() {
   // efectivo.faltaPagar (ejecucion de presupuesto) -- ver lib/pagos-quincena.ts.
   const liquidezNeta = efectivo.totalLiquido - pagosQuincenaVivo
 
-  const cuentaTiles: { label: string; value: number; title?: string }[] = snapshot ? [
-    { label: 'BBVA', value: snapshot.bbva },
-    { label: 'Banamex', value: snapshot.banamex },
-    { label: 'Ualá', value: snapshot.uala },
-    { label: 'Efectivo', value: snapshot.efectivo },
-    ...(snapshot.otros > 0 ? [{ label: 'Otros', value: snapshot.otros, title: snapshot.otrosNota ?? undefined }] : []),
-  ] : []
+  const cuentaTiles: { label: string; value: number; title?: string }[] = snapshot
+    ? snapshot.montos
+        .filter(m => m.monto > 0)
+        .map(m => ({ label: m.cuenta?.nombre ?? 'Cuenta', value: m.monto, title: m.nota ?? undefined }))
+    : []
 
   return (
     <div className="space-y-6">

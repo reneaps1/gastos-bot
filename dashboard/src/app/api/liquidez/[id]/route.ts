@@ -15,7 +15,7 @@ export async function GET(
 
     const snapshot = await prisma.liquidezSnapshot.findUnique({
       where: { id },
-      include: { quincena: true },
+      include: { quincena: true, montos: { include: { cuenta: true } } },
     })
     if (!snapshot) return NextResponse.json({ error: 'Snapshot not found' }, { status: 404 })
 
@@ -36,11 +36,7 @@ export async function PUT(
     if (isNaN(id)) return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
 
     const body = await request.json()
-    const {
-      fechaCorte, quincenaId, bbva, banamex, uala, ualaInversion,
-      efectivo, valesDespensa, valesGasolina, otros, otrosNota,
-      teorico, notas, validado
-    } = body
+    const { fechaCorte, quincenaId, montos, teorico, notas, validado } = body
 
     // faltaPagar y pagosQuincena nunca se aceptan del cliente -- se recalculan
     // en vivo contra el presupuesto/creditos reales de la quincena efectiva (la
@@ -56,29 +52,39 @@ export async function PUT(
       calcularGastosAlCorte(quincenaIdEfectiva, fechaCorteEfectiva),
     ])
 
-    const snapshot = await prisma.liquidezSnapshot.update({
-      where: { id },
-      data: {
-        ...(fechaCorte && { fechaCorte: new Date(fechaCorte) }),
-        ...(quincenaId && { quincenaId: quincenaIdEfectiva }),
-        ...(bbva !== undefined && { bbva: parseFloat(bbva) }),
-        ...(banamex !== undefined && { banamex: parseFloat(banamex) }),
-        ...(uala !== undefined && { uala: parseFloat(uala) }),
-        ...(ualaInversion !== undefined && { ualaInversion: parseFloat(ualaInversion) }),
-        ...(efectivo !== undefined && { efectivo: parseFloat(efectivo) }),
-        ...(valesDespensa !== undefined && { valesDespensa: parseFloat(valesDespensa) }),
-        ...(valesGasolina !== undefined && { valesGasolina: parseFloat(valesGasolina) }),
-        ...(otros !== undefined && { otros: parseFloat(otros) }),
-        ...(otrosNota !== undefined && { otrosNota }),
-        faltaPagar: faltaPagarCalc,
-        pagosQuincena: pagosQuincenaCalc.pagosQuincena,
-        gastosReales: gastosAlCorte.gastosReales,
-        gastosPronosticados: gastosAlCorte.gastosPronosticados,
-        ...(teorico !== undefined && { teorico: teorico ? parseFloat(teorico) : null }),
-        ...(notas !== undefined && { notas }),
-        ...(validado !== undefined && { validado }),
-      },
-      include: { quincena: true },
+    const montosList: { cuentaId: number; monto: number; nota: string | null }[] | undefined = Array.isArray(montos)
+      ? montos
+          .map((m: { cuentaId: number | string; monto?: number | string; nota?: string | null }) => ({
+            cuentaId: parseInt(String(m.cuentaId)),
+            monto: parseFloat(String(m.monto ?? 0)) || 0,
+            nota: m.nota || null,
+          }))
+          .filter(m => !isNaN(m.cuentaId))
+      : undefined
+
+    // Las lineas de montos se reemplazan por completo cuando el cliente manda
+    // el arreglo -- mas simple y seguro que hacer un diff fila por fila, y el
+    // formulario siempre manda el estado completo del corte.
+    const snapshot = await prisma.$transaction(async tx => {
+      if (montosList) {
+        await tx.liquidezSnapshotCuenta.deleteMany({ where: { snapshotId: id } })
+      }
+      return tx.liquidezSnapshot.update({
+        where: { id },
+        data: {
+          ...(fechaCorte && { fechaCorte: new Date(fechaCorte) }),
+          ...(quincenaId && { quincenaId: quincenaIdEfectiva }),
+          faltaPagar: faltaPagarCalc,
+          pagosQuincena: pagosQuincenaCalc.pagosQuincena,
+          gastosReales: gastosAlCorte.gastosReales,
+          gastosPronosticados: gastosAlCorte.gastosPronosticados,
+          ...(teorico !== undefined && { teorico: teorico ? parseFloat(teorico) : null }),
+          ...(notas !== undefined && { notas }),
+          ...(validado !== undefined && { validado }),
+          ...(montosList && { montos: { create: montosList } }),
+        },
+        include: { quincena: true, montos: { include: { cuenta: true } } },
+      })
     })
 
     return NextResponse.json(snapshot)

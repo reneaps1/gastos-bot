@@ -1,4 +1,4 @@
-import { Droplets, Tag, Users, Repeat, ClipboardList, CalendarRange, KeyRound } from 'lucide-react'
+import { Droplets, Tag, Users, Repeat, ClipboardList, CalendarRange, KeyRound, Wallet } from 'lucide-react'
 
 const sections = [
   {
@@ -8,6 +8,14 @@ const sections = [
     icon: CalendarRange,
     color: 'text-teal-600',
     bg: 'bg-teal-50',
+  },
+  {
+    href: '/configuracion/cuentas',
+    title: 'Cuentas',
+    description: 'Activa, crea o elimina las cuentas (bancos, efectivo, vales, inversión). Cambia nombre, icono y tipo.',
+    icon: Wallet,
+    color: 'text-violet-600',
+    bg: 'bg-violet-50',
   },
   {
     href: '/configuracion/liquidez',

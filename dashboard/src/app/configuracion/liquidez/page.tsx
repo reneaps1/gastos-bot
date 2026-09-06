@@ -13,21 +13,16 @@ import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/
 import { sumLiquidez, normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
 import { calcularFaltaPorPagar, type PresupuestoParaTotales } from '@/lib/presupuesto-totales'
 import { DeficitTriagePanel } from '@/components/ui/DeficitTriagePanel'
+import { resolveCuentaIcon } from '@/lib/cuenta-icons'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
 interface Categoria { id: number; nombre: string; tipo: string }
+interface CuentaLite { id: number; nombre: string; tipo: string | null; icono: string | null; color: string | null }
+interface MontoLinea { cuentaId: number; monto: number; nota: string | null; cuenta?: CuentaLite }
 interface Snapshot {
   id: number
   quincenaId: number
-  bbva: number
-  banamex: number
-  uala: number
-  ualaInversion: number
-  efectivo: number
-  valesDespensa: number
-  valesGasolina: number
-  otros: number
-  otrosNota: string | null
+  montos: MontoLinea[]
   faltaPagar: number
   pagosQuincena: number
   gastosReales: number | null
@@ -55,18 +50,12 @@ interface DescuadreResponse {
   conciliacion: Conciliacion | null
 }
 
+interface MontoFormLinea { cuentaId: number; nombre: string; tipo: string | null; icono: string | null; monto: string; nota: string; inactiva?: boolean }
+
 const EMPTY_FORM = {
   quincenaId: '',
   fechaCorte: getMexicoDateString(),
-  bbva: '',
-  banamex: '',
-  uala: '',
-  ualaInversion: '',
-  efectivo: '',
-  valesDespensa: '',
-  valesGasolina: '',
-  otros: '',
-  otrosNota: '',
+  montos: [] as MontoFormLinea[],
   notas: '',
   validado: false,
 }
@@ -82,8 +71,7 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
 }
 
 function calcTeorico(f: typeof EMPTY_FORM, faltaVivo: number) {
-  const sum = ['bbva', 'banamex', 'uala', 'ualaInversion', 'efectivo', 'valesDespensa', 'valesGasolina', 'otros']
-    .reduce((s, k) => s + (parseFloat(f[k as keyof typeof f] as string) || 0), 0)
+  const sum = f.montos.reduce((s, m) => s + (parseFloat(m.monto) || 0), 0)
   return sum - faltaVivo
 }
 
@@ -125,6 +113,7 @@ function LiquidezConfigContent() {
   const [ajusteErrors, setAjusteErrors] = useState<Record<string, string>>({})
   const [ajusteSaving, setAjusteSaving] = useState(false)
   const [triageOpen, setTriageOpen] = useState(false)
+  const [cuentasActivas, setCuentasActivas] = useState<CuentaLite[]>([])
 
   useEffect(() => {
     fetch('/api/quincenas').then(r => r.json()).then((data: Quincena[]) => {
@@ -133,6 +122,7 @@ function LiquidezConfigContent() {
       setQuincenaId(fromUrl ?? getInitialQuincenaId(data))
     })
     fetch('/api/categorias').then(r => r.json()).then(setCategorias)
+    fetch('/api/cuentas?activo=true').then(r => r.json()).then(setCuentasActivas)
     // Solo al montar: la seleccion via URL define el estado inicial, no debe reaplicarse en cada cambio de quincenaIdParam.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -242,9 +232,13 @@ function LiquidezConfigContent() {
 
   useEffect(() => { fetchPagosQuincenaVivo() }, [fetchPagosQuincenaVivo])
 
+  function montosDesdeActivas(): MontoFormLinea[] {
+    return cuentasActivas.map(c => ({ cuentaId: c.id, nombre: c.nombre, tipo: c.tipo, icono: c.icono, monto: '', nota: '' }))
+  }
+
   function openCreate() {
     setEditing(null)
-    setForm({ ...EMPTY_FORM, quincenaId })
+    setForm({ ...EMPTY_FORM, quincenaId, montos: montosDesdeActivas() })
     setFormErrors({})
     setFaltaModal(0)
     setModalOpen(true)
@@ -253,18 +247,21 @@ function LiquidezConfigContent() {
 
   function openEdit(s: Snapshot) {
     setEditing(s)
+    // Las cuentas activas siempre aparecen (aunque el corte no tuviera línea
+    // para ellas todavía); las que el corte ya tenía pero fueron desactivadas
+    // después se agregan al final marcadas "inactiva" para no perder su valor
+    // al guardar (ver handleSave: se manda el arreglo completo).
+    const activas = cuentasActivas.map(c => {
+      const existente = s.montos.find(m => m.cuentaId === c.id)
+      return { cuentaId: c.id, nombre: c.nombre, tipo: c.tipo, icono: c.icono, monto: existente ? existente.monto.toString() : '', nota: existente?.nota ?? '' }
+    })
+    const inactivas = s.montos
+      .filter(m => !cuentasActivas.some(c => c.id === m.cuentaId))
+      .map(m => ({ cuentaId: m.cuentaId, nombre: m.cuenta?.nombre ?? 'Cuenta', tipo: m.cuenta?.tipo ?? null, icono: m.cuenta?.icono ?? null, monto: m.monto.toString(), nota: m.nota ?? '', inactiva: true }))
     setForm({
       quincenaId: s.quincenaId.toString(),
       fechaCorte: s.fechaCorte.split('T')[0],
-      bbva: s.bbva.toString(),
-      banamex: s.banamex.toString(),
-      uala: s.uala.toString(),
-      ualaInversion: s.ualaInversion.toString(),
-      efectivo: s.efectivo.toString(),
-      valesDespensa: s.valesDespensa.toString(),
-      valesGasolina: s.valesGasolina.toString(),
-      otros: s.otros.toString(),
-      otrosNota: s.otrosNota ?? '',
+      montos: [...activas, ...inactivas],
       notas: s.notas ?? '',
       validado: s.validado,
     })
@@ -288,15 +285,7 @@ function LiquidezConfigContent() {
       const body = {
         quincenaId: form.quincenaId,
         fechaCorte: form.fechaCorte,
-        bbva: form.bbva || '0',
-        banamex: form.banamex || '0',
-        uala: form.uala || '0',
-        ualaInversion: form.ualaInversion || '0',
-        efectivo: form.efectivo || '0',
-        valesDespensa: form.valesDespensa || '0',
-        valesGasolina: form.valesGasolina || '0',
-        otros: form.otros || '0',
-        otrosNota: form.otrosNota || null,
+        montos: form.montos.map(m => ({ cuentaId: m.cuentaId, monto: m.monto || '0', nota: m.nota || null })),
         teorico: calcTeorico(form, faltaModal).toString(),
         notas: form.notas || null,
         validado: form.validado,
@@ -398,6 +387,8 @@ function LiquidezConfigContent() {
   }
 
   const set = (key: string, val: string | boolean) => setForm(f => ({ ...f, [key]: val }))
+  const setMontoLinea = (cuentaId: number, field: 'monto' | 'nota', val: string) =>
+    setForm(f => ({ ...f, montos: f.montos.map(m => m.cuentaId === cuentaId ? { ...m, [field]: val } : m) }))
 
   // La API ordena por fechaCorte desc, asi que el primero es el corte mas
   // reciente de la quincena seleccionada.
@@ -612,11 +603,8 @@ function LiquidezConfigContent() {
                 <tr>
                   <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>
                   <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Corte</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">BBVA</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Banamex</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Ualá</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Efectivo</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Total</th>
+                  <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Cuentas</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Total</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Falta por pagar</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Gasto real</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Pronóstico</th>
@@ -629,6 +617,7 @@ function LiquidezConfigContent() {
                 {snapshots.map(s => {
                   const total = sumLiquidez(s)
                   const teorico = s.teorico ?? (total - s.faltaPagar)
+                  const montosConSaldo = s.montos.filter(m => m.monto > 0)
                   return (
                     <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
                       <td className="px-4 py-3.5">
@@ -637,11 +626,21 @@ function LiquidezConfigContent() {
                         </span>
                       </td>
                       <td className="whitespace-nowrap px-3 py-3.5 text-slate-600 dark:text-slate-400">{formatDate(s.fechaCorte)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.bbva)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden md:table-cell">{formatMXN(s.banamex)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">{formatMXN(s.uala)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(s.efectivo)}</td>
-                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden sm:table-cell">{formatMXN(total)}</td>
+                      <td className="px-3 py-3.5 hidden md:table-cell">
+                        <div className="flex flex-wrap gap-1 max-w-xs">
+                          {montosConSaldo.length === 0 && <span className="text-slate-400 dark:text-slate-500 text-xs">—</span>}
+                          {montosConSaldo.map(m => (
+                            <span
+                              key={m.cuentaId}
+                              title={m.nota ?? undefined}
+                              className="inline-flex items-center text-xs bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.5 rounded whitespace-nowrap"
+                            >
+                              {m.cuenta?.nombre ?? 'Cuenta'}: {formatMXN(m.monto)}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300">{formatMXN(total)}</td>
                       <td className="px-3 py-3.5 text-right hidden sm:table-cell">
                         {s.faltaPagar > 0
                           ? <span className="text-amber-600 dark:text-amber-400">{formatMXN(s.faltaPagar)}</span>
@@ -656,14 +655,6 @@ function LiquidezConfigContent() {
                       </td>
                       <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">
                         {formatMXN(teorico)}
-                        {s.otros > 0 && (
-                          <span
-                            className="ml-1 text-[10px] text-slate-400 dark:text-slate-500 cursor-help"
-                            title={`Incluye Otros: ${formatMXN(s.otros)}${s.otrosNota ? ` — ${s.otrosNota}` : ''}`}
-                          >
-                            ⓘ
-                          </span>
-                        )}
                       </td>
                       <td className="px-3 py-3.5 text-center">
                         {s.validado
@@ -709,45 +700,46 @@ function LiquidezConfigContent() {
             </div>
           </div>
 
-          <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Cuentas</p>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <Label htmlFor="lq-bbva">BBVA</Label>
-              <input id="lq-bbva" type="number" min="0" step="0.01" placeholder="0.00" value={form.bbva} onChange={e => set('bbva', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-banamex">Banamex</Label>
-              <input id="lq-banamex" type="number" min="0" step="0.01" placeholder="0.00" value={form.banamex} onChange={e => set('banamex', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-uala">Ualá</Label>
-              <input id="lq-uala" type="number" min="0" step="0.01" placeholder="0.00" value={form.uala} onChange={e => set('uala', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-uinv">Ualá Inversión</Label>
-              <input id="lq-uinv" type="number" min="0" step="0.01" placeholder="0.00" value={form.ualaInversion} onChange={e => set('ualaInversion', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-efec">Efectivo</Label>
-              <input id="lq-efec" type="number" min="0" step="0.01" placeholder="0.00" value={form.efectivo} onChange={e => set('efectivo', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-vd">Vales despensa</Label>
-              <input id="lq-vd" type="number" min="0" step="0.01" placeholder="0.00" value={form.valesDespensa} onChange={e => set('valesDespensa', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-vg">Vales gasolina</Label>
-              <input id="lq-vg" type="number" min="0" step="0.01" placeholder="0.00" value={form.valesGasolina} onChange={e => set('valesGasolina', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-otros">Otros</Label>
-              <input id="lq-otros" type="number" min="0" step="0.01" placeholder="0.00" value={form.otros} onChange={e => set('otros', e.target.value)} className={fieldClass()} />
-            </div>
-            <div>
-              <Label htmlFor="lq-otros-nota">¿Qué es &quot;Otros&quot;?</Label>
-              <input id="lq-otros-nota" type="text" placeholder="Ej. Efectivo en caja chica" value={form.otrosNota} onChange={e => set('otrosNota', e.target.value)} className={fieldClass()} />
-            </div>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-medium text-slate-500 dark:text-slate-400 uppercase tracking-wide">Cuentas</p>
+            <a href="/configuracion/cuentas" className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline">
+              Configurar cuentas
+            </a>
           </div>
+          {form.montos.length === 0 ? (
+            <p className="text-sm text-slate-400 dark:text-slate-500">
+              No hay cuentas activas. <a href="/configuracion/cuentas" className="text-indigo-600 dark:text-indigo-400 hover:underline">Crea una cuenta</a> para poder capturar un corte.
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              {form.montos.map(m => {
+                const Icon = resolveCuentaIcon(m.icono)
+                return (
+                  <div key={m.cuentaId}>
+                    <Label htmlFor={`lq-cta-${m.cuentaId}`}>
+                      <span className="inline-flex items-center gap-1">
+                        <Icon size={12} />
+                        {m.nombre}
+                        {m.inactiva && <span className="text-slate-400 dark:text-slate-500">(inactiva)</span>}
+                      </span>
+                    </Label>
+                    <input
+                      id={`lq-cta-${m.cuentaId}`} type="number" min="0" step="0.01" placeholder="0.00"
+                      value={m.monto} onChange={e => setMontoLinea(m.cuentaId, 'monto', e.target.value)}
+                      className={fieldClass()}
+                    />
+                    {m.tipo === 'Otro' && (
+                      <input
+                        type="text" placeholder="¿De qué se trata?" value={m.nota}
+                        onChange={e => setMontoLinea(m.cuentaId, 'nota', e.target.value)}
+                        className={`${fieldClass()} mt-1.5`}
+                      />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           {/* Teórico calculado -- "falta por pagar" ya no es un campo editable
               del corte: se calcula en vivo contra el presupuesto real de la

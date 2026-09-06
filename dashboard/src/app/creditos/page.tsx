@@ -9,7 +9,7 @@ import { formatDate, formatMXN } from '@/lib/utils'
 const TIPOS_CREDITO = ['Tarjeta', 'CreditoTienda', 'Prestamo', 'MSI', 'LineaCredito', 'Informal', 'Otro']
 
 interface User { id: number; nombre: string }
-interface Cuenta { id: number; nombre: string }
+interface Cuenta { id: number; nombre: string; activo: boolean }
 interface Quincena { id: number; codigo: string }
 interface Categoria { id: number; nombre: string }
 
@@ -365,7 +365,9 @@ export default function CreditosPage() {
               <Label htmlFor="cuenta">Cuenta de pago</Label>
               <select id="cuenta" value={form.cuentaPagoId} onChange={e => setForm(f => ({ ...f, cuentaPagoId: e.target.value }))} className={fieldClass()}>
                 <option value="">Sin especificar</option>
-                {cuentas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                {cuentas.filter(c => c.activo || c.id.toString() === form.cuentaPagoId).map(c => (
+                  <option key={c.id} value={c.id}>{c.nombre}{!c.activo ? ' (inactiva)' : ''}</option>
+                ))}
               </select>
             </div>
             <div>
