@@ -92,7 +92,7 @@ export async function downloadReporteExcel(data: ReporteData) {
   resumen.addRow(['Gastos', money(data.totales.gasto)]).getCell(2).numFmt = moneyFmt
   resumen.addRow(['Pagado', money(data.totales.pagado)]).getCell(2).numFmt = moneyFmt
   resumen.addRow(['Pendiente', money(data.totales.pendiente)]).getCell(2).numFmt = moneyFmt
-  resumen.addRow(['Libre / sin asignar', money(data.totales.libreSinAsignar)]).getCell(2).numFmt = moneyFmt
+  resumen.addRow(['Ingreso sin asignar', money(data.totales.libreSinAsignar)]).getCell(2).numFmt = moneyFmt
   resumen.getColumn(1).font = { bold: true }
 
   // ---- Presupuesto ----
@@ -196,18 +196,18 @@ export async function downloadResumenExcel(data: ReporteResumenData) {
   sheet.addRow(['Ahorro protegido', money(data.ahorroProtegido)]).getCell(2).numFmt = moneyFmt
   if (data.disponibleOperativo != null) sheet.addRow(['Disponible hoy', money(data.disponibleOperativo)]).getCell(2).numFmt = moneyFmt
   sheet.addRow(['Pendiente por cubrir', money(data.totalFalta)]).getCell(2).numFmt = moneyFmt
-  sheet.addRow(['Libre / sin asignar', money(data.libreSinAsignar)]).getCell(2).numFmt = moneyFmt
-  if (data.libreDespuesCubrir != null) sheet.addRow(['Después de cubrir', money(data.libreDespuesCubrir)]).getCell(2).numFmt = moneyFmt
+  sheet.addRow(['Ingreso sin asignar', money(data.libreSinAsignar)]).getCell(2).numFmt = moneyFmt
+  if (data.libreDespuesCubrir != null) sheet.addRow(['Saldo después de pagar', money(data.libreDespuesCubrir)]).getCell(2).numFmt = moneyFmt
   if (data.cubrePendiente != null) sheet.addRow(['Cobertura', data.cubrePendiente ? 'Sí alcanza' : 'No alcanza'])
   if (data.pagosQuincena != null) sheet.addRow(['Pagos que caen esta quincena', money(data.pagosQuincena)]).getCell(2).numFmt = moneyFmt
   sheet.addRow([])
   sheet.addRow(['Presupuestado', money(data.totalPresupuestado)]).getCell(2).numFmt = moneyFmt
   sheet.addRow(['Pagado', money(data.totalPagado)]).getCell(2).numFmt = moneyFmt
   sheet.addRow([])
-  sheet.addRow(['Nota', 'Disponible hoy = saldo en cuentas - ahorro protegido. El ahorro no se usa para cubrir gastos.'])
+  sheet.addRow(['Nota', 'Disponible hoy = saldo en cuentas - ahorro protegido. Ingreso sin asignar pertenece a la lógica de presupuesto; saldo después de pagar pertenece a la lógica de caja.'])
   sheet.addRow([])
   sheet.getColumn(1).width = 30
-  sheet.getColumn(2).width = 28
+  sheet.getColumn(2).width = 46
 
   const headerRow = sheet.addRow(['Categoría', 'Descripción', 'Presupuestado', 'Pagado', 'Falta', 'Estado'])
   headerRow.font = { bold: true }
