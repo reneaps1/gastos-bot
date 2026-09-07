@@ -66,6 +66,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState<Fila[]>([])
   const [totalesTx, setTotalesTx] = useState<TransaccionesTotales>({})
+  const [ahorroProtegido, setAhorroProtegido] = useState(0)
   const [liquidez, setLiquidez] = useState<{
     totalLiquido: number; pagosQuincena: number; teorico: number | null; fechaCorte: string | null
   } | null>(null)
@@ -76,13 +77,14 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
     async function load() {
       setLoading(true)
       try {
-        const [presupuestos, liqData, pagosJson, txJson]: [
-          PresupuestoRow[], unknown[], { pagosQuincena?: number }, { totales?: TransaccionesTotales }
+        const [presupuestos, liqData, pagosJson, txJson, ahorroJson]: [
+          PresupuestoRow[], unknown[], { pagosQuincena?: number }, { totales?: TransaccionesTotales }, { total?: number | string }
         ] = await Promise.all([
           fetch(`/api/presupuestos?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/liquidez?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/transacciones?quincenaId=${quincena.id}&limit=1`).then(r => r.json()),
+          fetch('/api/ahorro').then(r => r.json()),
         ])
         if (cancelled) return
         setRows(presupuestos.map(p => {
@@ -92,6 +94,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           return { ...p, pagado, falta, estado }
         }))
         setTotalesTx(txJson.totales ?? {})
+        setAhorroProtegido(Math.max(Number(ahorroJson.total ?? 0), 0))
         const raw = Array.isArray(liqData) && liqData.length > 0
           ? liqData[0] as Parameters<typeof normalizeMontos>[0] & { teorico: unknown; fechaCorte: unknown }
           : null
@@ -123,10 +126,11 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   const gastosNoCubiertos = Math.max(Number(totalesTx.Gasto ?? 0) - gastoRealEnPresupuesto, 0)
   const libreSinAsignar = calcularLibreSinAsignar(Number(totalesTx.Ingreso ?? 0), rows, gastosNoCubiertos)
 
-  // Esta es la respuesta de caja a "si cubro todo lo que falta, cuanto queda".
-  // Se parte del corte real de cuentas y se resta solo presupuesto de Gasto;
-  // Ahorro no se suma como una obligacion por cubrir.
-  const libreDespuesCubrir = liquidez ? liquidez.totalLiquido - totalFalta : null
+  // Regla de negocio: el ahorro acumulado es dinero protegido. Aunque forme
+  // parte del saldo fisico capturado en cuentas, no se considera utilizable
+  // para cubrir gastos del periodo.
+  const disponibleOperativo = liquidez ? liquidez.totalLiquido - ahorroProtegido : null
+  const libreDespuesCubrir = disponibleOperativo != null ? disponibleOperativo - totalFalta : null
   const cubrePendiente = libreDespuesCubrir != null ? libreDespuesCubrir >= 0 : null
   const faltanteCobertura = libreDespuesCubrir != null ? Math.max(-libreDespuesCubrir, 0) : null
 
@@ -149,6 +153,8 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
         await downloadResumenExcel({
           quincena,
           totalLiquido: liquidez?.totalLiquido ?? null,
+          ahorroProtegido,
+          disponibleOperativo,
           pagosQuincena: liquidez?.pagosQuincena ?? null,
           libreSinAsignar,
           libreDespuesCubrir,
@@ -213,11 +219,11 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
             <p className="ml-auto text-xs" style={{ color: C.slate500 }}>{formatQuincenaRange(quincena)}</p>
           </div>
 
-          {/* Respuestas ejecutivas: caja actual, compromiso pendiente, dinero
-              no asignado y caja que quedaria despues de cubrir el presupuesto. */}
+          {/* Respuestas ejecutivas: dinero operativo, compromiso pendiente,
+              dinero no asignado y caja que quedaria al cubrir el presupuesto. */}
           <div className="grid grid-cols-4 gap-2.5">
             {[
-              { label: 'Disponible hoy', value: liquidez?.totalLiquido ?? null, color: C.slate900 },
+              { label: 'Disponible hoy', value: disponibleOperativo, color: disponibleOperativo != null && disponibleOperativo < 0 ? C.rose600 : C.slate900 },
               { label: 'Pendiente por cubrir', value: totalFalta, color: totalFalta > 0 ? C.amber600 : C.emerald600 },
               { label: 'Libre / sin asignar', value: libreSinAsignar, color: libreSinAsignar < 0 ? C.rose600 : C.emerald600 },
               { label: 'Después de cubrir', value: libreDespuesCubrir, color: cubrePendiente === false ? C.rose600 : C.emerald600 },
@@ -239,26 +245,27 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-2.5">
+          <div className="grid grid-cols-4 gap-2.5">
             {[
+              { label: 'Saldo en cuentas', value: liquidez?.totalLiquido ?? null },
+              { label: 'Ahorro protegido', value: ahorroProtegido },
               { label: 'Presupuestado', value: totalPresupuestado },
               { label: 'Pagado', value: totalPagado },
-              { label: 'Pagos que caen esta Q', value: liquidez?.pagosQuincena ?? null },
             ].map(k => (
               <div key={k.label} className="rounded-lg px-2.5 py-2 text-center" style={{ backgroundColor: C.slate50, border: `1px solid ${C.slate200}` }}>
                 <p className="text-[9px]" style={{ color: C.slate500 }}>{k.label}</p>
-                <p className="text-xs font-semibold tabular-nums" style={{ color: C.slate700 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
+                <p className="text-xs font-semibold tabular-nums" style={{ color: k.label === 'Ahorro protegido' ? C.blue600 : C.slate700 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
               </div>
             ))}
           </div>
 
           {liquidez?.fechaCorte && (
             <p className="text-[9px] text-center" style={{ color: C.slate400 }}>
-              Liquidez al corte {formatDate(liquidez.fechaCorte)}{liquidez.teorico != null ? ` · Teórico ${formatMXN(liquidez.teorico)}` : ''}
+              Liquidez al corte {formatDate(liquidez.fechaCorte)} · pagos que caen esta Q {formatMXN(liquidez.pagosQuincena)}{liquidez.teorico != null ? ` · teórico ${formatMXN(liquidez.teorico)}` : ''}
             </p>
           )}
           <p className="text-[9px] text-center" style={{ color: C.blue600 }}>
-            El ahorro permanece separado: no se usa para calcular lo pendiente por cubrir.
+            Disponible hoy = saldo en cuentas - ahorro protegido. El ahorro no se usa para cubrir gastos.
           </p>
 
           {rows.length === 0 ? (
