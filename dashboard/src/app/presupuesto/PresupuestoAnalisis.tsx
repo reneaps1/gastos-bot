@@ -144,12 +144,21 @@ function buildBalancePorQ(
     })
 }
 
-type UnidadSerie = 'real' | 'presupuestado'
+type UnidadSerie = 'real' | 'original' | 'vigente'
+const UNIDADES_SERIE: UnidadSerie[] = ['real', 'original', 'vigente']
+
 function valorSerie(p: PresupuestoRow, unidad: UnidadSerie): number {
-  return unidad === 'real' ? p.real : Number(p.montoPresupuestado)
+  if (unidad === 'real') return p.real
+  if (unidad === 'vigente') return Number(p.montoEfectivo)
+  return Number(p.montoPresupuestado)
 }
-function otraUnidad(u: UnidadSerie): UnidadSerie {
-  return u === 'real' ? 'presupuestado' : 'real'
+function siguienteUnidad(u: UnidadSerie): UnidadSerie {
+  const idx = UNIDADES_SERIE.indexOf(u)
+  return UNIDADES_SERIE[(idx + 1) % UNIDADES_SERIE.length]
+}
+function nombreUnidad(u: UnidadSerie, realTotal = false) {
+  if (u === 'real') return realTotal ? 'real total' : 'real'
+  return u
 }
 
 function serieCategoria(
@@ -510,6 +519,13 @@ export function PresupuestoAnalisis({
       return next
     })
   }
+  function activarSeries(keys: string[]) {
+    setSeriesActivas(prev => {
+      const next = new Set(prev)
+      keys.forEach(k => next.add(k))
+      return next
+    })
+  }
   const nextInstanceId = useRef(0)
   function mintInstanceId() {
     return nextInstanceId.current++
@@ -523,13 +539,15 @@ export function PresupuestoAnalisis({
   function duplicarCategoria(instanceId: number) {
     const original = categoriasAgregadas.find(c => c.instanceId === instanceId)
     if (!original) return
-    setCategoriasAgregadas(prev => [...prev, { instanceId: mintInstanceId(), categoriaId: original.categoriaId, unidad: otraUnidad(original.unidad) }])
+    const usadas = new Set(categoriasAgregadas.filter(c => c.categoriaId === original.categoriaId).map(c => c.unidad))
+    const unidad = UNIDADES_SERIE.find(u => !usadas.has(u)) ?? siguienteUnidad(original.unidad)
+    setCategoriasAgregadas(prev => [...prev, { instanceId: mintInstanceId(), categoriaId: original.categoriaId, unidad }])
   }
   function quitarCategoria(instanceId: number) {
     setCategoriasAgregadas(prev => prev.filter(c => c.instanceId !== instanceId))
   }
   function toggleUnidadCategoria(instanceId: number) {
-    setCategoriasAgregadas(prev => prev.map(c => c.instanceId === instanceId ? { ...c, unidad: otraUnidad(c.unidad) } : c))
+    setCategoriasAgregadas(prev => prev.map(c => c.instanceId === instanceId ? { ...c, unidad: siguienteUnidad(c.unidad) } : c))
   }
 
   const [lineasAgregadas, setLineasAgregadas] = useState<(LineaPresupuesto & { instanceId: number; unidad: UnidadSerie; color: string })[]>([])
@@ -541,14 +559,18 @@ export function PresupuestoAnalisis({
   function duplicarLinea(instanceId: number) {
     const original = lineasAgregadas.find(l => l.instanceId === instanceId)
     if (!original) return
+    const usadas = new Set(lineasAgregadas
+      .filter(l => l.categoriaId === original.categoriaId && normalizarDescripcion(l.descripcion) === normalizarDescripcion(original.descripcion))
+      .map(l => l.unidad))
+    const unidad = UNIDADES_SERIE.find(u => !usadas.has(u)) ?? siguienteUnidad(original.unidad)
     const nuevoId = mintInstanceId()
-    setLineasAgregadas(prev => [...prev, { categoriaId: original.categoriaId, descripcion: original.descripcion, instanceId: nuevoId, unidad: otraUnidad(original.unidad), color: colorForLinea(nuevoId) }])
+    setLineasAgregadas(prev => [...prev, { categoriaId: original.categoriaId, descripcion: original.descripcion, instanceId: nuevoId, unidad, color: colorForLinea(nuevoId) }])
   }
   function quitarLinea(instanceId: number) {
     setLineasAgregadas(prev => prev.filter(l => l.instanceId !== instanceId))
   }
   function toggleUnidadLinea(instanceId: number) {
-    setLineasAgregadas(prev => prev.map(l => l.instanceId === instanceId ? { ...l, unidad: otraUnidad(l.unidad) } : l))
+    setLineasAgregadas(prev => prev.map(l => l.instanceId === instanceId ? { ...l, unidad: siguienteUnidad(l.unidad) } : l))
   }
 
   const [simulando, setSimulando] = useState(false)
@@ -587,8 +609,18 @@ export function PresupuestoAnalisis({
     const gastoSimulado = simulando && simGastoHipotetico != null
       ? (q.quincenaId === simQuincena?.id ? simGastoHipotetico : q.gastosReales)
       : null
-    return { ...q, ma3Gastos, ...catValues, gastoSimulado }
+    const ajustePlan = q.gastosVigentes - q.gastos
+    return {
+      ...q,
+      ma3Gastos,
+      ...catValues,
+      gastoSimulado,
+      ajustePlan,
+      desviacionOriginal: q.gastosReales - q.gastos,
+      desviacionVigente: q.gastosReales - q.gastosVigentes,
+    }
   })
+  const cambiosPlan = chartData.filter(q => Math.abs(q.ajustePlan) >= 0.01)
 
   const activeChartKeys = [
     ...SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => s.key),
@@ -717,6 +749,8 @@ export function PresupuestoAnalisis({
 
   const tonoOriginal = precisionTone(diagRango?.precisionOriginal ?? null)
   const tonoVigente = precisionTone(diagRango?.precisionVigente ?? null)
+  const gastosOVRActivos = ['gastos', 'gastosVigentes', 'gastosReales'].every(k => seriesActivas.has(k))
+  const ingresosOVRActivos = ['ingresos', 'ingresosVigentes', 'ingresosReales'].every(k => seriesActivas.has(k))
 
   return (
     <div className="space-y-6">
@@ -945,13 +979,37 @@ export function PresupuestoAnalisis({
           <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
             <div>
               <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Comparativa por quincena</p>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Real total incluye movimientos registrados fuera del presupuesto.</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Real total incluye movimientos registrados fuera del presupuesto. Los puntos en plan vigente marcan Q donde el presupuesto cambió.</p>
             </div>
-            <button type="button" onClick={() => setSimulando(s => !s)}
-              className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${simulando ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-300 dark:hover:border-amber-700'}`}>
-              <FlaskConical size={13} /> Simular
-            </button>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button type="button" onClick={() => activarSeries(['gastos', 'gastosVigentes', 'gastosReales'])}
+                className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${gastosOVRActivos ? 'bg-rose-600 border-rose-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-rose-600 dark:hover:text-rose-400 hover:border-rose-300 dark:hover:border-rose-700'}`}>
+                Gastos O/V/R
+              </button>
+              <button type="button" onClick={() => activarSeries(['ingresos', 'ingresosVigentes', 'ingresosReales'])}
+                className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${ingresosOVRActivos ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-emerald-600 dark:hover:text-emerald-400 hover:border-emerald-300 dark:hover:border-emerald-700'}`}>
+                Ingresos O/V/R
+              </button>
+              <button type="button" onClick={() => setSimulando(s => !s)}
+                className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${simulando ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-300 dark:hover:border-amber-700'}`}>
+                <FlaskConical size={13} /> Simular
+              </button>
+            </div>
           </div>
+
+          {cambiosPlan.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 mb-3 rounded-lg bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 px-3 py-2">
+              <span className="text-[11px] font-medium text-slate-500 dark:text-slate-400 mr-1">Cambios del plan</span>
+              {cambiosPlan.map(q => (
+                <button key={q.quincenaId} type="button"
+                  onClick={() => activarSeries(['gastos', 'gastosVigentes', 'gastosReales'])}
+                  title={`Original ${formatMXN(q.gastos)} · Vigente ${formatMXN(q.gastosVigentes)} · Real ${formatMXN(q.gastosReales)}`}
+                  className="text-[11px] font-medium px-2 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-indigo-300 dark:hover:border-indigo-700 cursor-pointer">
+                  {q.codigo} <span className={q.ajustePlan > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-sky-600 dark:text-sky-400'}>{formatSignedMXN(q.ajustePlan)}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex flex-wrap gap-1.5 mb-2">
             {SERIES_BASE.map(s => {
@@ -977,11 +1035,11 @@ export function PresupuestoAnalisis({
                   {cat.nombre}
                   <button type="button" onClick={() => toggleUnidadCategoria(c.instanceId)}
                     className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-white/25 hover:bg-white/40 cursor-pointer"
-                    title="Cambiar entre real y plan original">
-                    {c.unidad === 'real' ? 'real' : 'original'}
+                    title="Cambiar entre real, plan original y plan vigente">
+                    {nombreUnidad(c.unidad)}
                   </button>
                   <button type="button" onClick={() => duplicarCategoria(c.instanceId)} className="hover:opacity-70 cursor-pointer"
-                    aria-label={`Duplicar ${cat.nombre} para comparar real vs. presupuestado`} title="Duplicar (comparar real vs. presupuestado)">
+                    aria-label={`Duplicar ${cat.nombre} para comparar real, original y vigente`} title="Duplicar (completar comparación real/original/vigente)">
                     <CopyPlus size={12} />
                   </button>
                   <button type="button" onClick={() => quitarCategoria(c.instanceId)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${cat.nombre} de la gráfica`}>
@@ -1001,11 +1059,11 @@ export function PresupuestoAnalisis({
                   <button type="button" onClick={() => toggleUnidadLinea(l.instanceId)}
                     className="text-[9px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded-full text-white hover:opacity-80 cursor-pointer"
                     style={{ backgroundColor: l.color }}
-                    title="Cambiar entre real y plan original">
-                    {l.unidad === 'real' ? 'real' : 'original'}
+                    title="Cambiar entre real, plan original y plan vigente">
+                    {nombreUnidad(l.unidad)}
                   </button>
                   <button type="button" onClick={() => duplicarLinea(l.instanceId)} className="hover:opacity-70 cursor-pointer"
-                    aria-label={`Duplicar ${label} para comparar real vs. presupuestado`} title="Duplicar (comparar real vs. presupuestado)">
+                    aria-label={`Duplicar ${label} para comparar real, original y vigente`} title="Duplicar (completar comparación real/original/vigente)">
                     <CopyPlus size={12} />
                   </button>
                   <button type="button" onClick={() => quitarLinea(l.instanceId)} className="hover:opacity-70 cursor-pointer" aria-label={`Quitar ${label} de la gráfica`}>
@@ -1061,24 +1119,75 @@ export function PresupuestoAnalisis({
           )}
 
           {hayDatosParaGraficar ? (
-            <ResponsiveContainer width="100%" height={268}>
+            <ResponsiveContainer width="100%" height={300}>
               <LineChart data={chartData} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                 <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
                 <YAxis tickFormatter={v => `$${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 11, fill: '#64748b' }} width={44} tickLine={false} axisLine={false} />
-                <Tooltip formatter={(v) => formatMXN(Number(v ?? 0))} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
+                <Tooltip content={({ active, payload, label }) => {
+                  if (!active || !payload?.length) return null
+                  const row = payload[0]?.payload as (typeof chartData)[number] | undefined
+                  if (!row) return null
+                  return (
+                    <div className="min-w-[250px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg p-3 text-xs">
+                      <div className="flex items-center justify-between gap-4 mb-2">
+                        <span className="font-semibold text-slate-800 dark:text-slate-100">{String(label ?? row.codigo)}</span>
+                        {!row.esCerrada && <span className="text-[10px] text-emerald-600 dark:text-emerald-400">en curso</span>}
+                      </div>
+                      <div className="space-y-1 text-slate-600 dark:text-slate-300">
+                        <div className="flex justify-between gap-5"><span>Plan original</span><span className="tabular-nums">{formatMXN(row.gastos)}</span></div>
+                        <div className="flex justify-between gap-5"><span>Plan vigente</span><span className="tabular-nums">{formatMXN(row.gastosVigentes)}</span></div>
+                        {Math.abs(row.ajustePlan) >= 0.01 && (
+                          <div className="flex justify-between gap-5 text-amber-600 dark:text-amber-400"><span>Ajuste del plan</span><span className="tabular-nums">{formatSignedMXN(row.ajustePlan)}</span></div>
+                        )}
+                        <div className="flex justify-between gap-5 font-semibold text-slate-800 dark:text-slate-100"><span>Gasto real</span><span className="tabular-nums">{formatMXN(row.gastosReales)}</span></div>
+                        <div className={`flex justify-between gap-5 ${row.desviacionVigente > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}><span>Vs. vigente</span><span className="tabular-nums">{formatSignedMXN(row.desviacionVigente)}</span></div>
+                        {row.gastoFueraPlan > 0 && <div className="flex justify-between gap-5 text-amber-600 dark:text-amber-400"><span>Fuera de plan</span><span className="tabular-nums">{formatMXN(row.gastoFueraPlan)}</span></div>}
+                      </div>
+                      <div className="border-t border-slate-100 dark:border-slate-700 mt-2 pt-2">
+                        <p className="text-[10px] uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1">Series visibles</p>
+                        <div className="space-y-1">
+                          {payload.map((item, idx) => {
+                            const value = Number(item.value)
+                            if (!Number.isFinite(value)) return null
+                            return (
+                              <div key={`${String(item.dataKey)}-${idx}`} className="flex items-center justify-between gap-5">
+                                <span className="flex items-center gap-1.5 text-slate-500 dark:text-slate-400">
+                                  <span className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color ?? '#64748b' }} />
+                                  {String(item.name ?? item.dataKey ?? '')}
+                                </span>
+                                <span className="tabular-nums text-slate-700 dark:text-slate-200">{formatMXN(value)}</span>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                }} />
                 <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                {SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => (
-                  <Line key={s.key} type={s.tipo ?? 'monotone'} dataKey={s.key} name={s.label}
-                    stroke={s.color} strokeWidth={s.dashed ? 1.5 : 2} strokeDasharray={s.dashed ? '4 2' : undefined}
-                    dot={s.dashed ? false : { r: 3, fill: s.color }} activeDot={s.dashed ? undefined : { r: 5 }}
-                    connectNulls={s.tipo === 'stepAfter'} isAnimationActive={false} />
-                ))}
+                {SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => {
+                  const ajusteDot = s.key === 'gastosVigentes'
+                    ? (dotProps: DotItemDotProps) => {
+                        const { cx, cy, payload } = dotProps
+                        const original = Number(payload?.gastos)
+                        const vigente = Number(payload?.gastosVigentes)
+                        if (typeof cx !== 'number' || typeof cy !== 'number' || !Number.isFinite(original) || !Number.isFinite(vigente) || Math.abs(vigente - original) < 0.01) return null
+                        return <Dot cx={cx} cy={cy} r={4} fill={s.color} stroke="#fff" strokeWidth={1.5} />
+                      }
+                    : undefined
+                  return (
+                    <Line key={s.key} type={s.tipo ?? 'monotone'} dataKey={s.key} name={s.label}
+                      stroke={s.color} strokeWidth={s.dashed ? 1.5 : 2} strokeDasharray={s.dashed ? '4 2' : undefined}
+                      dot={ajusteDot ?? (s.dashed ? false : { r: 3, fill: s.color })} activeDot={s.dashed ? { r: 5 } : { r: 5 }}
+                      connectNulls={s.tipo === 'stepAfter'} isAnimationActive={false} />
+                  )
+                })}
                 {categoriasAgregadas.map((c, i) => {
                   const cat = categorias.find(x => x.id === c.categoriaId)
                   if (!cat) return null
                   const color = colorForCategoria(cat.nombre, i)
-                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real total' : 'original'})`
+                  const name = `${cat.nombre} (${nombreUnidad(c.unidad, true)})`
                   return (
                     <Line key={categoriaInstanceKey(c.instanceId)} type="monotone" dataKey={categoriaInstanceKey(c.instanceId)} name={name}
                       stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
@@ -1088,7 +1197,7 @@ export function PresupuestoAnalisis({
                 {lineasAgregadas.map(l => {
                   const cat = categorias.find(c => c.id === l.categoriaId)
                   const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
-                  const name = `${label} (${l.unidad === 'real' ? 'real' : 'original'})`
+                  const name = `${label} (${nombreUnidad(l.unidad)})`
                   const editarPunto = (payload: { quincenaId: number }) => {
                     const row = presupuestos.find(p =>
                       p.categoriaId === l.categoriaId &&
@@ -1121,7 +1230,7 @@ export function PresupuestoAnalisis({
               </LineChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-[268px] flex items-center justify-center text-center px-6">
+            <div className="h-[300px] flex items-center justify-center text-center px-6">
               <p className="text-sm text-slate-400 dark:text-slate-500">
                 {activeChartKeys.length === 0
                   ? 'Activa al menos una serie arriba para ver la gráfica.'
