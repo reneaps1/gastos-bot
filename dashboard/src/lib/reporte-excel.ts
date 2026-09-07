@@ -161,6 +161,8 @@ export interface ReporteResumenRow {
 export interface ReporteResumenData {
   quincena: ReporteQuincena
   totalLiquido: number | null
+  ahorroProtegido: number
+  disponibleOperativo: number | null
   pagosQuincena: number | null
   libreSinAsignar: number
   libreDespuesCubrir: number | null
@@ -190,7 +192,9 @@ export async function downloadResumenExcel(data: ReporteResumenData) {
   sheet.addRow(['Generado', new Date().toLocaleString('es-MX')])
   sheet.addRow([])
 
-  if (data.totalLiquido != null) sheet.addRow(['Disponible hoy', money(data.totalLiquido)]).getCell(2).numFmt = moneyFmt
+  if (data.totalLiquido != null) sheet.addRow(['Saldo en cuentas', money(data.totalLiquido)]).getCell(2).numFmt = moneyFmt
+  sheet.addRow(['Ahorro protegido', money(data.ahorroProtegido)]).getCell(2).numFmt = moneyFmt
+  if (data.disponibleOperativo != null) sheet.addRow(['Disponible hoy', money(data.disponibleOperativo)]).getCell(2).numFmt = moneyFmt
   sheet.addRow(['Pendiente por cubrir', money(data.totalFalta)]).getCell(2).numFmt = moneyFmt
   sheet.addRow(['Libre / sin asignar', money(data.libreSinAsignar)]).getCell(2).numFmt = moneyFmt
   if (data.libreDespuesCubrir != null) sheet.addRow(['Después de cubrir', money(data.libreDespuesCubrir)]).getCell(2).numFmt = moneyFmt
@@ -200,10 +204,10 @@ export async function downloadResumenExcel(data: ReporteResumenData) {
   sheet.addRow(['Presupuestado', money(data.totalPresupuestado)]).getCell(2).numFmt = moneyFmt
   sheet.addRow(['Pagado', money(data.totalPagado)]).getCell(2).numFmt = moneyFmt
   sheet.addRow([])
-  sheet.addRow(['Nota', 'El ahorro permanece separado y no se usa para calcular lo pendiente por cubrir.'])
+  sheet.addRow(['Nota', 'Disponible hoy = saldo en cuentas - ahorro protegido. El ahorro no se usa para cubrir gastos.'])
   sheet.addRow([])
   sheet.getColumn(1).width = 30
-  sheet.getColumn(2).width = 24
+  sheet.getColumn(2).width = 28
 
   const headerRow = sheet.addRow(['Categoría', 'Descripción', 'Presupuestado', 'Pagado', 'Falta', 'Estado'])
   headerRow.font = { bold: true }
