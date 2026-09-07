@@ -8,6 +8,6 @@ export const CAT_COLOR: Record<string, string> = {
 }
 const FALLBACK_COLORS = ['#64748b', '#a855f7', '#0891b2', '#ca8a04', '#be185d']
 
-export function colorForCategoria(nombre: string, index: number) {
+export function colorForCategoria(nombre: string, index = 0) {
   return CAT_COLOR[nombre] ?? FALLBACK_COLORS[index % FALLBACK_COLORS.length]
 }
