@@ -1,8 +1,16 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const { searchParams } = new URL(request.url)
+    const hasta = searchParams.get('hasta')
+    const fechaHasta = hasta ? new Date(`${hasta}T23:59:59.999Z`) : null
+
+    if (fechaHasta && Number.isNaN(fechaHasta.getTime())) {
+      return NextResponse.json({ error: 'Invalid hasta date' }, { status: 400 })
+    }
+
     const catAhorro = await prisma.categoria.findFirst({ where: { nombre: 'Ahorro' } })
     if (!catAhorro) {
       return NextResponse.json({ total: 0, porQuincena: [], porApartado: [], transacciones: [] })
@@ -10,7 +18,10 @@ export async function GET() {
 
     const [txs, apartados] = await Promise.all([
       prisma.transaccion.findMany({
-        where: { categoriaId: catAhorro.id },
+        where: {
+          categoriaId: catAhorro.id,
+          ...(fechaHasta ? { fecha: { lte: fechaHasta } } : {}),
+        },
         orderBy: { fecha: 'asc' },
         include: { quincena: true, user: true, apartado: true },
       }),
