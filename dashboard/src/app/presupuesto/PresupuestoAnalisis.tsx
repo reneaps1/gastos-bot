@@ -15,6 +15,7 @@ import type { Presupuesto } from './page'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
+interface GastoSinPresupuesto { quincenaId: number; categoriaId: number; monto: number }
 // Alias del tipo completo de page.tsx: en runtime `presupuestos` ya trae las
 // filas completas (mismo /api/presupuestos sin filtrar), asi que se necesita
 // el shape completo para poder pasar una fila a openEdit sin cast.
@@ -39,7 +40,9 @@ interface Props {
 
 interface BalancePorQ {
   quincenaId: number; codigo: string; fechaInicio: string
-  ingresos: number; ingresosReales: number; gastos: number; gastosReales: number; balance: number
+  ingresos: number; ingresosVigentes: number; ingresosReales: number
+  gastos: number; gastosVigentes: number; gastosAsignados: number; gastoFueraPlan: number; gastosReales: number
+  balance: number
   esCerrada: boolean
   ingresoRef: number | null; limiteRef: number | null; tieneOverride: boolean
 }
@@ -50,9 +53,12 @@ interface BalancePorQ {
 interface SerieConfig { key: string; label: string; color: string; dashed?: boolean; tipo?: 'monotone' | 'stepAfter' }
 const SERIES_BASE: SerieConfig[] = [
   { key: 'ingresos', label: 'Ingresos (plan original)', color: '#10b981' },
+  { key: 'ingresosVigentes', label: 'Ingresos (plan vigente)', color: '#34d399', dashed: true },
   { key: 'ingresosReales', label: 'Ingresos (real)', color: '#047857', dashed: true },
   { key: 'gastos', label: 'Gastos (plan original)', color: '#f43f5e' },
-  { key: 'gastosReales', label: 'Gastos (real)', color: '#be123c', dashed: true },
+  { key: 'gastosVigentes', label: 'Gastos (plan vigente)', color: '#fb7185', dashed: true },
+  { key: 'gastosReales', label: 'Gastos (real total)', color: '#be123c', dashed: true },
+  { key: 'gastoFueraPlan', label: 'Gasto fuera de plan', color: '#f59e0b', dashed: true },
   { key: 'ma3Gastos', label: 'Tendencia (prom. móvil 3)', color: '#6366f1', dashed: true },
   { key: 'ingresoRef', label: 'Meta ingreso', color: '#10b981', dashed: true, tipo: 'stepAfter' },
   { key: 'limiteRef', label: 'Límite gasto', color: '#f43f5e', dashed: true, tipo: 'stepAfter' },
@@ -88,23 +94,58 @@ function defaultDesdeHasta(quincenas: Quincena[], today: string): { desde: strin
   return { desde: ordenadas[desdeIdx].id.toString(), hasta: ordenadas[hastaIdx].id.toString() }
 }
 
-function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global: ReferenciaValores, today: string): BalancePorQ[] {
-  const byQ = new Map<number, { ingresos: number; ingresosReales: number; gastos: number; gastosReales: number }>()
+function buildBalancePorQ(
+  rows: PresupuestoRow[],
+  quincenas: Quincena[],
+  global: ReferenciaValores,
+  today: string,
+  gastosSinPresupuesto: GastoSinPresupuesto[] = [],
+): BalancePorQ[] {
+  const byQ = new Map<number, {
+    ingresos: number; ingresosVigentes: number; ingresosReales: number
+    gastos: number; gastosVigentes: number; gastosAsignados: number; gastoFueraPlan: number
+  }>()
+  const empty = () => ({
+    ingresos: 0, ingresosVigentes: 0, ingresosReales: 0,
+    gastos: 0, gastosVigentes: 0, gastosAsignados: 0, gastoFueraPlan: 0,
+  })
+
   for (const p of rows) {
     if (!cuentaParaAgregados(p)) continue
-    const acc = byQ.get(p.quincenaId) ?? { ingresos: 0, ingresosReales: 0, gastos: 0, gastosReales: 0 }
-    if (p.categoria.tipo === 'Ingreso') { acc.ingresos += Number(p.montoPresupuestado); acc.ingresosReales += p.real }
-    if (p.categoria.tipo === 'Gasto') { acc.gastos += Number(p.montoPresupuestado); acc.gastosReales += p.real }
+    const acc = byQ.get(p.quincenaId) ?? empty()
+    if (p.categoria.tipo === 'Ingreso') {
+      acc.ingresos += Number(p.montoPresupuestado)
+      acc.ingresosVigentes += Number(p.montoEfectivo)
+      acc.ingresosReales += p.real
+    }
+    if (p.categoria.tipo === 'Gasto') {
+      acc.gastos += Number(p.montoPresupuestado)
+      acc.gastosVigentes += Number(p.montoEfectivo)
+      acc.gastosAsignados += p.real
+    }
     byQ.set(p.quincenaId, acc)
   }
+
+  // Un gasto sin presupuesto tambien es gasto real. Se incorpora aparte para
+  // no falsear ninguna linea: suma al total de la quincena/categoria, pero no
+  // se adjudica artificialmente a una partida que el usuario nunca eligio.
+  for (const extra of gastosSinPresupuesto) {
+    const acc = byQ.get(extra.quincenaId) ?? empty()
+    acc.gastoFueraPlan += Number(extra.monto) || 0
+    byQ.set(extra.quincenaId, acc)
+  }
+
   return quincenas
     .filter(q => byQ.has(q.id))
     .map(q => {
       const acc = byQ.get(q.id)!
       const ref = resolveReferencia(q, global)
+      const gastosReales = acc.gastosAsignados + acc.gastoFueraPlan
       return {
         quincenaId: q.id, codigo: q.codigo, fechaInicio: q.fechaInicio,
-        ingresos: acc.ingresos, ingresosReales: acc.ingresosReales, gastos: acc.gastos, gastosReales: acc.gastosReales,
+        ingresos: acc.ingresos, ingresosVigentes: acc.ingresosVigentes, ingresosReales: acc.ingresosReales,
+        gastos: acc.gastos, gastosVigentes: acc.gastosVigentes, gastosAsignados: acc.gastosAsignados,
+        gastoFueraPlan: acc.gastoFueraPlan, gastosReales,
         balance: acc.ingresos - acc.gastos,
         esCerrada: q.fechaFin < today,
         ingresoRef: ref.ingresoReferencia, limiteRef: ref.limiteGastoReferencia,
@@ -128,14 +169,24 @@ function otraUnidad(u: UnidadSerie): UnidadSerie {
 
 // Monto (real o presupuestado, segun unidad) por quincena de una categoria
 // especifica -- para las series opcionales "+ Agregar categoria o linea".
-// Usa TODAS las filas (no filasFiltradas), a proposito: el filtro de
-// Categoria de arriba acota tabla/agregados, pero una serie agregada aqui
-// debe poder compararse sin importar ese filtro.
-function serieCategoria(rows: PresupuestoRow[], categoriaId: number, unidad: UnidadSerie): Map<number, number> {
+// En modo real se suma tambien el gasto sin presupuesto de ESA categoria:
+// es gasto real de la categoria aunque todavia no pertenezca a una linea.
+function serieCategoria(
+  rows: PresupuestoRow[],
+  categoriaId: number,
+  unidad: UnidadSerie,
+  gastosSinPresupuesto: GastoSinPresupuesto[] = [],
+): Map<number, number> {
   const map = new Map<number, number>()
   for (const p of rows) {
     if (p.categoriaId !== categoriaId) continue
     map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + valorSerie(p, unidad))
+  }
+  if (unidad === 'real') {
+    for (const extra of gastosSinPresupuesto) {
+      if (extra.categoriaId !== categoriaId) continue
+      map.set(extra.quincenaId, (map.get(extra.quincenaId) ?? 0) + Number(extra.monto))
+    }
   }
   return map
 }
@@ -154,7 +205,8 @@ function normalizarDescripcion(s: string) {
 // especifica (ej. solo "Renta" dentro de Hogar, no toda la categoria). Un
 // Presupuesto vive en una sola quincena -- no hay un id estable de la linea
 // a traves del tiempo, asi que se identifica por categoria+descripcion,
-// igual nombre cada Q (normalizada).
+// igual nombre cada Q (normalizada). Gasto fuera de plan NO se reparte aqui:
+// no hay evidencia para atribuirlo a una linea especifica.
 function serieLinea(rows: PresupuestoRow[], linea: LineaPresupuesto, unidad: UnidadSerie): Map<number, number> {
   const map = new Map<number, number>()
   const descripcionNormalizada = normalizarDescripcion(linea.descripcion)
@@ -277,10 +329,15 @@ function consistencia(cerradas: BalancePorQ[]) {
 interface CategoriaExceso { nombre: string; tasa: number; promedioExceso: number; consideradas: number }
 
 // Por categoria de Gasto, en cuantas de las ultimas hasta-6 quincenas cerradas
-// el real supero lo presupuestado -- usa las filas SIN filtrar (todas las
-// categorias, sin el filtro de Categoria de la tabla/grafica) porque el punto
-// es justamente comparar entre categorias.
-function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: BalancePorQ[]): CategoriaExceso[] {
+// el real supero lo presupuestado. Real incluye movimientos fuera de plan de
+// esa categoria; el presupuesto sigue siendo el original para medir calidad
+// de planeacion.
+function categoriasQueExceden(
+  rows: PresupuestoRow[],
+  cerradasRecientes: BalancePorQ[],
+  gastosSinPresupuesto: GastoSinPresupuesto[],
+  categorias: Categoria[],
+): CategoriaExceso[] {
   const idsRecientes = new Set(cerradasRecientes.slice(-6).map(q => q.quincenaId))
   const porCategoria = new Map<string, Map<number, { real: number; presupuestado: number }>>()
   for (const p of rows) {
@@ -291,6 +348,16 @@ function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: Balance
     acc.real += p.real
     acc.presupuestado += Number(p.montoPresupuestado)
     porQ.set(p.quincenaId, acc)
+  }
+  for (const extra of gastosSinPresupuesto) {
+    if (!idsRecientes.has(extra.quincenaId)) continue
+    const cat = categorias.find(c => c.id === extra.categoriaId && c.tipo === 'Gasto')
+    if (!cat) continue
+    if (!porCategoria.has(cat.nombre)) porCategoria.set(cat.nombre, new Map())
+    const porQ = porCategoria.get(cat.nombre)!
+    const acc = porQ.get(extra.quincenaId) ?? { real: 0, presupuestado: 0 }
+    acc.real += Number(extra.monto) || 0
+    porQ.set(extra.quincenaId, acc)
   }
   const result: CategoriaExceso[] = []
   for (const [nombre, porQ] of porCategoria) {
@@ -313,6 +380,22 @@ export function PresupuestoAnalisis({
   openEdit,
 }: Props) {
   const { toast } = useToast()
+  const [gastosSinPresupuesto, setGastosSinPresupuesto] = useState<GastoSinPresupuesto[]>([])
+
+  // El gasto fuera de plan no vive en /api/presupuestos por definicion. Se
+  // trae como agregado no paginado para que el historico no dependa de la
+  // cantidad de transacciones ni de una lista truncada.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/presupuesto-analisis')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error()))
+      .then(data => {
+        if (cancelled) return
+        setGastosSinPresupuesto(Array.isArray(data?.gastosSinPresupuesto) ? data.gastosSinPresupuesto : [])
+      })
+      .catch(() => { if (!cancelled) setGastosSinPresupuesto([]) })
+    return () => { cancelled = true }
+  }, [])
 
   // Default inicial de Desde/Hasta (ultimas 6 quincenas iniciadas), una sola
   // vez que la lista de quincenas ya cargo -- mismo patron que refQuincenaId
@@ -326,8 +409,11 @@ export function PresupuestoAnalisis({
   }, [quincenas])
 
   const filasFiltradas = categoriaId ? presupuestos.filter(p => p.categoriaId.toString() === categoriaId) : presupuestos
+  const gastosSinPresupuestoFiltrados = categoriaId
+    ? gastosSinPresupuesto.filter(g => g.categoriaId.toString() === categoriaId)
+    : gastosSinPresupuesto
   const quincenasFiltradas = quincenasEnRango(quincenas, desdeId, hastaId)
-  const balancePorQ = buildBalancePorQ(filasFiltradas, quincenasFiltradas, configGlobal, today)
+  const balancePorQ = buildBalancePorQ(filasFiltradas, quincenasFiltradas, configGlobal, today, gastosSinPresupuestoFiltrados)
     .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
 
   const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set())
@@ -449,7 +535,10 @@ export function PresupuestoAnalisis({
   // orden cronologico que la tabla (sin el sort del usuario), mas una
   // columna por cada categoria agregada y, si hay simulacion activa, el
   // gasto real hipotetico de esa quincena.
-  const seriesCategoriaData = categoriasAgregadas.map(c => ({ instanceId: c.instanceId, serie: serieCategoria(presupuestos, c.categoriaId, c.unidad) }))
+  const seriesCategoriaData = categoriasAgregadas.map(c => ({
+    instanceId: c.instanceId,
+    serie: serieCategoria(presupuestos, c.categoriaId, c.unidad, gastosSinPresupuesto),
+  }))
   const seriesLineaData = lineasAgregadas.map(l => ({ instanceId: l.instanceId, serie: serieLinea(presupuestos, l, l.unidad) }))
   const simGastoNum = Number(simGastoInput)
   const simGastoHipotetico = simGastoInput !== '' && Number.isFinite(simGastoNum) ? simGastoNum : null
@@ -485,12 +574,16 @@ export function PresupuestoAnalisis({
   // Analitica: siempre sobre TODAS las quincenas (sin el filtro de Categoria/
   // Rango de la tabla/grafica) y solo las ya cerradas -- necesita una muestra
   // estable, no la que el usuario este mirando en ese momento.
-  const todasCerradas = buildBalancePorQ(presupuestos, quincenas, configGlobal, today)
+  const todasCerradas = buildBalancePorQ(presupuestos, quincenas, configGlobal, today, gastosSinPresupuesto)
     .filter(q => q.esCerrada)
     .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
   const proy = proyeccion(todasCerradas)
   const cons = consistencia(todasCerradas)
-  const excesos = categoriasQueExceden(presupuestos, todasCerradas)
+  const excesos = categoriasQueExceden(presupuestos, todasCerradas, gastosSinPresupuesto, categorias)
+  const ultimasCerradas = todasCerradas.slice(-6)
+  const gastoFueraPlanReciente = ultimasCerradas.reduce((s, q) => s + q.gastoFueraPlan, 0)
+  const gastoRealReciente = ultimasCerradas.reduce((s, q) => s + q.gastosReales, 0)
+  const pctFueraPlanReciente = gastoRealReciente > 0 ? (gastoFueraPlanReciente / gastoRealReciente) * 100 : 0
 
   // "Con simulacion": mismas funciones, sustituyendo el gasto real de la
   // quincena simulada. Si esa quincena no esta cerrada (ej. la actual, "en
@@ -574,7 +667,7 @@ export function PresupuestoAnalisis({
         <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-1.5">
           <Sparkles size={14} className="text-indigo-500 dark:text-indigo-400" /> Analítica
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard
             label="Proyección próxima quincena"
             value={proy ? formatMXN(proy.promedio) : '—'}
@@ -598,6 +691,14 @@ export function PresupuestoAnalisis({
                 <FlaskConical size={10} /> con simulación: {consSim.cv < 0.10 ? 'Muy consistente' : consSim.cv < 0.25 ? 'Moderada' : 'Muy variable'}
               </p>
             )}
+          />
+          <KpiCard
+            label="Gasto fuera de plan"
+            value={formatMXN(gastoFueraPlanReciente)}
+            subtitle={ultimasCerradas.length > 0 ? `${pctFueraPlanReciente.toFixed(1)}% del gasto real · últimas ${ultimasCerradas.length} Q` : 'Historial insuficiente'}
+            icon={<AlertTriangle size={20} className="text-amber-600 dark:text-amber-300" />}
+            color={gastoFueraPlanReciente > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}
+            bg={gastoFueraPlanReciente > 0 ? 'bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'}
           />
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1.5">
@@ -664,6 +765,9 @@ export function PresupuestoAnalisis({
                 {filasOrdenadas.map(q => {
                   const expanded = expandedQ.has(q.quincenaId)
                   const gastosDeQ = filasFiltradas.filter(p => p.quincenaId === q.quincenaId && p.categoria.tipo === 'Gasto')
+                  const fueraPlanDeQ = gastosSinPresupuestoFiltrados
+                    .filter(g => g.quincenaId === q.quincenaId)
+                    .reduce((s, g) => s + Number(g.monto), 0)
                   return (
                     <Fragment key={q.quincenaId}>
                       <tr className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
@@ -688,7 +792,7 @@ export function PresupuestoAnalisis({
                       {expanded && (
                         <tr className="bg-slate-50/70 dark:bg-slate-900/40">
                           <td colSpan={4} className="px-4 py-3">
-                            {gastosDeQ.length === 0 ? (
+                            {gastosDeQ.length === 0 && fueraPlanDeQ <= 0 ? (
                               <p className="text-xs text-slate-400 dark:text-slate-500">Sin partidas de gasto en esta quincena.</p>
                             ) : (
                               <div className="space-y-1 max-w-xl">
@@ -696,10 +800,19 @@ export function PresupuestoAnalisis({
                                   <div key={p.id} className="flex items-center justify-between text-xs">
                                     <span className="text-slate-600 dark:text-slate-300 truncate pr-3">{p.categoria.nombre} · {p.descripcion}</span>
                                     <span className="tabular-nums text-slate-500 dark:text-slate-400 shrink-0">
-                                      {formatMXN(p.real)} <span className="text-slate-400 dark:text-slate-600">/ {formatMXN(Number(p.montoPresupuestado))}</span>
+                                      {formatMXN(p.real)} <span className="text-slate-400 dark:text-slate-600">/ vigente {formatMXN(Number(p.montoEfectivo))}</span>
+                                      {Number(p.montoEfectivo) !== Number(p.montoPresupuestado) && (
+                                        <span className="text-slate-400 dark:text-slate-600"> · original {formatMXN(Number(p.montoPresupuestado))}</span>
+                                      )}
                                     </span>
                                   </div>
                                 ))}
+                                {fueraPlanDeQ > 0 && (
+                                  <div className="flex items-center justify-between text-xs pt-1 border-t border-amber-200/70 dark:border-amber-800/50">
+                                    <span className="text-amber-700 dark:text-amber-400">Gasto fuera de plan</span>
+                                    <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">{formatMXN(fueraPlanDeQ)}</span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </td>
@@ -718,7 +831,10 @@ export function PresupuestoAnalisis({
       {chartData.length > 1 && (
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Comparativa por quincena</p>
+            <div>
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Comparativa por quincena</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Real total incluye movimientos registrados fuera del presupuesto.</p>
+            </div>
             <button type="button" onClick={() => setSimulando(s => !s)}
               className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${simulando ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-300 dark:hover:border-amber-700'}`}>
               <FlaskConical size={13} /> Simular
@@ -855,7 +971,7 @@ export function PresupuestoAnalisis({
                   const cat = categorias.find(x => x.id === c.categoriaId)
                   if (!cat) return null
                   const color = colorForCategoria(cat.nombre, i)
-                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'original'})`
+                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real total' : 'original'})`
                   return (
                     <Line key={categoriaInstanceKey(c.instanceId)} type="monotone" dataKey={categoriaInstanceKey(c.instanceId)} name={name}
                       stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
