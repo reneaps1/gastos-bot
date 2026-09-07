@@ -4,7 +4,7 @@ import { ArrowLeft, FileDown, FileSpreadsheet, Image as ImageIcon, FileText, Loa
 import { formatMXN, formatDate } from '@/lib/utils'
 import { formatQuincenaRange, getMexicoDateString } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos } from '@/lib/liquidez'
-import { calcularFaltaPorPagar } from '@/lib/presupuesto-totales'
+import { calcularFaltaPorPagar, calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { downloadResumenExcel } from '@/lib/reporte-excel'
 import { downloadElementAsImage, downloadElementAsPdf } from '@/lib/capture-export'
@@ -18,6 +18,7 @@ interface PresupuestoRow {
   montoEfectivo: number
   real: number
   pendiente: number
+  excedido: number
   estadoLinea: string
   categoria: { nombre: string; tipo: string }
 }
@@ -25,6 +26,10 @@ interface Fila extends PresupuestoRow {
   pagado: number
   falta: number
   estado: 'Cubierto' | 'Parcial' | 'Pendiente'
+}
+interface TransaccionesTotales {
+  Ingreso?: number
+  Gasto?: number
 }
 
 // Hex explicito (no clases Tailwind) para todo lo que vive dentro de
@@ -60,14 +65,8 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   const captureRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [rows, setRows] = useState<Fila[]>([])
-  // Mismas dos piezas que arma "Disponible real" en el dashboard y la card
-  // "Libre / sin asignar" de Presupuesto -> Tabla: el liquido crudo del
-  // corte, y cuanto de eso ya esta comprometido a salir del banco ESTA
-  // quincena. `disponible` (abajo) es lo que se muestra -- nunca el liquido
-  // crudo solo, que no es lo mismo que "disponible". `totalLiquido` en si se
-  // muestra aparte como "Real" (lo que de verdad hay en cuentas, sin restar
-  // pagos pendientes), junto con `teorico` (lo que "deberia" haber segun el
-  // corte anterior, ver Configuracion -> Liquidez) y la fecha de ese corte.
+  const [totalesTx, setTotalesTx] = useState<TransaccionesTotales>({})
+  const [ahorroProtegido, setAhorroProtegido] = useState(0)
   const [liquidez, setLiquidez] = useState<{
     totalLiquido: number; pagosQuincena: number; teorico: number | null; fechaCorte: string | null
   } | null>(null)
@@ -78,10 +77,14 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
     async function load() {
       setLoading(true)
       try {
-        const [presupuestos, liqData, pagosJson]: [PresupuestoRow[], unknown[], { pagosQuincena?: number }] = await Promise.all([
+        const [presupuestos, liqData, pagosJson, txJson, ahorroJson]: [
+          PresupuestoRow[], unknown[], { pagosQuincena?: number }, { totales?: TransaccionesTotales }, { total?: number | string }
+        ] = await Promise.all([
           fetch(`/api/presupuestos?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/liquidez?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincena.id}`).then(r => r.json()),
+          fetch(`/api/transacciones?quincenaId=${quincena.id}&limit=1`).then(r => r.json()),
+          fetch(`/api/ahorro?hasta=${quincena.fechaFin.split('T')[0]}`).then(r => r.json()),
         ])
         if (cancelled) return
         setRows(presupuestos.map(p => {
@@ -90,6 +93,8 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           const estado: Fila['estado'] = falta <= 0 ? 'Cubierto' : pagado > 0 ? 'Parcial' : 'Pendiente'
           return { ...p, pagado, falta, estado }
         }))
+        setTotalesTx(txJson.totales ?? {})
+        setAhorroProtegido(Math.max(Number(ahorroJson.total ?? 0), 0))
         const raw = Array.isArray(liqData) && liqData.length > 0
           ? liqData[0] as Parameters<typeof normalizeMontos>[0] & { teorico: unknown; fechaCorte: unknown }
           : null
@@ -105,30 +110,33 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
     }
     void load()
     return () => { cancelled = true }
-  }, [quincena.id])
+  }, [quincena.id, quincena.fechaFin])
 
-  // "Disponible" = liquido menos lo que cae de banco ESTA quincena -- mismo
-  // criterio que "Disponible real" del dashboard y "Liquidez" de Presupuesto
-  // -> Tabla. El total liquido crudo (sin restar nada) no es "disponible".
-  const disponible = liquidez ? liquidez.totalLiquido - liquidez.pagosQuincena : null
-
-  // Los 4 totales de arriba son de la quincena completa (para que no cambien
-  // segun lo que se muestre en la tabla), pero la tabla en si solo lista lo
-  // que todavia no esta cubierto -- lo ya pagado al 100% no aporta nada a un
-  // reporte que existe para ver que falta.
-  // Solo Gasto: este reporte es un tracker de "que debo pagar todavia", igual
-  // que calcularFaltaPorPagar (que ya filtra por tipo internamente) -- sumar
-  // Ingreso/Ahorro aqui inflaba "Pagado" con dinero que entro, no que salio.
+  // Solo Gasto cuenta para lo que falta cubrir. Las lineas de Ahorro quedan
+  // explicitamente fuera de esta obligacion mediante calcularFaltaPorPagar.
   const gastoRows = rows.filter(r => r.categoria.tipo === 'Gasto' && cuentaParaAgregados(r))
   const totalPresupuestado = gastoRows.reduce((s, r) => s + Number(r.montoEfectivo), 0)
   const totalPagado = gastoRows.reduce((s, r) => s + r.pagado, 0)
   const totalFalta = calcularFaltaPorPagar(rows)
+
+  // "Libre / sin asignar" responde una pregunta distinta a la liquidez:
+  // cuanto ingreso real aun no esta comprometido en presupuesto, excedidos,
+  // ahorro presupuestado ni gastos sin partida.
+  const gastoRealEnPresupuesto = gastoRows.reduce((s, r) => s + r.real, 0)
+  const gastosNoCubiertos = Math.max(Number(totalesTx.Gasto ?? 0) - gastoRealEnPresupuesto, 0)
+  const libreSinAsignar = calcularLibreSinAsignar(Number(totalesTx.Ingreso ?? 0), rows, gastosNoCubiertos)
+
+  // Regla de negocio: el ahorro acumulado al cierre del periodo es dinero
+  // protegido. Aunque forme parte del saldo fisico capturado en cuentas, no
+  // se considera utilizable para cubrir gastos del periodo.
+  const disponibleOperativo = liquidez ? liquidez.totalLiquido - ahorroProtegido : null
+  const libreDespuesCubrir = disponibleOperativo != null ? disponibleOperativo - totalFalta : null
+  const cubrePendiente = libreDespuesCubrir != null ? libreDespuesCubrir >= 0 : null
+  const faltanteCobertura = libreDespuesCubrir != null ? Math.max(-libreDespuesCubrir, 0) : null
+
   const filasPorCubrir = rows.filter(r => r.estado !== 'Cubierto')
   // El pie de la tabla suma solo lo que se ve en la tabla (lo pendiente), no
-  // la quincena completa -- si no, no cuadraria con las filas visibles. Las
-  // filas de la tabla ya son puro Gasto (Ingreso/Ahorro siempre cierran en
-  // 'Cubierto' porque calcularFaltaPorPagar les da falta=0), asi que no hace
-  // falta filtrar de nuevo por tipo aqui.
+  // la quincena completa -- si no, no cuadraria con las filas visibles.
   const totalPresupuestadoPendiente = filasPorCubrir.reduce((s, r) => s + Number(r.montoEfectivo), 0)
   const totalPagadoPendiente = filasPorCubrir.reduce((s, r) => s + r.pagado, 0)
   const totalFaltaPendiente = calcularFaltaPorPagar(filasPorCubrir)
@@ -144,7 +152,13 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
       } else if (kind === 'excel') {
         await downloadResumenExcel({
           quincena,
-          liquidezDisponible: disponible,
+          totalLiquido: liquidez?.totalLiquido ?? null,
+          ahorroProtegido,
+          disponibleOperativo,
+          pagosQuincena: liquidez?.pagosQuincena ?? null,
+          libreSinAsignar,
+          libreDespuesCubrir,
+          cubrePendiente,
           totalPresupuestado, totalPagado, totalFalta,
           totalPresupuestadoPendiente, totalPagadoPendiente, totalFaltaPendiente,
           rows: filasPorCubrir.map(r => ({
@@ -157,8 +171,8 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           ...filasPorCubrir,
           {
             id: -1, descripcion: 'TOTAL PENDIENTE', categoria: { nombre: '', tipo: '' },
-            montoEfectivo: totalPresupuestadoPendiente, real: 0, pendiente: 0,
-            pagado: totalPagadoPendiente, falta: totalFaltaPendiente, estado: 'Cubierto' as const,
+            montoEfectivo: totalPresupuestadoPendiente, real: 0, pendiente: 0, excedido: 0,
+            estadoLinea: 'Abierta', pagado: totalPagadoPendiente, falta: totalFaltaPendiente, estado: 'Cubierto' as const,
           },
         ], [
           { key: 'categoria', label: 'Categoría', value: r => r.categoria.nombre },
@@ -192,11 +206,9 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
       </button>
 
       <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
-        {/* Colores en hex/inline a proposito en toda esta sub-arbol: html2canvas
+        {/* Colores en hex/inline a proposito en todo este sub-arbol: html2canvas
             no entiende oklch()/lab(), que es como Tailwind v4 resuelve sus
-            clases de color (text-slate-600, etc.) en getComputedStyle. Si se
-            usan esas clases aqui, la captura para PDF/Imagen se cuelga en
-            silencio. Ver capture-export.ts. */}
+            clases de color (text-slate-600, etc.) en getComputedStyle. */}
         <div ref={captureRef} className="p-5 space-y-4" style={{ width: 760, backgroundColor: C.white, color: C.slate800 }}>
           <div className="flex items-center gap-3 pb-3" style={{ borderBottom: `2px solid ${C.slate800}` }}>
             <img src="/icon-192.png" alt="Milo" className="h-9 w-9 rounded-lg" />
@@ -207,43 +219,59 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
             <p className="ml-auto text-xs" style={{ color: C.slate500 }}>{formatQuincenaRange(quincena)}</p>
           </div>
 
-          {/* Bloques de texto centrado, sin icono ni flexbox con gap a proposito:
-              html2canvas duplica/desalinea el contenido cuando el layout usa
-              `gap` de flex o elementos con fondo propio dentro de una fila --
-              ya paso una vez con la version con icono. Este patron simple es
-              el que ya se sabe que captura bien. */}
+          {/* Respuestas ejecutivas: dinero operativo, compromiso pendiente,
+              dinero no asignado y caja que quedaria al cubrir el presupuesto. */}
           <div className="grid grid-cols-4 gap-2.5">
-            <div className="rounded-lg p-2.5 text-center" style={{ border: `1px solid ${C.slate300}` }}>
-              <p className="text-[10px]" style={{ color: C.slate500 }}>Liquidez disponible</p>
-              <p className="text-sm font-bold tabular-nums" style={{ color: C.slate900 }}>{disponible != null ? formatMXN(disponible) : '—'}</p>
-              {liquidez && (
-                <div className="mt-1 pt-1" style={{ borderTop: `1px solid ${C.slate200}` }}>
-                  <p className="text-[9px] tabular-nums" style={{ color: C.slate600 }}>Real {formatMXN(liquidez.totalLiquido)}</p>
-                  {liquidez.teorico != null && (
-                    <p className="text-[9px] tabular-nums" style={{ color: C.slate600 }}>Teórico {formatMXN(liquidez.teorico)}</p>
-                  )}
-                  {liquidez.fechaCorte && (
-                    <p className="text-[8px] mt-0.5" style={{ color: C.slate400 }}>corte {formatDate(liquidez.fechaCorte)}</p>
-                  )}
-                </div>
-              )}
-            </div>
             {[
-              { label: 'Presupuestado', value: totalPresupuestado },
-              { label: 'Pagado', value: totalPagado },
-              { label: 'Falta por cubrir', value: totalFalta },
+              { label: 'Disponible hoy', value: disponibleOperativo, color: disponibleOperativo != null && disponibleOperativo < 0 ? C.rose600 : C.slate900 },
+              { label: 'Pendiente por cubrir', value: totalFalta, color: totalFalta > 0 ? C.amber600 : C.emerald600 },
+              { label: 'Libre / sin asignar', value: libreSinAsignar, color: libreSinAsignar < 0 ? C.rose600 : C.emerald600 },
+              { label: 'Después de cubrir', value: libreDespuesCubrir, color: cubrePendiente === false ? C.rose600 : C.emerald600 },
             ].map(k => (
               <div key={k.label} className="rounded-lg p-2.5 text-center" style={{ border: `1px solid ${C.slate300}` }}>
                 <p className="text-[10px]" style={{ color: C.slate500 }}>{k.label}</p>
-                <p className="text-sm font-bold tabular-nums" style={{ color: C.slate900 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
+                <p className="text-sm font-bold tabular-nums" style={{ color: k.color }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
               </div>
             ))}
           </div>
 
+          {liquidez && cubrePendiente != null && (
+            <div className="rounded-lg px-3 py-2.5 text-center" style={{ backgroundColor: cubrePendiente ? C.emerald50 : C.rose50, border: `1px solid ${cubrePendiente ? C.emerald600 : C.rose600}` }}>
+              <p className="text-xs font-bold" style={{ color: cubrePendiente ? C.emerald600 : C.rose600 }}>
+                {cubrePendiente
+                  ? `Sí alcanza para cubrir todo lo pendiente. Quedarían ${formatMXN(libreDespuesCubrir ?? 0)} libres.`
+                  : `No alcanza para cubrir todo lo pendiente. Faltan ${formatMXN(faltanteCobertura ?? 0)}.`}
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-4 gap-2.5">
+            {[
+              { label: 'Saldo en cuentas', value: liquidez?.totalLiquido ?? null },
+              { label: 'Ahorro protegido', value: ahorroProtegido },
+              { label: 'Presupuestado', value: totalPresupuestado },
+              { label: 'Pagado', value: totalPagado },
+            ].map(k => (
+              <div key={k.label} className="rounded-lg px-2.5 py-2 text-center" style={{ backgroundColor: C.slate50, border: `1px solid ${C.slate200}` }}>
+                <p className="text-[9px]" style={{ color: C.slate500 }}>{k.label}</p>
+                <p className="text-xs font-semibold tabular-nums" style={{ color: k.label === 'Ahorro protegido' ? C.blue600 : C.slate700 }}>{k.value != null ? formatMXN(k.value) : '—'}</p>
+              </div>
+            ))}
+          </div>
+
+          {liquidez?.fechaCorte && (
+            <p className="text-[9px] text-center" style={{ color: C.slate400 }}>
+              Liquidez al corte {formatDate(liquidez.fechaCorte)} · pagos que caen esta Q {formatMXN(liquidez.pagosQuincena)}{liquidez.teorico != null ? ` · teórico ${formatMXN(liquidez.teorico)}` : ''}
+            </p>
+          )}
+          <p className="text-[9px] text-center" style={{ color: C.blue600 }}>
+            Disponible hoy = saldo en cuentas - ahorro protegido. El ahorro no se usa para cubrir gastos.
+          </p>
+
           {rows.length === 0 ? (
             <p className="text-sm" style={{ color: C.slate400 }}>Sin presupuesto capturado para esta quincena.</p>
           ) : filasPorCubrir.length === 0 ? (
-            <p className="text-sm font-medium" style={{ color: C.emerald600 }}>✓ Todo cubierto — no queda ninguna partida pendiente.</p>
+            <p className="text-sm font-medium" style={{ color: C.emerald600 }}>Todo cubierto — no queda ninguna partida pendiente.</p>
           ) : (
             <div className="overflow-hidden rounded-lg" style={{ border: `1px solid ${C.slate300}` }}>
               <table className="w-full text-[11px] border-collapse">
