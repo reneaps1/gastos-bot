@@ -35,6 +35,45 @@
   --color-foreground: var(--foreground);
 }
 
+/* GitHub-inspired dark palette. Override Tailwind tokens as well as semantic
+   tokens so existing dark utilities (including opacity variants) stay coherent.
+   Scoped to this theme: the original light and dark palettes are unchanged. */
+:root[data-theme="github-dark"] {
+  --background: #0d1117;
+  --foreground: #e6edf3;
+  --card: #161b22;
+  --border: #30363d;
+  --muted: #21262d;
+  --muted-foreground: #8b949e;
+  --primary: #58a6ff;
+  --primary-foreground: #0d1117;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --color-slate-50: #f0f6fc;
+  --color-slate-100: #f0f6fc;
+  --color-slate-200: #e6edf3;
+  --color-slate-300: #c9d1d9;
+  --color-slate-400: #8b949e;
+  --color-slate-500: #8b949e;
+  --color-slate-600: #6e7681;
+  --color-slate-700: #30363d;
+  --color-slate-800: #21262d;
+  --color-slate-900: #161b22;
+  --color-slate-950: #0d1117;
+  --color-indigo-50: #ddf4ff;
+  --color-indigo-100: #cae8ff;
+  --color-indigo-200: #a5d6ff;
+  --color-indigo-300: #79c0ff;
+  --color-indigo-400: #58a6ff;
+  --color-indigo-500: #388bfd;
+  --color-indigo-600: #1f6feb;
+  --color-indigo-700: #1158c7;
+  --color-indigo-800: #0d419d;
+  --color-indigo-900: #0c2d6b;
+  --color-indigo-950: #051d4d;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
