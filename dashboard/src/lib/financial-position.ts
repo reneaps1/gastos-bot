@@ -1,6 +1,6 @@
 import { calcularFaltaPorPagar, calcularLibreSinAsignar, type PresupuestoParaLibre, type PresupuestoParaTotales } from '@/lib/presupuesto-totales'
 
-export interface PresupuestoPosicion extends PresupuestoParaTotales, PresupuestoParaLibre {}
+export type PresupuestoPosicion = PresupuestoParaTotales & PresupuestoParaLibre
 
 export interface FinancialPositionInput {
   saldoEnCuentas: number | null
