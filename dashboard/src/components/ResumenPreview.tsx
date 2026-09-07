@@ -265,7 +265,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
             </p>
           )}
           <p className="text-[9px] text-center" style={{ color: C.blue600 }}>
-            Disponible hoy = saldo en cuentas - ahorro protegido. El ahorro no se usa para cubrir gastos.
+            Ingreso sin asignar = presupuesto. Saldo después de pagar = caja. Disponible hoy excluye el ahorro protegido.
           </p>
 
           {rows.length === 0 ? (
