@@ -61,9 +61,7 @@ export async function GET(request: Request) {
           .slice(-6),
       )
     }
-    const historicas = [...new Map(
-      [...cerradasPorTipo.values()].flat().map(q => [q.id, q]),
-    ).values()]
+    const historicas = [...cerradasPorTipo.values()].flat()
     const historicasIds = historicas.map(q => q.id)
 
     const [presupuestosFuturos, pagosCredito, transaccionesHistoricas, deudas] = await Promise.all([
