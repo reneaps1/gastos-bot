@@ -119,7 +119,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   const totalPagado = gastoRows.reduce((s, r) => s + r.pagado, 0)
   const totalFalta = calcularFaltaPorPagar(rows)
 
-  // "Libre / sin asignar" responde una pregunta distinta a la liquidez:
+  // "Ingreso sin asignar" responde una pregunta distinta a la liquidez:
   // cuanto ingreso real aun no esta comprometido en presupuesto, excedidos,
   // ahorro presupuestado ni gastos sin partida.
   const gastoRealEnPresupuesto = gastoRows.reduce((s, r) => s + r.real, 0)
@@ -220,13 +220,13 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           </div>
 
           {/* Respuestas ejecutivas: dinero operativo, compromiso pendiente,
-              dinero no asignado y caja que quedaria al cubrir el presupuesto. */}
+              ingreso no asignado y caja que quedaria al cubrir el presupuesto. */}
           <div className="grid grid-cols-4 gap-2.5">
             {[
               { label: 'Disponible hoy', value: disponibleOperativo, color: disponibleOperativo != null && disponibleOperativo < 0 ? C.rose600 : C.slate900 },
               { label: 'Pendiente por cubrir', value: totalFalta, color: totalFalta > 0 ? C.amber600 : C.emerald600 },
-              { label: 'Libre / sin asignar', value: libreSinAsignar, color: libreSinAsignar < 0 ? C.rose600 : C.emerald600 },
-              { label: 'Después de cubrir', value: libreDespuesCubrir, color: cubrePendiente === false ? C.rose600 : C.emerald600 },
+              { label: 'Ingreso sin asignar', value: libreSinAsignar, color: libreSinAsignar < 0 ? C.rose600 : C.emerald600 },
+              { label: 'Saldo después de pagar', value: libreDespuesCubrir, color: cubrePendiente === false ? C.rose600 : C.emerald600 },
             ].map(k => (
               <div key={k.label} className="rounded-lg p-2.5 text-center" style={{ border: `1px solid ${C.slate300}` }}>
                 <p className="text-[10px]" style={{ color: C.slate500 }}>{k.label}</p>
@@ -239,7 +239,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
             <div className="rounded-lg px-3 py-2.5 text-center" style={{ backgroundColor: cubrePendiente ? C.emerald50 : C.rose50, border: `1px solid ${cubrePendiente ? C.emerald600 : C.rose600}` }}>
               <p className="text-xs font-bold" style={{ color: cubrePendiente ? C.emerald600 : C.rose600 }}>
                 {cubrePendiente
-                  ? `Sí alcanza para cubrir todo lo pendiente. Quedarían ${formatMXN(libreDespuesCubrir ?? 0)} libres.`
+                  ? `Sí alcanza para cubrir todo lo pendiente. El saldo operativo quedaría en ${formatMXN(libreDespuesCubrir ?? 0)}.`
                   : `No alcanza para cubrir todo lo pendiente. Faltan ${formatMXN(faltanteCobertura ?? 0)}.`}
               </p>
             </div>
