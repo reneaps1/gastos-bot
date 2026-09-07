@@ -15,6 +15,7 @@ import type { Presupuesto } from './page'
 
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null }
 interface Categoria { id: number; nombre: string; tipo: string }
+interface GastoSinPresupuesto { quincenaId: number; categoriaId: number; monto: number }
 // Alias del tipo completo de page.tsx: en runtime `presupuestos` ya trae las
 // filas completas (mismo /api/presupuestos sin filtrar), asi que se necesita
 // el shape completo para poder pasar una fila a openEdit sin cast.
@@ -39,7 +40,9 @@ interface Props {
 
 interface BalancePorQ {
   quincenaId: number; codigo: string; fechaInicio: string
-  ingresos: number; ingresosReales: number; gastos: number; gastosReales: number; balance: number
+  ingresos: number; ingresosVigentes: number; ingresosReales: number
+  gastos: number; gastosVigentes: number; gastosAsignados: number; gastoFueraPlan: number; gastosReales: number
+  balance: number
   esCerrada: boolean
   ingresoRef: number | null; limiteRef: number | null; tieneOverride: boolean
 }
@@ -50,9 +53,12 @@ interface BalancePorQ {
 interface SerieConfig { key: string; label: string; color: string; dashed?: boolean; tipo?: 'monotone' | 'stepAfter' }
 const SERIES_BASE: SerieConfig[] = [
   { key: 'ingresos', label: 'Ingresos (plan original)', color: '#10b981' },
+  { key: 'ingresosVigentes', label: 'Ingresos (plan vigente)', color: '#34d399', dashed: true },
   { key: 'ingresosReales', label: 'Ingresos (real)', color: '#047857', dashed: true },
   { key: 'gastos', label: 'Gastos (plan original)', color: '#f43f5e' },
-  { key: 'gastosReales', label: 'Gastos (real)', color: '#be123c', dashed: true },
+  { key: 'gastosVigentes', label: 'Gastos (plan vigente)', color: '#fb7185', dashed: true },
+  { key: 'gastosReales', label: 'Gastos (real total)', color: '#be123c', dashed: true },
+  { key: 'gastoFueraPlan', label: 'Gasto fuera de plan', color: '#f59e0b', dashed: true },
   { key: 'ma3Gastos', label: 'Tendencia (prom. móvil 3)', color: '#6366f1', dashed: true },
   { key: 'ingresoRef', label: 'Meta ingreso', color: '#10b981', dashed: true, tipo: 'stepAfter' },
   { key: 'limiteRef', label: 'Límite gasto', color: '#f43f5e', dashed: true, tipo: 'stepAfter' },
@@ -61,9 +67,6 @@ const DEFAULT_SERIES = new Set(['ingresos', 'gastos'])
 
 type SortKey = 'quincena' | 'ingresos' | 'gastos' | 'balance'
 
-// Rango contiguo entre dos quincenas elegidas (inclusive en ambos extremos).
-// Si vienen invertidas se auto-corrige, para no dejar la vista en un estado
-// vacio confuso.
 function quincenasEnRango(quincenas: Quincena[], desdeId: string, hastaId: string): Quincena[] {
   const ordenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
   const iDesde = ordenadas.findIndex(q => q.id.toString() === desdeId)
@@ -73,10 +76,6 @@ function quincenasEnRango(quincenas: Quincena[], desdeId: string, hastaId: strin
   return ordenadas.slice(lo, hi + 1)
 }
 
-// Rango centrado en la quincena actual: Q actual -1 (inicio) a Q actual +3
-// (fin) -- sirve de default inicial para Desde/Hasta. "Actual" usa el mismo
-// criterio que getDefaultQuincenaId (lib/quincena-selection.ts): la que
-// tiene hoy adentro, si no la siguiente por venir, si no la ultima.
 function defaultDesdeHasta(quincenas: Quincena[], today: string): { desde: string; hasta: string } | null {
   const ordenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
   if (ordenadas.length === 0) return null
@@ -88,23 +87,55 @@ function defaultDesdeHasta(quincenas: Quincena[], today: string): { desde: strin
   return { desde: ordenadas[desdeIdx].id.toString(), hasta: ordenadas[hastaIdx].id.toString() }
 }
 
-function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global: ReferenciaValores, today: string): BalancePorQ[] {
-  const byQ = new Map<number, { ingresos: number; ingresosReales: number; gastos: number; gastosReales: number }>()
+function buildBalancePorQ(
+  rows: PresupuestoRow[],
+  quincenas: Quincena[],
+  global: ReferenciaValores,
+  today: string,
+  gastosSinPresupuesto: GastoSinPresupuesto[] = [],
+): BalancePorQ[] {
+  const byQ = new Map<number, {
+    ingresos: number; ingresosVigentes: number; ingresosReales: number
+    gastos: number; gastosVigentes: number; gastosAsignados: number; gastoFueraPlan: number
+  }>()
+  const empty = () => ({
+    ingresos: 0, ingresosVigentes: 0, ingresosReales: 0,
+    gastos: 0, gastosVigentes: 0, gastosAsignados: 0, gastoFueraPlan: 0,
+  })
+
   for (const p of rows) {
     if (!cuentaParaAgregados(p)) continue
-    const acc = byQ.get(p.quincenaId) ?? { ingresos: 0, ingresosReales: 0, gastos: 0, gastosReales: 0 }
-    if (p.categoria.tipo === 'Ingreso') { acc.ingresos += Number(p.montoPresupuestado); acc.ingresosReales += p.real }
-    if (p.categoria.tipo === 'Gasto') { acc.gastos += Number(p.montoPresupuestado); acc.gastosReales += p.real }
+    const acc = byQ.get(p.quincenaId) ?? empty()
+    if (p.categoria.tipo === 'Ingreso') {
+      acc.ingresos += Number(p.montoPresupuestado)
+      acc.ingresosVigentes += Number(p.montoEfectivo)
+      acc.ingresosReales += p.real
+    }
+    if (p.categoria.tipo === 'Gasto') {
+      acc.gastos += Number(p.montoPresupuestado)
+      acc.gastosVigentes += Number(p.montoEfectivo)
+      acc.gastosAsignados += p.real
+    }
     byQ.set(p.quincenaId, acc)
   }
+
+  for (const extra of gastosSinPresupuesto) {
+    const acc = byQ.get(extra.quincenaId) ?? empty()
+    acc.gastoFueraPlan += Number(extra.monto) || 0
+    byQ.set(extra.quincenaId, acc)
+  }
+
   return quincenas
     .filter(q => byQ.has(q.id))
     .map(q => {
       const acc = byQ.get(q.id)!
       const ref = resolveReferencia(q, global)
+      const gastosReales = acc.gastosAsignados + acc.gastoFueraPlan
       return {
         quincenaId: q.id, codigo: q.codigo, fechaInicio: q.fechaInicio,
-        ingresos: acc.ingresos, ingresosReales: acc.ingresosReales, gastos: acc.gastos, gastosReales: acc.gastosReales,
+        ingresos: acc.ingresos, ingresosVigentes: acc.ingresosVigentes, ingresosReales: acc.ingresosReales,
+        gastos: acc.gastos, gastosVigentes: acc.gastosVigentes, gastosAsignados: acc.gastosAsignados,
+        gastoFueraPlan: acc.gastoFueraPlan, gastosReales,
         balance: acc.ingresos - acc.gastos,
         esCerrada: q.fechaFin < today,
         ingresoRef: ref.ingresoReferencia, limiteRef: ref.limiteGastoReferencia,
@@ -113,11 +144,6 @@ function buildBalancePorQ(rows: PresupuestoRow[], quincenas: Quincena[], global:
     })
 }
 
-// Categoria/linea agregada puede mostrar su monto real o su presupuestado --
-// se alterna con un toggle en el chip ya agregado, en vez de que el
-// desplegable ofrezca 2 entradas por cada categoria/linea (saturaria el
-// menu). Real por default: es lo que ya mostraban categoria/linea antes de
-// que existiera esta opcion.
 type UnidadSerie = 'real' | 'presupuestado'
 function valorSerie(p: PresupuestoRow, unidad: UnidadSerie): number {
   return unidad === 'real' ? p.real : Number(p.montoPresupuestado)
@@ -126,35 +152,32 @@ function otraUnidad(u: UnidadSerie): UnidadSerie {
   return u === 'real' ? 'presupuestado' : 'real'
 }
 
-// Monto (real o presupuestado, segun unidad) por quincena de una categoria
-// especifica -- para las series opcionales "+ Agregar categoria o linea".
-// Usa TODAS las filas (no filasFiltradas), a proposito: el filtro de
-// Categoria de arriba acota tabla/agregados, pero una serie agregada aqui
-// debe poder compararse sin importar ese filtro.
-function serieCategoria(rows: PresupuestoRow[], categoriaId: number, unidad: UnidadSerie): Map<number, number> {
+function serieCategoria(
+  rows: PresupuestoRow[],
+  categoriaId: number,
+  unidad: UnidadSerie,
+  gastosSinPresupuesto: GastoSinPresupuesto[] = [],
+): Map<number, number> {
   const map = new Map<number, number>()
   for (const p of rows) {
     if (p.categoriaId !== categoriaId) continue
     map.set(p.quincenaId, (map.get(p.quincenaId) ?? 0) + valorSerie(p, unidad))
+  }
+  if (unidad === 'real') {
+    for (const extra of gastosSinPresupuesto) {
+      if (extra.categoriaId !== categoriaId) continue
+      map.set(extra.quincenaId, (map.get(extra.quincenaId) ?? 0) + Number(extra.monto))
+    }
   }
   return map
 }
 
 interface LineaPresupuesto { categoriaId: number; descripcion: string }
 
-// Normaliza descripcion antes de comparar (trim + minusculas) para que dos
-// filas que representan la "misma" linea recurrente pero se tipearon con
-// distinto case/espacios (ej. "Renta" vs "renta ") se fusionen en una sola
-// serie en vez de partirse en dos series con datos incompletos cada una.
 function normalizarDescripcion(s: string) {
   return s.trim().toLowerCase()
 }
 
-// Monto (real o presupuestado) por quincena de una linea de presupuesto
-// especifica (ej. solo "Renta" dentro de Hogar, no toda la categoria). Un
-// Presupuesto vive en una sola quincena -- no hay un id estable de la linea
-// a traves del tiempo, asi que se identifica por categoria+descripcion,
-// igual nombre cada Q (normalizada).
 function serieLinea(rows: PresupuestoRow[], linea: LineaPresupuesto, unidad: UnidadSerie): Map<number, number> {
   const map = new Map<number, number>()
   const descripcionNormalizada = normalizarDescripcion(linea.descripcion)
@@ -169,12 +192,6 @@ function lineaDataKey(l: LineaPresupuesto) {
   return `lin_${l.categoriaId}_${l.descripcion}`
 }
 
-// Todas las combinaciones categoria+descripcion ya usadas alguna vez (en
-// TODAS las quincenas, mismo criterio que serieCategoria) -- son las
-// opciones que puede elegir el selector "+ Agregar categoria o linea".
-// Deduplica por descripcion normalizada (ver normalizarDescripcion) pero
-// muestra la primera grafia tal cual se encontro, sin inventar una version
-// "canonica".
 function lineasDisponibles(rows: PresupuestoRow[]): LineaPresupuesto[] {
   const vistos = new Set<string>()
   const result: LineaPresupuesto[] = []
@@ -187,21 +204,11 @@ function lineasDisponibles(rows: PresupuestoRow[]): LineaPresupuesto[] {
   return result.sort((a, b) => a.descripcion.localeCompare(b.descripcion))
 }
 
-// Paleta propia para lineas especificas, deliberadamente distinta de
-// CAT_COLOR -- una linea siempre se dibuja punteada (ver <Line> mas abajo),
-// asi que el patron solido/punteado ya la distingue de una categoria
-// agregada aunque el color rote y coincida por casualidad.
 const LINEA_COLORS = ['#a855f7', '#0891b2', '#ca8a04', '#be185d', '#65a30d', '#c026d3']
 function colorForLinea(index: number) {
   return LINEA_COLORS[index % LINEA_COLORS.length]
 }
 
-// Claves por INSTANCIA para la grafica (distintas de lineaDataKey, que es
-// por identidad categoria+descripcion y solo la usa lineasDisponibles para
-// deduplicar filas crudas). Cada categoria/linea agregada o duplicada tiene
-// su propio dataKey, aunque comparta categoria/descripcion con otra
-// instancia ya agregada -- asi "renta (real)" y "renta (ppto)" pueden
-// coexistir como dos series independientes.
 function categoriaInstanceKey(instanceId: number) {
   return `cat_${instanceId}`
 }
@@ -242,17 +249,11 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
   return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
-// Sustituye el gasto real de una quincena por un valor hipotetico -- usado
-// por el modo Simulacion para recalcular proyeccion/consistencia "que tal
-// si". No muta el arreglo original.
 function conSimulacion(cerradas: BalancePorQ[], sim: { quincenaId: number; gastoHipotetico: number } | null): BalancePorQ[] {
   if (!sim) return cerradas
   return cerradas.map(q => q.quincenaId === sim.quincenaId ? { ...q, gastosReales: sim.gastoHipotetico } : q)
 }
 
-// Analitica: promedio +- desviacion del gasto real de las ultimas hasta-3
-// quincenas ya cerradas (fechaFin < hoy) -- una quincena en curso todavia no
-// tiene un gasto real final, incluirla sesgaria la proyeccion a la baja.
 function proyeccion(cerradas: BalancePorQ[]) {
   const ultimas = cerradas.slice(-3)
   if (ultimas.length === 0) return null
@@ -262,8 +263,6 @@ function proyeccion(cerradas: BalancePorQ[]) {
   return { promedio, desviacion: Math.sqrt(varianza), n: ultimas.length }
 }
 
-// Coeficiente de variacion del gasto real de las ultimas hasta-6 quincenas
-// cerradas: que tan predecible es tu gasto de un periodo a otro.
 function consistencia(cerradas: BalancePorQ[]) {
   const ultimas = cerradas.slice(-6)
   if (ultimas.length < 2) return null
@@ -276,11 +275,12 @@ function consistencia(cerradas: BalancePorQ[]) {
 
 interface CategoriaExceso { nombre: string; tasa: number; promedioExceso: number; consideradas: number }
 
-// Por categoria de Gasto, en cuantas de las ultimas hasta-6 quincenas cerradas
-// el real supero lo presupuestado -- usa las filas SIN filtrar (todas las
-// categorias, sin el filtro de Categoria de la tabla/grafica) porque el punto
-// es justamente comparar entre categorias.
-function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: BalancePorQ[]): CategoriaExceso[] {
+function categoriasQueExceden(
+  rows: PresupuestoRow[],
+  cerradasRecientes: BalancePorQ[],
+  gastosSinPresupuesto: GastoSinPresupuesto[],
+  categorias: Categoria[],
+): CategoriaExceso[] {
   const idsRecientes = new Set(cerradasRecientes.slice(-6).map(q => q.quincenaId))
   const porCategoria = new Map<string, Map<number, { real: number; presupuestado: number }>>()
   for (const p of rows) {
@@ -291,6 +291,16 @@ function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: Balance
     acc.real += p.real
     acc.presupuestado += Number(p.montoPresupuestado)
     porQ.set(p.quincenaId, acc)
+  }
+  for (const extra of gastosSinPresupuesto) {
+    if (!idsRecientes.has(extra.quincenaId)) continue
+    const cat = categorias.find(c => c.id === extra.categoriaId && c.tipo === 'Gasto')
+    if (!cat) continue
+    if (!porCategoria.has(cat.nombre)) porCategoria.set(cat.nombre, new Map())
+    const porQ = porCategoria.get(cat.nombre)!
+    const acc = porQ.get(extra.quincenaId) ?? { real: 0, presupuestado: 0 }
+    acc.real += Number(extra.monto) || 0
+    porQ.set(extra.quincenaId, acc)
   }
   const result: CategoriaExceso[] = []
   for (const [nombre, porQ] of porCategoria) {
@@ -307,16 +317,153 @@ function categoriasQueExceden(rows: PresupuestoRow[], cerradasRecientes: Balance
   return result.sort((a, b) => b.tasa - a.tasa || b.promedioExceso - a.promedioExceso).slice(0, 5)
 }
 
+interface DiagnosticoRango {
+  n: number
+  planOriginal: number
+  planVigente: number
+  real: number
+  fueraPlan: number
+  desviacionOriginal: number
+  desviacionVigente: number
+  precisionOriginal: number | null
+  precisionVigente: number | null
+  dentroOriginal: number
+}
+
+function precisionPlan(cerradas: BalancePorQ[], key: 'gastos' | 'gastosVigentes'): number | null {
+  const totalPlan = cerradas.reduce((s, q) => s + q[key], 0)
+  if (totalPlan <= 0) return null
+  const errorAbsoluto = cerradas.reduce((s, q) => s + Math.abs(q.gastosReales - q[key]), 0)
+  return Math.max(0, (1 - errorAbsoluto / totalPlan) * 100)
+}
+
+function diagnosticoRango(cerradas: BalancePorQ[]): DiagnosticoRango | null {
+  if (cerradas.length === 0) return null
+  const planOriginal = cerradas.reduce((s, q) => s + q.gastos, 0)
+  const planVigente = cerradas.reduce((s, q) => s + q.gastosVigentes, 0)
+  const real = cerradas.reduce((s, q) => s + q.gastosReales, 0)
+  const fueraPlan = cerradas.reduce((s, q) => s + q.gastoFueraPlan, 0)
+  return {
+    n: cerradas.length,
+    planOriginal,
+    planVigente,
+    real,
+    fueraPlan,
+    desviacionOriginal: real - planOriginal,
+    desviacionVigente: real - planVigente,
+    precisionOriginal: precisionPlan(cerradas, 'gastos'),
+    precisionVigente: precisionPlan(cerradas, 'gastosVigentes'),
+    dentroOriginal: cerradas.filter(q => q.gastosReales <= q.gastos).length,
+  }
+}
+
+interface VariacionCategoria {
+  categoriaId: number
+  nombre: string
+  original: number
+  vigente: number
+  real: number
+  fueraPlan: number
+  variacionOriginal: number
+  variacionVigente: number
+  excedidas: number
+  consideradas: number
+  impactoExceso: number
+}
+
+function variacionesCategoriaRango(
+  rows: PresupuestoRow[],
+  gastosSinPresupuesto: GastoSinPresupuesto[],
+  categorias: Categoria[],
+  quincenaIds: Set<number>,
+): VariacionCategoria[] {
+  const porCategoria = new Map<number, Map<number, { original: number; vigente: number; real: number; fueraPlan: number }>>()
+  const ensure = (categoriaId: number, qId: number) => {
+    if (!porCategoria.has(categoriaId)) porCategoria.set(categoriaId, new Map())
+    const porQ = porCategoria.get(categoriaId)!
+    if (!porQ.has(qId)) porQ.set(qId, { original: 0, vigente: 0, real: 0, fueraPlan: 0 })
+    return porQ.get(qId)!
+  }
+
+  for (const p of rows) {
+    if (p.categoria.tipo !== 'Gasto' || !quincenaIds.has(p.quincenaId) || !cuentaParaAgregados(p)) continue
+    const acc = ensure(p.categoriaId, p.quincenaId)
+    acc.original += Number(p.montoPresupuestado)
+    acc.vigente += Number(p.montoEfectivo)
+    acc.real += p.real
+  }
+  for (const extra of gastosSinPresupuesto) {
+    if (!quincenaIds.has(extra.quincenaId)) continue
+    const cat = categorias.find(c => c.id === extra.categoriaId && c.tipo === 'Gasto')
+    if (!cat) continue
+    const acc = ensure(extra.categoriaId, extra.quincenaId)
+    acc.real += Number(extra.monto) || 0
+    acc.fueraPlan += Number(extra.monto) || 0
+  }
+
+  const result: VariacionCategoria[] = []
+  for (const [categoriaId, porQ] of porCategoria) {
+    const cat = categorias.find(c => c.id === categoriaId)
+    if (!cat) continue
+    let original = 0, vigente = 0, real = 0, fueraPlan = 0, excedidas = 0
+    for (const q of porQ.values()) {
+      original += q.original
+      vigente += q.vigente
+      real += q.real
+      fueraPlan += q.fueraPlan
+      if (q.real > q.original) excedidas++
+    }
+    result.push({
+      categoriaId,
+      nombre: cat.nombre,
+      original,
+      vigente,
+      real,
+      fueraPlan,
+      variacionOriginal: real - original,
+      variacionVigente: real - vigente,
+      excedidas,
+      consideradas: porQ.size,
+      impactoExceso: 0,
+    })
+  }
+
+  const excesoPositivo = result.reduce((s, r) => s + Math.max(r.variacionOriginal, 0), 0)
+  for (const r of result) r.impactoExceso = excesoPositivo > 0 ? Math.max(r.variacionOriginal, 0) / excesoPositivo * 100 : 0
+  return result.sort((a, b) => Math.abs(b.variacionOriginal) - Math.abs(a.variacionOriginal))
+}
+
+function formatSignedMXN(value: number) {
+  return `${value > 0 ? '+' : ''}${formatMXN(value)}`
+}
+
+function precisionTone(value: number | null) {
+  if (value == null) return { color: 'text-slate-600 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-700/50' }
+  if (value >= 90) return { color: 'text-emerald-600 dark:text-emerald-400', bg: 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50' }
+  if (value >= 75) return { color: 'text-amber-600 dark:text-amber-400', bg: 'bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50' }
+  return { color: 'text-rose-600 dark:text-rose-400', bg: 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' }
+}
+
 export function PresupuestoAnalisis({
   quincenas, categorias, today, presupuestos, loading, configGlobal,
   desdeId, setDesdeId, hastaId, setHastaId, categoriaId, setCategoriaId, onQuincenaUpdated,
   openEdit,
 }: Props) {
   const { toast } = useToast()
+  const [gastosSinPresupuesto, setGastosSinPresupuesto] = useState<GastoSinPresupuesto[]>([])
 
-  // Default inicial de Desde/Hasta (ultimas 6 quincenas iniciadas), una sola
-  // vez que la lista de quincenas ya cargo -- mismo patron que refQuincenaId
-  // mas abajo.
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/presupuesto-analisis')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error()))
+      .then(data => {
+        if (cancelled) return
+        setGastosSinPresupuesto(Array.isArray(data?.gastosSinPresupuesto) ? data.gastosSinPresupuesto : [])
+      })
+      .catch(() => { if (!cancelled) setGastosSinPresupuesto([]) })
+    return () => { cancelled = true }
+  }, [])
+
   useEffect(() => {
     if (!desdeId && !hastaId && quincenas.length > 0) {
       const def = defaultDesdeHasta(quincenas, today)
@@ -326,8 +473,11 @@ export function PresupuestoAnalisis({
   }, [quincenas])
 
   const filasFiltradas = categoriaId ? presupuestos.filter(p => p.categoriaId.toString() === categoriaId) : presupuestos
+  const gastosSinPresupuestoFiltrados = categoriaId
+    ? gastosSinPresupuesto.filter(g => g.categoriaId.toString() === categoriaId)
+    : gastosSinPresupuesto
   const quincenasFiltradas = quincenasEnRango(quincenas, desdeId, hastaId)
-  const balancePorQ = buildBalancePorQ(filasFiltradas, quincenasFiltradas, configGlobal, today)
+  const balancePorQ = buildBalancePorQ(filasFiltradas, quincenasFiltradas, configGlobal, today, gastosSinPresupuestoFiltrados)
     .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
 
   const [expandedQ, setExpandedQ] = useState<Set<number>>(new Set())
@@ -338,10 +488,6 @@ export function PresupuestoAnalisis({
       return next
     })
   }
-  // Colapsar/expandir toda la tabla, sin afectar expandedQ (el detalle por
-  // fila que estaba abierto sigue abierto al volver a expandir). Colapsada
-  // por default -- Análisis se usa mas por la gráfica/analítica de arriba,
-  // esta tabla es un detalle que el usuario abre bajo demanda.
   const [tablaColapsada, setTablaColapsada] = useState(true)
 
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
@@ -356,8 +502,6 @@ export function PresupuestoAnalisis({
     return sortDir === 'asc' ? cmp : -cmp
   })
 
-  // Series elegibles de la grafica (checkmarks) + categorias agregadas como
-  // lineas de comparacion opcionales.
   const [seriesActivas, setSeriesActivas] = useState<Set<string>>(new Set(DEFAULT_SERIES))
   function toggleSerie(key: string) {
     setSeriesActivas(prev => {
@@ -366,14 +510,6 @@ export function PresupuestoAnalisis({
       return next
     })
   }
-  // Contador monotono para instanceId, nunca decrementado al quitar una
-  // instancia -- a diferencia de .length, un id derivado de .length se
-  // reutilizaria despues de quitar+agregar y podria chocar con una
-  // instancia que sigue viva. Un solo contador compartido entre categorias
-  // y lineas (no dos independientes): ambos chips viven en el mismo
-  // contenedor, y si cada arreglo tuviera su propio contador desde 0 una
-  // categoria y una linea podrian generar el mismo instanceId y colisionar
-  // como key de React.
   const nextInstanceId = useRef(0)
   function mintInstanceId() {
     return nextInstanceId.current++
@@ -384,10 +520,6 @@ export function PresupuestoAnalisis({
     if (categoriasAgregadas.some(c => c.categoriaId === categoriaId)) return
     setCategoriasAgregadas(prev => [...prev, { instanceId: mintInstanceId(), categoriaId, unidad: 'real' }])
   }
-  // Agrega una segunda (o tercera...) instancia de la MISMA categoria, con
-  // la unidad opuesta a la original por default -- un clic te da real+ppto
-  // lado a lado, en vez de reabrir el desplegable (que solo ofrece cada
-  // categoria/linea una vez, ver gruposAgregar).
   function duplicarCategoria(instanceId: number) {
     const original = categoriasAgregadas.find(c => c.instanceId === instanceId)
     if (!original) return
@@ -419,17 +551,11 @@ export function PresupuestoAnalisis({
     setLineasAgregadas(prev => prev.map(l => l.instanceId === instanceId ? { ...l, unidad: otraUnidad(l.unidad) } : l))
   }
 
-  // Modo Simulacion: 100% en memoria del navegador, nunca se guarda -- ver
-  // guardarReferencia() mas abajo para contraste (ese si hace PUT). Cambiar
-  // de quincena o refrescar la pagina la borra sin dejar rastro.
   const [simulando, setSimulando] = useState(false)
   const [simQuincenaId, setSimQuincenaId] = useState('')
   const [simGastoInput, setSimGastoInput] = useState('')
   const simQuincena = quincenasFiltradas.find(q => q.id.toString() === simQuincenaId) ?? null
 
-  // Al activar Simular, o al no haber ninguna quincena elegida todavia,
-  // arranca en la mas reciente del rango actual con su gasto real como
-  // punto de partida editable.
   useEffect(() => {
     if (!simulando) return
     const objetivo = simQuincenaId ? balancePorQ.find(q => q.quincenaId.toString() === simQuincenaId) : undefined
@@ -445,11 +571,10 @@ export function PresupuestoAnalisis({
     setSimGastoInput(q ? q.gastosReales.toString() : '')
   }
 
-  // Grafica: promedio movil de 3 sobre el gasto presupuestado, en el mismo
-  // orden cronologico que la tabla (sin el sort del usuario), mas una
-  // columna por cada categoria agregada y, si hay simulacion activa, el
-  // gasto real hipotetico de esa quincena.
-  const seriesCategoriaData = categoriasAgregadas.map(c => ({ instanceId: c.instanceId, serie: serieCategoria(presupuestos, c.categoriaId, c.unidad) }))
+  const seriesCategoriaData = categoriasAgregadas.map(c => ({
+    instanceId: c.instanceId,
+    serie: serieCategoria(presupuestos, c.categoriaId, c.unidad, gastosSinPresupuesto),
+  }))
   const seriesLineaData = lineasAgregadas.map(l => ({ instanceId: l.instanceId, serie: serieLinea(presupuestos, l, l.unidad) }))
   const simGastoNum = Number(simGastoInput)
   const simGastoHipotetico = simGastoInput !== '' && Number.isFinite(simGastoNum) ? simGastoNum : null
@@ -465,11 +590,6 @@ export function PresupuestoAnalisis({
     return { ...q, ma3Gastos, ...catValues, gastoSimulado }
   })
 
-  // Que series tienen al menos un dato para graficar en el rango actual --
-  // si ninguna serie activa tiene ni un solo valor real, el auto-domain de
-  // Recharts colapsa y el eje Y se queda sin etiquetas (grafica "rota" en
-  // blanco). Se detecta ese caso para mostrar un mensaje en vez de un eje
-  // vacio -- el auto-scale en si funciona bien apenas hay algun dato.
   const activeChartKeys = [
     ...SERIES_BASE.filter(s => seriesActivas.has(s.key)).map(s => s.key),
     ...categoriasAgregadas.map(c => categoriaInstanceKey(c.instanceId)),
@@ -482,21 +602,54 @@ export function PresupuestoAnalisis({
     })
   )
 
-  // Analitica: siempre sobre TODAS las quincenas (sin el filtro de Categoria/
-  // Rango de la tabla/grafica) y solo las ya cerradas -- necesita una muestra
-  // estable, no la que el usuario este mirando en ese momento.
-  const todasCerradas = buildBalancePorQ(presupuestos, quincenas, configGlobal, today)
+  const todasCerradas = buildBalancePorQ(presupuestos, quincenas, configGlobal, today, gastosSinPresupuesto)
     .filter(q => q.esCerrada)
     .sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
   const proy = proyeccion(todasCerradas)
   const cons = consistencia(todasCerradas)
-  const excesos = categoriasQueExceden(presupuestos, todasCerradas)
+  const excesos = categoriasQueExceden(presupuestos, todasCerradas, gastosSinPresupuesto, categorias)
+  const ultimasCerradas = todasCerradas.slice(-6)
+  const gastoFueraPlanReciente = ultimasCerradas.reduce((s, q) => s + q.gastoFueraPlan, 0)
+  const gastoRealReciente = ultimasCerradas.reduce((s, q) => s + q.gastosReales, 0)
+  const pctFueraPlanReciente = gastoRealReciente > 0 ? (gastoFueraPlanReciente / gastoRealReciente) * 100 : 0
 
-  // "Con simulacion": mismas funciones, sustituyendo el gasto real de la
-  // quincena simulada. Si esa quincena no esta cerrada (ej. la actual, "en
-  // curso"), la sustitucion no cambia nada en proyeccion/consistencia -- en
-  // ese caso no se muestra el renglon "con simulacion" para no mostrar un
-  // numero identico al real sin explicacion.
+  // Diagnostico ligado al rango/filtro visibles: solo Q cerradas para no medir
+  // una quincena en curso como si ya hubiera terminado.
+  const cerradasRango = balancePorQ.filter(q => q.esCerrada)
+  const diagRango = diagnosticoRango(cerradasRango)
+  const idsCerradasRango = new Set(cerradasRango.map(q => q.quincenaId))
+  const variacionesRango = variacionesCategoriaRango(
+    filasFiltradas,
+    gastosSinPresupuestoFiltrados,
+    categorias,
+    idsCerradasRango,
+  )
+  const principalExceso = variacionesRango
+    .filter(v => v.variacionOriginal > 0)
+    .sort((a, b) => b.variacionOriginal - a.variacionOriginal)[0] ?? null
+  const mejoraPrecision = diagRango?.precisionOriginal != null && diagRango.precisionVigente != null
+    ? diagRango.precisionVigente - diagRango.precisionOriginal
+    : null
+
+  const insightRango = (() => {
+    if (!diagRango) return 'Selecciona un rango que incluya al menos una quincena cerrada para medir precisión y variaciones.'
+    const partes: string[] = []
+    if (diagRango.desviacionOriginal > 0) {
+      partes.push(`En ${diagRango.n} Q cerradas gastaste ${formatMXN(diagRango.desviacionOriginal)} más que el plan original.`)
+      if (principalExceso) partes.push(`${principalExceso.nombre} explica ${principalExceso.impactoExceso.toFixed(0)}% del exceso positivo por categoría.`)
+    } else if (diagRango.desviacionOriginal < 0) {
+      partes.push(`En ${diagRango.n} Q cerradas gastaste ${formatMXN(Math.abs(diagRango.desviacionOriginal))} menos que el plan original.`)
+    } else {
+      partes.push(`En ${diagRango.n} Q cerradas el gasto real terminó exactamente en el total del plan original.`)
+    }
+    if (mejoraPrecision != null && Math.abs(mejoraPrecision) >= 0.5) {
+      partes.push(mejoraPrecision > 0
+        ? `Los ajustes al presupuesto mejoraron la precisión ${mejoraPrecision.toFixed(1)} puntos.`
+        : `Los ajustes al presupuesto redujeron la precisión ${Math.abs(mejoraPrecision).toFixed(1)} puntos.`)
+    }
+    return partes.join(' ')
+  })()
+
   const simSustitucion = simulando && simQuincena && simGastoHipotetico != null
     ? { quincenaId: simQuincena.id, gastoHipotetico: simGastoHipotetico }
     : null
@@ -505,7 +658,6 @@ export function PresupuestoAnalisis({
   const proySim = simAfectaCerradas ? proyeccion(cerradasConSim) : null
   const consSim = simAfectaCerradas ? consistencia(cerradasConSim) : null
 
-  // Formulario de referencia por quincena
   const [refQuincenaId, setRefQuincenaId] = useState('')
   const [ingresoInput, setIngresoInput] = useState('')
   const [limiteInput, setLimiteInput] = useState('')
@@ -549,10 +701,6 @@ export function PresupuestoAnalisis({
 
   const quincenasOrdenadas = [...quincenas].sort((a, b) => a.fechaInicio.localeCompare(b.fechaInicio))
 
-  // Opciones del selector "+ Agregar categoria o linea": una categoria
-  // completa (si no esta ya agregada) mas cada linea individual ya usada en
-  // esa categoria (si no esta ya agregada) -- agrupadas por categoria para
-  // que el dropdown se lea como un arbol categoria -> sus lineas.
   const disponibles = lineasDisponibles(presupuestos)
   const gruposAgregar = categorias
     .map(cat => {
@@ -567,14 +715,20 @@ export function PresupuestoAnalisis({
     })
     .filter(g => g.opciones.length > 0)
 
+  const tonoOriginal = precisionTone(diagRango?.precisionOriginal ?? null)
+  const tonoVigente = precisionTone(diagRango?.precisionVigente ?? null)
+
   return (
     <div className="space-y-6">
-      {/* Analítica */}
+      {/* Analítica histórica */}
       <div>
-        <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-3 flex items-center gap-1.5">
-          <Sparkles size={14} className="text-indigo-500 dark:text-indigo-400" /> Analítica
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="mb-3">
+          <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+            <Sparkles size={14} className="text-indigo-500 dark:text-indigo-400" /> Analítica histórica
+          </p>
+          <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Usa el historial cerrado completo; no cambia con el rango de la gráfica.</p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard
             label="Proyección próxima quincena"
             value={proy ? formatMXN(proy.promedio) : '—'}
@@ -598,6 +752,14 @@ export function PresupuestoAnalisis({
                 <FlaskConical size={10} /> con simulación: {consSim.cv < 0.10 ? 'Muy consistente' : consSim.cv < 0.25 ? 'Moderada' : 'Muy variable'}
               </p>
             )}
+          />
+          <KpiCard
+            label="Gasto fuera de plan"
+            value={formatMXN(gastoFueraPlanReciente)}
+            subtitle={ultimasCerradas.length > 0 ? `${pctFueraPlanReciente.toFixed(1)}% del gasto real · últimas ${ultimasCerradas.length} Q` : 'Historial insuficiente'}
+            icon={<AlertTriangle size={20} className="text-amber-600 dark:text-amber-300" />}
+            color={gastoFueraPlanReciente > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}
+            bg={gastoFueraPlanReciente > 0 ? 'bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'}
           />
           <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
             <p className="text-xs text-slate-500 dark:text-slate-400 mb-2 flex items-center gap-1.5">
@@ -633,6 +795,57 @@ export function PresupuestoAnalisis({
         </FilterChip>
       </div>
 
+      {/* Diagnóstico del rango */}
+      <div>
+        <div className="flex items-end justify-between gap-3 flex-wrap mb-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200 flex items-center gap-1.5">
+              <Target size={14} className="text-indigo-500 dark:text-indigo-400" /> Diagnóstico del rango
+            </p>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Mide solo quincenas cerradas dentro del rango y respeta el filtro de categoría.</p>
+          </div>
+          {diagRango && <span className="text-xs text-slate-400 dark:text-slate-500">{diagRango.n} Q cerradas</span>}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <KpiCard
+            label="Precisión plan original"
+            value={diagRango?.precisionOriginal != null ? `${diagRango.precisionOriginal.toFixed(1)}%` : '—'}
+            subtitle={diagRango ? `${formatMXN(diagRango.planOriginal)} planeado · ${formatMXN(diagRango.real)} real` : 'Sin Q cerradas en el rango'}
+            icon={<Target size={20} className="text-indigo-600 dark:text-indigo-300" />}
+            color={tonoOriginal.color} bg={tonoOriginal.bg}
+          />
+          <KpiCard
+            label="Precisión plan vigente"
+            value={diagRango?.precisionVigente != null ? `${diagRango.precisionVigente.toFixed(1)}%` : '—'}
+            subtitle={diagRango ? `${formatMXN(diagRango.planVigente)} vigente · ${formatMXN(diagRango.real)} real` : 'Sin Q cerradas en el rango'}
+            icon={<Activity size={20} className="text-sky-600 dark:text-sky-300" />}
+            color={tonoVigente.color} bg={tonoVigente.bg}
+          />
+          <KpiCard
+            label="Desviación vs. original"
+            value={diagRango ? formatSignedMXN(diagRango.desviacionOriginal) : '—'}
+            subtitle={diagRango ? `${formatSignedMXN(diagRango.desviacionVigente)} vs. plan vigente` : 'Sin Q cerradas en el rango'}
+            icon={<AlertTriangle size={20} className={diagRango && diagRango.desviacionOriginal > 0 ? 'text-rose-600 dark:text-rose-300' : 'text-emerald-600 dark:text-emerald-300'} />}
+            color={diagRango && diagRango.desviacionOriginal > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
+            bg={diagRango && diagRango.desviacionOriginal > 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50' : 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'}
+          />
+          <KpiCard
+            label="Q dentro del plan"
+            value={diagRango ? `${diagRango.dentroOriginal}/${diagRango.n}` : '—'}
+            subtitle={diagRango ? `${formatMXN(diagRango.fueraPlan)} fuera de plan en el rango` : 'Sin Q cerradas en el rango'}
+            icon={<Sparkles size={20} className="text-violet-600 dark:text-violet-300" />}
+            color="text-violet-600 dark:text-violet-400" bg="bg-violet-50 dark:bg-violet-950/50 dark:ring-1 dark:ring-violet-800/50"
+          />
+        </div>
+        <div className={`mt-3 rounded-xl border px-4 py-3 text-sm ${
+          diagRango?.desviacionOriginal != null && diagRango.desviacionOriginal > 0
+            ? 'border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-200'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-200'
+        }`}>
+          <span className="font-semibold">Lectura de Milo: </span>{insightRango}
+        </div>
+      </div>
+
       {/* Balance por Q: tabla */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         <div className="flex items-center justify-between flex-wrap gap-2 p-4 pb-3">
@@ -664,6 +877,9 @@ export function PresupuestoAnalisis({
                 {filasOrdenadas.map(q => {
                   const expanded = expandedQ.has(q.quincenaId)
                   const gastosDeQ = filasFiltradas.filter(p => p.quincenaId === q.quincenaId && p.categoria.tipo === 'Gasto')
+                  const fueraPlanDeQ = gastosSinPresupuestoFiltrados
+                    .filter(g => g.quincenaId === q.quincenaId)
+                    .reduce((s, g) => s + Number(g.monto), 0)
                   return (
                     <Fragment key={q.quincenaId}>
                       <tr className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
@@ -688,7 +904,7 @@ export function PresupuestoAnalisis({
                       {expanded && (
                         <tr className="bg-slate-50/70 dark:bg-slate-900/40">
                           <td colSpan={4} className="px-4 py-3">
-                            {gastosDeQ.length === 0 ? (
+                            {gastosDeQ.length === 0 && fueraPlanDeQ <= 0 ? (
                               <p className="text-xs text-slate-400 dark:text-slate-500">Sin partidas de gasto en esta quincena.</p>
                             ) : (
                               <div className="space-y-1 max-w-xl">
@@ -696,10 +912,19 @@ export function PresupuestoAnalisis({
                                   <div key={p.id} className="flex items-center justify-between text-xs">
                                     <span className="text-slate-600 dark:text-slate-300 truncate pr-3">{p.categoria.nombre} · {p.descripcion}</span>
                                     <span className="tabular-nums text-slate-500 dark:text-slate-400 shrink-0">
-                                      {formatMXN(p.real)} <span className="text-slate-400 dark:text-slate-600">/ {formatMXN(Number(p.montoPresupuestado))}</span>
+                                      {formatMXN(p.real)} <span className="text-slate-400 dark:text-slate-600">/ vigente {formatMXN(Number(p.montoEfectivo))}</span>
+                                      {Number(p.montoEfectivo) !== Number(p.montoPresupuestado) && (
+                                        <span className="text-slate-400 dark:text-slate-600"> · original {formatMXN(Number(p.montoPresupuestado))}</span>
+                                      )}
                                     </span>
                                   </div>
                                 ))}
+                                {fueraPlanDeQ > 0 && (
+                                  <div className="flex items-center justify-between text-xs pt-1 border-t border-amber-200/70 dark:border-amber-800/50">
+                                    <span className="text-amber-700 dark:text-amber-400">Gasto fuera de plan</span>
+                                    <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">{formatMXN(fueraPlanDeQ)}</span>
+                                  </div>
+                                )}
                               </div>
                             )}
                           </td>
@@ -718,14 +943,16 @@ export function PresupuestoAnalisis({
       {chartData.length > 1 && (
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
           <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
-            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Comparativa por quincena</p>
+            <div>
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">Comparativa por quincena</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Real total incluye movimientos registrados fuera del presupuesto.</p>
+            </div>
             <button type="button" onClick={() => setSimulando(s => !s)}
               className={`inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border cursor-pointer transition-colors ${simulando ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200 dark:border-slate-700 hover:text-amber-600 dark:hover:text-amber-400 hover:border-amber-300 dark:hover:border-amber-700'}`}>
               <FlaskConical size={13} /> Simular
             </button>
           </div>
 
-          {/* Series elegibles */}
           <div className="flex flex-wrap gap-1.5 mb-2">
             {SERIES_BASE.map(s => {
               const active = seriesActivas.has(s.key)
@@ -740,9 +967,6 @@ export function PresupuestoAnalisis({
             })}
           </div>
 
-          {/* Categorías y líneas agregadas para comparar -- cada chip trae su
-              propio toggle real/ppto, en vez de que el desplegable ofrezca
-              2 entradas por categoria/linea (saturaria el menu). */}
           <div className="flex flex-wrap items-center gap-1.5 mb-3">
             {categoriasAgregadas.map((c, i) => {
               const cat = categorias.find(x => x.id === c.categoriaId)
@@ -812,7 +1036,6 @@ export function PresupuestoAnalisis({
             )}
           </div>
 
-          {/* Mini-formulario de simulación -- 100% en memoria, ver conSimulacion() */}
           {simulando && (
             <div className="flex flex-wrap items-end gap-3 mb-3 p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl">
               <div>
@@ -855,7 +1078,7 @@ export function PresupuestoAnalisis({
                   const cat = categorias.find(x => x.id === c.categoriaId)
                   if (!cat) return null
                   const color = colorForCategoria(cat.nombre, i)
-                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real' : 'original'})`
+                  const name = `${cat.nombre} (${c.unidad === 'real' ? 'real total' : 'original'})`
                   return (
                     <Line key={categoriaInstanceKey(c.instanceId)} type="monotone" dataKey={categoriaInstanceKey(c.instanceId)} name={name}
                       stroke={color} strokeWidth={2} dot={{ r: 3, fill: color }} activeDot={{ r: 5 }}
@@ -866,10 +1089,6 @@ export function PresupuestoAnalisis({
                   const cat = categorias.find(c => c.id === l.categoriaId)
                   const label = cat ? `${cat.nombre} · ${l.descripcion}` : l.descripcion
                   const name = `${label} (${l.unidad === 'real' ? 'real' : 'original'})`
-                  // Un punto de linea agregada mapea 1:1 a una fila Presupuesto real
-                  // (categoria+descripcion normalizada+quincena) -- a diferencia de
-                  // categoriasAgregadas/SERIES_BASE, que suman o derivan de varias
-                  // filas (o ninguna), por eso solo estas lineas son editables.
                   const editarPunto = (payload: { quincenaId: number }) => {
                     const row = presupuestos.find(p =>
                       p.categoriaId === l.categoriaId &&
@@ -878,11 +1097,6 @@ export function PresupuestoAnalisis({
                     )
                     if (row) openEdit(row)
                   }
-                  // Forma-funcion (no objeto) para el dot: es la unica que recharts
-                  // tipa con el payload del punto (DotItemDotProps) -- la forma-objeto
-                  // no expone payload en sus tipos aunque en runtime si lo reciba.
-                  // activeDot=false evita que el punto activo (mas grande, sin click)
-                  // quede encima del dot y se trague el click al hacer hover-y-click.
                   const renderDot = (dotProps: DotItemDotProps) => {
                     const { cx, cy, payload } = dotProps
                     if (typeof cx !== 'number' || typeof cy !== 'number') return null
@@ -913,6 +1127,69 @@ export function PresupuestoAnalisis({
                   ? 'Activa al menos una serie arriba para ver la gráfica.'
                   : 'Sin datos para la selección actual en este rango de quincenas.'}
               </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Variaciones por categoría */}
+      {cerradasRango.length > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="p-4 border-b border-slate-100 dark:border-slate-700">
+            <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">¿Qué explica la desviación?</p>
+            <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">Variación por categoría en las Q cerradas del rango. Real incluye gasto fuera de plan.</p>
+          </div>
+          {variacionesRango.length === 0 ? (
+            <div className="py-10 text-center text-sm text-slate-400 dark:text-slate-500">Sin gastos para analizar en este rango.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                  <tr>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-slate-500 dark:text-slate-400">Categoría</th>
+                    <th className="text-right px-3 py-3 text-xs font-medium text-slate-500 dark:text-slate-400">Original</th>
+                    <th className="text-right px-3 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 hidden md:table-cell">Vigente</th>
+                    <th className="text-right px-3 py-3 text-xs font-medium text-slate-500 dark:text-slate-400">Real</th>
+                    <th className="text-right px-3 py-3 text-xs font-medium text-slate-500 dark:text-slate-400">Variación</th>
+                    <th className="text-center px-3 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 hidden sm:table-cell">Q excedidas</th>
+                    <th className="text-right px-3 py-3 text-xs font-medium text-slate-500 dark:text-slate-400 hidden lg:table-cell">Impacto exceso</th>
+                    <th className="px-4 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+                  {variacionesRango.map(v => {
+                    const yaEnGrafica = categoriasAgregadas.some(c => c.categoriaId === v.categoriaId)
+                    return (
+                      <tr key={v.categoriaId} className="hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorForCategoria(v.nombre) }} />
+                            <div>
+                              <p className="font-medium text-slate-700 dark:text-slate-200">{v.nombre}</p>
+                              {v.fueraPlan > 0 && <p className="text-[10px] text-amber-600 dark:text-amber-400">{formatMXN(v.fueraPlan)} fuera de plan</p>}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums text-slate-600 dark:text-slate-300">{formatMXN(v.original)}</td>
+                        <td className="px-3 py-3 text-right tabular-nums text-slate-500 dark:text-slate-400 hidden md:table-cell">{formatMXN(v.vigente)}</td>
+                        <td className="px-3 py-3 text-right tabular-nums font-semibold text-slate-700 dark:text-slate-200">{formatMXN(v.real)}</td>
+                        <td className={`px-3 py-3 text-right tabular-nums font-semibold ${v.variacionOriginal > 0 ? 'text-rose-600 dark:text-rose-400' : v.variacionOriginal < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500 dark:text-slate-400'}`}>
+                          {formatSignedMXN(v.variacionOriginal)}
+                          {v.vigente !== v.original && <p className="text-[10px] font-normal text-slate-400 dark:text-slate-500">{formatSignedMXN(v.variacionVigente)} vs vigente</p>}
+                        </td>
+                        <td className="px-3 py-3 text-center text-xs text-slate-500 dark:text-slate-400 hidden sm:table-cell">{v.excedidas}/{v.consideradas}</td>
+                        <td className="px-3 py-3 text-right text-xs tabular-nums text-slate-500 dark:text-slate-400 hidden lg:table-cell">{v.impactoExceso > 0 ? `${v.impactoExceso.toFixed(0)}%` : '—'}</td>
+                        <td className="px-4 py-3 text-right">
+                          <button type="button" onClick={() => agregarCategoria(v.categoriaId)} disabled={yaEnGrafica}
+                            className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline disabled:text-slate-300 dark:disabled:text-slate-600 disabled:no-underline disabled:cursor-default cursor-pointer whitespace-nowrap">
+                            <Plus size={11} /> {yaEnGrafica ? 'En gráfica' : 'Ver en gráfica'}
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
