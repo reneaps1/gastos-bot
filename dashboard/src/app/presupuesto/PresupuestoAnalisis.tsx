@@ -8,14 +8,13 @@ type Props = ComponentProps<typeof PresupuestoAnalisisCore>
 
 /**
  * Capa de composición: mantiene intacta la implementación avanzada de
- * Análisis (gráfica, filtros, simulación, variaciones, etc.) y suma el
- * forecast como un bloque independiente. Separarlos reduce el riesgo de
- * regresiones en la gráfica al evolucionar el pronóstico.
+ * Análisis (gráfica, filtros, simulación histórica, variaciones, etc.) y
+ * suma el forecast/escenarios como un bloque independiente.
  */
 export function PresupuestoAnalisis(props: Props) {
   return (
     <div className="space-y-6">
-      <PresupuestoForecast today={props.today} />
+      <PresupuestoForecast today={props.today} presupuestos={props.presupuestos} />
       <PresupuestoAnalisisCore {...props} />
     </div>
   )
