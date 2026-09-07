@@ -84,7 +84,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
           fetch(`/api/liquidez?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincena.id}`).then(r => r.json()),
           fetch(`/api/transacciones?quincenaId=${quincena.id}&limit=1`).then(r => r.json()),
-          fetch('/api/ahorro').then(r => r.json()),
+          fetch(`/api/ahorro?hasta=${quincena.fechaFin.split('T')[0]}`).then(r => r.json()),
         ])
         if (cancelled) return
         setRows(presupuestos.map(p => {
@@ -110,7 +110,7 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
     }
     void load()
     return () => { cancelled = true }
-  }, [quincena.id])
+  }, [quincena.id, quincena.fechaFin])
 
   // Solo Gasto cuenta para lo que falta cubrir. Las lineas de Ahorro quedan
   // explicitamente fuera de esta obligacion mediante calcularFaltaPorPagar.
@@ -126,9 +126,9 @@ export function ResumenPreview({ quincena, onBack }: { quincena: Quincena; onBac
   const gastosNoCubiertos = Math.max(Number(totalesTx.Gasto ?? 0) - gastoRealEnPresupuesto, 0)
   const libreSinAsignar = calcularLibreSinAsignar(Number(totalesTx.Ingreso ?? 0), rows, gastosNoCubiertos)
 
-  // Regla de negocio: el ahorro acumulado es dinero protegido. Aunque forme
-  // parte del saldo fisico capturado en cuentas, no se considera utilizable
-  // para cubrir gastos del periodo.
+  // Regla de negocio: el ahorro acumulado al cierre del periodo es dinero
+  // protegido. Aunque forme parte del saldo fisico capturado en cuentas, no
+  // se considera utilizable para cubrir gastos del periodo.
   const disponibleOperativo = liquidez ? liquidez.totalLiquido - ahorroProtegido : null
   const libreDespuesCubrir = disponibleOperativo != null ? disponibleOperativo - totalFalta : null
   const cubrePendiente = libreDespuesCubrir != null ? libreDespuesCubrir >= 0 : null
