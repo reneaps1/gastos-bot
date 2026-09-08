@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
 import { computeQuincenasTarget, fechaDiaCobroEnQuincena } from '@/lib/recurrencia'
@@ -68,19 +69,33 @@ export async function PUT(
     const actor = session?.username ?? null
     const montoActual = montoEfectivoPresupuesto(current)
     const montoOriginal = Number(current.montoPresupuestado)
-    const montoEnBody = montoRevisado !== undefined || montoPresupuestado !== undefined
+    const montoOriginalBody = montoPresupuestado !== undefined ? parseFloat(montoPresupuestado) : null
 
-    // Compatibilidad con la UI existente: el formulario históricamente manda
-    // `montoPresupuestado` al editar. Desde ahora, en una fila YA existente,
-    // ese valor significa "monto vigente deseado". El Original nunca se
-    // sobreescribe; si difiere se guarda en montoRevisado.
+    // Compatibilidad temporal con el editor actual: al abrir una línea que ya
+    // tiene montoRevisado, la UI todavía precarga montoPresupuestado (Original).
+    // Si ese Original vuelve sin cambios y no viene montoRevisado explícito,
+    // significa "el usuario editó otro campo", no "revierte el Vigente".
+    const legacyOriginalSinCambio =
+      montoRevisado === undefined &&
+      montoPresupuestado !== undefined &&
+      current.montoRevisado != null &&
+      montoOriginalBody != null &&
+      Number.isFinite(montoOriginalBody) &&
+      Math.abs(montoOriginalBody - montoOriginal) < 0.005
+
+    const montoEnBody =
+      montoRevisado !== undefined ||
+      (montoPresupuestado !== undefined && !legacyOriginalSinCambio)
+
+    // En una fila existente, cualquier cambio de monto afecta el Vigente.
+    // El Original queda inmutable después de la creación.
     let montoDeseado = montoActual
     if (montoRevisado !== undefined) {
       montoDeseado = montoRevisado === null || montoRevisado === ''
         ? montoOriginal
         : parseFloat(montoRevisado)
-    } else if (montoPresupuestado !== undefined) {
-      montoDeseado = parseFloat(montoPresupuestado)
+    } else if (montoEnBody && montoOriginalBody != null) {
+      montoDeseado = montoOriginalBody
     }
     if (montoEnBody && (!Number.isFinite(montoDeseado) || montoDeseado <= 0)) {
       return NextResponse.json({ error: 'monto invalido' }, { status: 400 })
@@ -94,8 +109,6 @@ export async function PUT(
       ? (diaCobro !== null && diaCobro !== '' ? parseInt(diaCobro) : null)
       : current.diaCobro
 
-    // Fields for the row being edited itself. montoPresupuestado NO aparece:
-    // es el Original y queda inmutable después de la creación.
     const ownData: any = {
       ...(quincenaId && { quincenaId: parseInt(quincenaId) }),
       ...(descripcion && { descripcion }),
@@ -112,8 +125,6 @@ export async function PUT(
       ownData.notas = conNota(ownData.notas ?? current.notas, `Presupuesto vigente ajustado: $${montoActual.toFixed(2)} → $${montoDeseado.toFixed(2)}`)
     }
 
-    // Final values (body override, falling back to current) — used to
-    // propagate shared fields to future rows in a recurrence.
     const finalDescripcion = descripcion || current.descripcion
     const finalCategoriaId = categoriaId ? parseInt(categoriaId) : current.categoriaId
     const finalMonto = montoEnBody ? montoDeseado : montoActual
@@ -123,8 +134,6 @@ export async function PUT(
     const finalFrecuencia = recurrente ? (frecuencia || current.frecuencia || 'CADA_QUINCENA') : null
     const finalNumOcurrencias = numOcurrencias !== undefined ? numOcurrencias : current.numOcurrencias
 
-    // La propia fila que se esta editando tambien puede ser MENSUAL con
-    // diaCobro. Una fecha explicita en el body siempre gana.
     if (!ownData.fechaVencimiento && finalFrecuencia === 'MENSUAL' && diaCobro_ != null) {
       const ownQuincenaId = quincenaId ? parseInt(quincenaId) : current.quincenaId
       const ownQuincena = ownQuincenaId === current.quincenaId
@@ -133,7 +142,7 @@ export async function PUT(
       if (ownQuincena) ownData.fechaVencimiento = new Date(fechaDiaCobroEnQuincena(ownQuincena, diaCobro_))
     }
 
-    async function registrarAjusteActual(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], quincenaFinalId: number) {
+    async function registrarAjusteActual(tx: Prisma.TransactionClient, quincenaFinalId: number) {
       if (!hayCambioMonto) return
       await registrarCambioPresupuesto(tx, {
         presupuestoId: current.id,
@@ -147,7 +156,6 @@ export async function PUT(
     }
 
     if (!current.recurrenciaGrupoId) {
-      // Standalone item (not part of any recurring series).
       if (!recurrente) {
         const presupuesto = await prisma.$transaction(async tx => {
           const updated = await tx.presupuesto.update({
@@ -159,8 +167,6 @@ export async function PUT(
         return NextResponse.json(presupuesto)
       }
 
-      // Activar recurrencia sobre una fila existente: la fila actual conserva
-      // su Original; las ocurrencias nuevas nacen con su propio Original.
       const grupoId = randomUUID()
       const finalQuincenaId = quincenaId ? parseInt(quincenaId) : current.quincenaId
 
@@ -209,7 +215,6 @@ export async function PUT(
       return NextResponse.json(updated)
     }
 
-    // Already part of an existing recurring series.
     if (scope === 'single' || (scope !== 'future' && scope !== 'this_forward' && scope !== 'all')) {
       const presupuesto = await prisma.$transaction(async tx => {
         const updated = await tx.presupuesto.update({
@@ -238,8 +243,8 @@ export async function PUT(
         await registrarAjusteActual(tx, filaActual.quincenaId)
       }
 
-      // Regenerate future occurrences. Al ser filas futuras reemplazadas por
-      // una nueva definición de la serie, cada nueva fila obtiene su CREACION.
+      // Future rows in a recurring series are regenerated as a new future
+      // definition. Their new instances therefore receive their own CREACION.
       if (futuras.length > 0) {
         await tx.presupuesto.deleteMany({ where: { id: { in: futuras.map(f => f.id) } } })
       }
@@ -277,8 +282,6 @@ export async function PUT(
         }
       }
 
-      // Una fila pasada ya resuelta no se toca. Para filas pasadas todavía
-      // Abiertas, "all" puede actualizar el Vigente, pero jamás el Original.
       const pasadasEditables = pasadas.filter(p => p.estadoLinea === 'Abierta')
       if (scope === 'all' && pasadasEditables.length > 0) {
         for (const pasada of pasadasEditables) {
