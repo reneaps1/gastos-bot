@@ -12,6 +12,12 @@ interface Quincena {
   fechaFin: string
 }
 
+interface GastoSinPresupuesto {
+  quincenaId: number
+  categoriaId: number
+  monto: number
+}
+
 interface CambioPresupuesto {
   id: number
   quincenaId: number
@@ -48,6 +54,7 @@ interface ResumenQ {
   original: number
   vigente: number
   real: number
+  fueraPlan: number
   ajusteNeto: number
   sumaAbsolutaAjustes: number
   reasignado: number
@@ -84,13 +91,22 @@ function vigenteParaHistoria(p: Presupuesto) {
   return Number(p.montoEfectivo)
 }
 
-function construirResumen(q: Quincena, rows: Presupuesto[]): ResumenQ | null {
+function construirResumen(
+  q: Quincena,
+  rows: Presupuesto[],
+  gastosSinPresupuesto: GastoSinPresupuesto[],
+  categoriaNum: number | null,
+): ResumenQ | null {
   const gasto = rows.filter(p => p.quincenaId === q.id && p.categoria.tipo === 'Gasto')
-  if (gasto.length === 0) return null
+  const fueraPlan = gastosSinPresupuesto
+    .filter(g => g.quincenaId === q.id && (categoriaNum == null || g.categoriaId === categoriaNum))
+    .reduce((sum, g) => sum + Number(g.monto || 0), 0)
+
+  if (gasto.length === 0 && fueraPlan <= 0) return null
 
   let original = 0
   let vigente = 0
-  let real = 0
+  let real = fueraPlan
   let sumaAbsolutaAjustes = 0
   let lineasCambiadas = 0
 
@@ -119,6 +135,7 @@ function construirResumen(q: Quincena, rows: Presupuesto[]): ResumenQ | null {
     original,
     vigente,
     real,
+    fueraPlan,
     ajusteNeto,
     sumaAbsolutaAjustes,
     reasignado,
@@ -197,12 +214,9 @@ export function PresupuestoEvolucionPlan({ quincenas, presupuestos, desdeId, has
     return rango.some(q => q.id === p.quincenaId)
   }), [presupuestos, rango, categoriaNum])
 
-  const resumenes = useMemo(() => rango
-    .map(q => construirResumen(q, rows))
-    .filter((r): r is ResumenQ => r != null), [rango, rows])
-
   const idsParam = useMemo(() => rango.map(q => q.id).join(','), [rango])
   const [cambios, setCambios] = useState<CambioPresupuesto[]>([])
+  const [gastosSinPresupuesto, setGastosSinPresupuesto] = useState<GastoSinPresupuesto[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
   const [seleccionadaId, setSeleccionadaId] = useState<number | null>(null)
@@ -210,30 +224,50 @@ export function PresupuestoEvolucionPlan({ quincenas, presupuestos, desdeId, has
   useEffect(() => {
     if (!idsParam) {
       setCambios([])
+      setGastosSinPresupuesto([])
       return
     }
     let cancelado = false
     setLoading(true)
     setError(false)
-    fetch(`/api/presupuesto-analisis/historial?quincenaIds=${encodeURIComponent(idsParam)}`)
+
+    const historialRequest = fetch(`/api/presupuesto-analisis/historial?quincenaIds=${encodeURIComponent(idsParam)}`)
       .then(res => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
         return res.json()
       })
-      .then(data => {
-        if (!cancelado) setCambios(Array.isArray(data?.cambios) ? data.cambios : [])
+      .then(data => Array.isArray(data?.cambios) ? data.cambios : [])
+
+    const fueraPlanRequest = fetch('/api/presupuesto-analisis')
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then(data => Array.isArray(data?.gastosSinPresupuesto) ? data.gastosSinPresupuesto : [])
+
+    Promise.all([historialRequest, fueraPlanRequest])
+      .then(([historial, fueraPlan]) => {
+        if (cancelado) return
+        setCambios(historial)
+        setGastosSinPresupuesto(fueraPlan)
       })
       .catch(() => {
         if (!cancelado) {
           setCambios([])
+          setGastosSinPresupuesto([])
           setError(true)
         }
       })
       .finally(() => {
         if (!cancelado) setLoading(false)
       })
+
     return () => { cancelado = true }
   }, [idsParam])
+
+  const resumenes = useMemo(() => rango
+    .map(q => construirResumen(q, rows, gastosSinPresupuesto, categoriaNum))
+    .filter((r): r is ResumenQ => r != null), [rango, rows, gastosSinPresupuesto, categoriaNum])
 
   useEffect(() => {
     if (resumenes.length === 0) {
@@ -293,11 +327,14 @@ export function PresupuestoEvolucionPlan({ quincenas, presupuestos, desdeId, has
             </p>
           </div>
           <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 p-3">
-            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Real</p>
+            <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">Real total</p>
             <p className="text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(seleccionada.real)}</p>
             <p className={`text-[10px] mt-0.5 font-medium ${realVsVigente > EPS ? 'text-rose-500 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
               {formatDelta(realVsVigente)} vs vigente
             </p>
+            {seleccionada.fueraPlan > EPS && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5">incluye {formatMXN(seleccionada.fueraPlan)} fuera de plan</p>
+            )}
           </div>
           <div className="rounded-xl bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 p-3">
             <p className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400">Estabilidad del plan</p>
@@ -321,6 +358,11 @@ export function PresupuestoEvolucionPlan({ quincenas, presupuestos, desdeId, has
             <span className="text-slate-500 dark:text-slate-400">
               Movimientos registrados <strong className="text-slate-700 dark:text-slate-200">{movimientos}</strong>
             </span>
+            {seleccionada.fueraPlan > EPS && (
+              <span className="text-amber-600 dark:text-amber-400">
+                Fuera de plan <strong className="tabular-nums">{formatMXN(seleccionada.fueraPlan)}</strong>
+              </span>
+            )}
           </div>
           <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-2">
             Estabilidad: 100% significa que el Vigente terminó igual al Original. Baja según el monto neto agregado/retirado y lo reasignado entre partidas; un traspaso de $200 cuenta como $200 movidos, no $400.
@@ -365,11 +407,12 @@ export function PresupuestoEvolucionPlan({ quincenas, presupuestos, desdeId, has
                 </p>
               )}
               <p>
-                Frente al Original, el gasto real terminó{' '}
+                Frente al Original, el gasto real total terminó{' '}
                 <strong className={realVsOriginal > EPS ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}>
                   {realVsOriginal > EPS ? 'arriba' : realVsOriginal < -EPS ? 'abajo' : 'igual'}
                 </strong>
                 {Math.abs(realVsOriginal) >= EPS && <> por <strong className="tabular-nums">{formatMXN(Math.abs(realVsOriginal))}</strong></>}.
+                {seleccionada.fueraPlan > EPS && <> De ese real, <strong className="tabular-nums text-amber-600 dark:text-amber-400">{formatMXN(seleccionada.fueraPlan)}</strong> ocurrió fuera de partidas presupuestadas.</>}
               </p>
             </div>
           </div>
@@ -381,7 +424,7 @@ export function PresupuestoEvolucionPlan({ quincenas, presupuestos, desdeId, has
             </div>
 
             {error ? (
-              <p className="text-xs text-rose-600 dark:text-rose-400">No se pudo cargar el historial de cambios.</p>
+              <p className="text-xs text-rose-600 dark:text-rose-400">No se pudo cargar el historial completo de la Q.</p>
             ) : (
               <div className="space-y-2">
                 <div className="flex items-start gap-3">
