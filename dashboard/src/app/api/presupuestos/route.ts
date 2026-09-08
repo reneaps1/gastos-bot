@@ -3,6 +3,8 @@ import { prisma } from '@/lib/prisma'
 import { randomUUID } from 'crypto'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
+import { getSession } from '@/lib/auth'
+import { registrarCreacionPresupuesto } from '@/lib/presupuesto-cambios'
 
 export async function GET(request: Request) {
   try {
@@ -91,6 +93,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    const session = await getSession()
+    const actor = session?.username ?? null
     const diaCobro_ = diaCobro ? parseInt(diaCobro) : null
 
     const baseData = {
@@ -106,9 +110,13 @@ export async function POST(request: Request) {
     }
 
     if (!recurrente) {
-      const presupuesto = await prisma.presupuesto.create({
-        data: { ...baseData, quincenaId: parseInt(quincenaId), fechaVencimiento: fechaVencimiento ? new Date(fechaVencimiento) : null },
-        include: { categoria: true, quincena: true },
+      const presupuesto = await prisma.$transaction(async tx => {
+        const created = await tx.presupuesto.create({
+          data: { ...baseData, quincenaId: parseInt(quincenaId), fechaVencimiento: fechaVencimiento ? new Date(fechaVencimiento) : null },
+          include: { categoria: true, quincena: true },
+        })
+        await registrarCreacionPresupuesto(tx, created, actor)
+        return created
       })
       return NextResponse.json(presupuesto, { status: 201 })
     }
@@ -131,18 +139,29 @@ export async function POST(request: Request) {
 
     const grupoId = randomUUID()
 
-    await prisma.presupuesto.createMany({
-      data: quincenesTarget.map(q => ({
-        ...baseData,
-        quincenaId: q.id,
-        fechaVencimiento: q.fechaVencimiento ? new Date(q.fechaVencimiento) : null,
-        recurrenciaGrupoId: grupoId,
-        numOcurrencias: numOcurrencias ?? null,
-      })),
-      skipDuplicates: true,
+    const created = await prisma.$transaction(async tx => {
+      await tx.presupuesto.createMany({
+        data: quincenesTarget.map(q => ({
+          ...baseData,
+          quincenaId: q.id,
+          fechaVencimiento: q.fechaVencimiento ? new Date(q.fechaVencimiento) : null,
+          recurrenciaGrupoId: grupoId,
+          numOcurrencias: numOcurrencias ?? null,
+        })),
+        skipDuplicates: true,
+      })
+
+      const filas = await tx.presupuesto.findMany({
+        where: { recurrenciaGrupoId: grupoId },
+        orderBy: { quincenaId: 'asc' },
+      })
+      for (const fila of filas) {
+        await registrarCreacionPresupuesto(tx, fila, actor, 'Presupuesto recurrente creado')
+      }
+      return filas.length
     })
 
-    return NextResponse.json({ created: quincenesTarget.length, grupoId }, { status: 201 })
+    return NextResponse.json({ created, grupoId }, { status: 201 })
   } catch (error) {
     console.error('Error creating presupuesto:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
