@@ -43,6 +43,9 @@ ALTER TABLE "presupuesto_cambios"
   ADD CONSTRAINT "presupuesto_cambios_presupuesto_relacionado_id_fkey"
   FOREIGN KEY ("presupuesto_relacionado_id") REFERENCES "presupuesto"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+-- Toda línea existente obtiene un punto de partida explícito. La fecha de
+-- creación real ya existía en presupuesto.fecha_registro, así que el backfill
+-- conserva ese momento en vez de fingir que se creó hoy.
 INSERT INTO "presupuesto_cambios" (
   "presupuesto_id", "quincena_id", "tipo", "monto_anterior", "monto_nuevo",
   "delta", "motivo", "fecha_creacion"
@@ -58,6 +61,9 @@ SELECT
   p."fecha_registro"
 FROM "presupuesto" p;
 
+-- Si una línea ya tenía monto_revisado antes de activar el historial, se
+-- preserva el estado Vigente actual. No conocemos la fecha histórica exacta
+-- de ese ajuste, por eso se marca con un tipo especial de migración.
 INSERT INTO "presupuesto_cambios" (
   "presupuesto_id", "quincena_id", "tipo", "monto_anterior", "monto_nuevo",
   "delta", "motivo"
