@@ -1,0 +1,2478 @@
+'use client'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import Link from 'next/link'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowRightLeft, Coins } from 'lucide-react'
+import { ReporteButton } from '@/components/ReporteButton'
+import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
+import { computeQuincenasTarget } from '@/lib/recurrencia'
+import { useToast } from '@/components/Toast'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { FormModal } from '@/components/ui/FormModal'
+import { getInitialQuincenaId, getDefaultQuincenaId, getMexicoDateString, persistQuincenaId, getQuincenaIdForDate, formatQuincenaRange } from '@/lib/quincena-selection'
+import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
+import { KpiCard } from '@/components/ui/KpiCard'
+import { toCsv, downloadCsv } from '@/lib/csv'
+import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
+import { FilterChip } from '@/components/ui/FilterChip'
+import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
+import { useColumnVisibility } from '@/lib/use-column-visibility'
+import { useSearchShortcut } from '@/lib/use-search-shortcut'
+import { calcularFaltaPorPagar, calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
+import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
+import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
+import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
+import { DetalleGastoContent } from '@/components/ui/DetalleGastoModal'
+import { TraspasoModal } from '@/components/ui/TraspasoModal'
+import { PresupuestoAnalisis } from './PresupuestoAnalisis'
+import { PresupuestoConfiguracion } from './PresupuestoConfiguracion'
+import { resolveReferencia, normalizeReferencia } from '@/lib/referencia'
+
+const CAT_DOT: Record<string, string> = {
+  Hogar: 'bg-orange-500', Salud: 'bg-rose-500', Familia: 'bg-pink-500',
+  Transporte: 'bg-sky-500', Suscripciones: 'bg-violet-500', Deudas: 'bg-red-500',
+  Personal: 'bg-amber-500', Ingresos: 'bg-emerald-500', Ahorro: 'bg-blue-500',
+}
+
+// Descripción/Presupuestado/Real/% usado/Restante/Acciones son el núcleo de
+// la tabla (no se pueden ocultar) -- el resto es opcional desde "Columnas".
+// Todas van visibles por default: agregar la opción no cambia el layout
+// actual hasta que el usuario decida ocultar algo.
+const PRESUPUESTO_TABLA_COLUMNS = [
+  { key: 'quincena', label: 'Quincena' },
+  { key: 'categoria', label: 'Categoría' },
+  { key: 'clasificacion', label: 'Clasificación' },
+  { key: 'recurrente', label: 'Recurrente' },
+  { key: 'vence', label: 'Vence' },
+]
+const PRESUPUESTO_TABLA_COLUMNS_DEFAULT = PRESUPUESTO_TABLA_COLUMNS.map(c => c.key)
+
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; ingresoReferencia: number | null; limiteGastoReferencia: number | null; fechaCierre?: string | null }
+interface Categoria { id: number; nombre: string; tipo: string; activo: boolean }
+export interface Presupuesto {
+  id: number; descripcion: string; montoPresupuestado: number; clasificacion: string | null
+  tipo: string; notas: string | null; quincenaId: number; categoriaId: number
+  recurrente: boolean; frecuencia: string | null; recurrenciaGrupoId: string | null
+  numOcurrencias: number | null; diaCobro: number | null; fechaVencimiento: string | null
+  estadoLinea: string; montoRevisado: number | string | null; montoEfectivo: number
+  categoria: Categoria; quincena: Quincena; real: number; pendiente: number; pct: number; categoriaTotal: number; excedido: number
+}
+
+function groupKey(p: Pick<Presupuesto, 'quincenaId' | 'categoriaId'>) {
+  return `${p.quincenaId}-${p.categoriaId}`
+}
+
+interface PresupuestoGrupo {
+  key: string; categoriaId: number; categoria: Categoria
+  quincenaId: number; quincena: Quincena
+  montoPresupuestado: number; real: number; pct: number; excedido: number; items: Presupuesto[]
+}
+
+function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
+  const map = new Map<string, PresupuestoGrupo>()
+  for (const p of presupuestos) {
+    const k = groupKey(p)
+    if (!map.has(k)) {
+      map.set(k, { key: k, categoriaId: p.categoriaId, categoria: p.categoria,
+        quincenaId: p.quincenaId, quincena: p.quincena,
+        montoPresupuestado: p.categoriaTotal, real: 0, pct: 0, excedido: 0, items: [] })
+    }
+    const g = map.get(k)!
+    g.items.push(p)
+    if (cuentaParaAgregados(p)) g.real += p.real
+  }
+  for (const g of map.values()) {
+    g.pct = g.montoPresupuestado > 0 ? (g.real / g.montoPresupuestado) * 100 : 0
+    g.excedido = g.real > g.montoPresupuestado ? Number((g.real - g.montoPresupuestado).toFixed(2)) : 0
+  }
+  return Array.from(map.values())
+}
+interface TxSinPresupuesto {
+  id: number; descripcion: string; monto: string | number; tipo: string
+  categoria: { id: number; nombre: string }; fecha: string; estatus: 'Pagado' | 'Pendiente'
+  quincenaId: number
+}
+
+const EMPTY_FORM = {
+  categoriaId: '', descripcion: '', tipo: 'Gasto',
+  montoPresupuestado: '', clasificacion: '', notas: '',
+  recurrente: false, frecuencia: 'CADA_QUINCENA',
+  terminaCon: 'sin_fin' as 'sin_fin' | 'n_ocurrencias',
+  numOcurrencias: '6',
+  diaCobro: '',
+  fechaVencimiento: '',
+  targetQuincenaId: '',
+}
+
+function fieldClass(err?: string) {
+  return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${err ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
+}
+
+function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
+  return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
+}
+
+function matchesBusqueda(g: PresupuestoGrupo, q: string) {
+  const needle = q.trim().toLowerCase()
+  if (!needle) return true
+  if (g.categoria.nombre.toLowerCase().includes(needle)) return true
+  return g.items.some(i =>
+    i.descripcion.toLowerCase().includes(needle) ||
+    (i.clasificacion ?? '').toLowerCase().includes(needle)
+  )
+}
+
+type SortKey = 'quincena' | 'categoria' | 'descripcion' | 'presupuestado' | 'real' | 'pct' | 'restante' | 'recurrente' | 'vence'
+
+interface TablaFiltros {
+  categoriaId: string
+  clasificacion: string // '', 'Fijo', 'Variable', 'sin'
+  recurrente: string // '', 'si', 'no'
+  estado: string // '', 'excedido', 'dentro'
+  saldo: string // '', 'pendiente', 'pagado'
+  porCubrir: string // '', '0', '50', '100' — % usado por debajo del cual se considera "por cubrir"
+  ocultarIngresos: boolean
+  busqueda: string
+}
+
+function matchesFiltrosTabla(p: Presupuesto, f: TablaFiltros) {
+  if (f.categoriaId && p.categoriaId.toString() !== f.categoriaId) return false
+  if (f.clasificacion === 'sin' && p.clasificacion) return false
+  if ((f.clasificacion === 'Fijo' || f.clasificacion === 'Variable') && p.clasificacion !== f.clasificacion) return false
+  if (f.recurrente === 'si' && !p.recurrente) return false
+  if (f.recurrente === 'no' && p.recurrente) return false
+  if (f.estado === 'excedido' && !(p.excedido > 0)) return false
+  if (f.estado === 'dentro' && p.excedido > 0) return false
+  if (f.saldo === 'pendiente' && !(p.pendiente > 0)) return false
+  if (f.saldo === 'pagado' && p.pendiente > 0) return false
+  if (f.porCubrir === '0' && p.real !== 0) return false
+  if (f.porCubrir === '50' && !(p.pct < 50)) return false
+  if (f.porCubrir === '100' && !(p.pct < 100)) return false
+  if (f.ocultarIngresos && p.categoria.tipo === 'Ingreso') return false
+  const needle = f.busqueda.trim().toLowerCase()
+  if (needle && !p.descripcion.toLowerCase().includes(needle) && !p.categoria.nombre.toLowerCase().includes(needle)) return false
+  return true
+}
+
+function getSortValue(p: Presupuesto, key: SortKey): string | number {
+  switch (key) {
+    case 'quincena': return p.quincena.fechaInicio
+    case 'categoria': return p.categoria.nombre
+    case 'descripcion': return p.descripcion
+    case 'presupuestado': return p.montoEfectivo
+    case 'real': return p.real
+    case 'pct': return p.pct
+    case 'restante': return p.montoEfectivo - p.real
+    case 'recurrente': return p.recurrente ? 1 : 0
+    case 'vence': return p.fechaVencimiento ?? ''
+  }
+}
+
+function pctColor(pct: number) {
+  return pct > 90 ? 'bg-rose-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
+}
+function pctTextColor(pct: number) {
+  return pct > 90 ? 'text-rose-600 dark:text-rose-400' : pct > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
+}
+function montoTipoColor(tipo: string) {
+  if (tipo === 'Ingreso') return 'text-emerald-600 dark:text-emerald-400'
+  if (tipo === 'Ahorro') return 'text-blue-600 dark:text-blue-400'
+  return 'text-rose-600 dark:text-rose-400' // Gasto
+}
+
+// Insignia para una linea ya resuelta desde el cierre de quincena -- para que
+// no se vea identica a una linea Abierta normal en Tarjetas/Tabla. Abierta y
+// Cumplida no llevan insignia (Cumplida ya se ve reflejada en real/pct).
+function estadoLineaBadge(estadoLinea: string) {
+  if (estadoLinea === 'Cancelada') {
+    return <span className="inline-flex items-center text-[10px] font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700 px-1 py-0.5 rounded-full shrink-0">Cancelada</span>
+  }
+  if (estadoLinea === 'Absorbida') {
+    return <span className="inline-flex items-center text-[10px] font-medium text-violet-700 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/40 px-1 py-0.5 rounded-full shrink-0">Variación aceptada</span>
+  }
+  return null
+}
+
+export default function PresupuestoPage() {
+  const { toast } = useToast()
+
+  const [presupuestos, setPresupuestos] = useState<Presupuesto[]>([])
+  const [quincenas, setQuincenas] = useState<Quincena[]>([])
+  const [categorias, setCategorias] = useState<Categoria[]>([])
+  const [quincenaId, setQuincenaId] = useState('')
+  const [quincenaActual, setQuincenaActual] = useState<Quincena | null>(null)
+  // Quincenas adicionales combinadas con `quincenaId` via Ctrl/Cmd+clic en
+  // los chips (vista Tarjetas). `quincenaId` sigue siendo "la" quincena para
+  // todo lo que solo tiene sentido para una sola (encabezado, Liquidez,
+  // Reporte, cierre de quincena) -- esto solo amplia que datos entran a los
+  // fetches y a las cards resumen.
+  const [extraQuincenaIds, setExtraQuincenaIds] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [copying, setCopying] = useState(false)
+  const [wizardCierreOpen, setWizardCierreOpen] = useState(false)
+
+  const [busqueda, setBusqueda] = useState('')
+  const busquedaInputRef = useRef<HTMLInputElement>(null)
+  useSearchShortcut(busquedaInputRef)
+  const [pendientePorPagar, setPendientePorPagar] = useState(0)
+  const [limiteReferencia, setLimiteReferencia] = useState<number | null>(null)
+  const [gastoParaLimite, setGastoParaLimite] = useState(0)
+  const [ingresosReal, setIngresosReal] = useState(0)
+  const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
+
+  const [vista, setVista] = useState<'tarjetas' | 'tabla' | 'analisis' | 'configuracion'>('tabla')
+  const [tablaQuincenaId, setTablaQuincenaId] = useState(ALL_QUINCENAS)
+  // Igual que en Tarjetas: quincenas extra combinadas via Ctrl/Cmd+clic.
+  // Sin efecto si tablaQuincenaId === ALL_QUINCENAS (ya trae todo).
+  const [extraTablaQuincenaIds, setExtraTablaQuincenaIds] = useState<Set<string>>(new Set())
+  const [presupuestosTabla, setPresupuestosTabla] = useState<Presupuesto[]>([])
+  const [tablaLoading, setTablaLoading] = useState(false)
+  const [tablaCategoriaId, setTablaCategoriaId] = useState('')
+  const [tablaClasificacion, setTablaClasificacion] = useState('')
+  const [tablaRecurrente, setTablaRecurrente] = useState('')
+  const [tablaEstado, setTablaEstado] = useState('')
+  const [tablaSaldo, setTablaSaldo] = useState('')
+  const [tablaPorCubrir, setTablaPorCubrir] = useState('')
+  const [tablaOcultarIngresos, setTablaOcultarIngresos] = useState(false)
+  const [busquedaTabla, setBusquedaTabla] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('quincena')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  // Pestaña Análisis: estado propio y aislado (mismo patrón que Tabla), fetch
+  // disparado solo cuando esa pestaña está activa. No comparte nada con
+  // Tarjetas/Tabla para que cambiar de pestaña y volver no pierda filtros.
+  const [analisisPresupuestos, setAnalisisPresupuestos] = useState<Presupuesto[]>([])
+  const [analisisLoading, setAnalisisLoading] = useState(false)
+  const [analisisConfigGlobal, setAnalisisConfigGlobal] = useState<{ ingresoReferencia: number | null; limiteGastoReferencia: number | null }>({ ingresoReferencia: null, limiteGastoReferencia: null })
+  const [analisisDesdeId, setAnalisisDesdeId] = useState('')
+  const [analisisHastaId, setAnalisisHastaId] = useState('')
+  const [analisisCategoriaId, setAnalisisCategoriaId] = useState('')
+
+  // Pestaña Configuración: mismo patrón de aislamiento que Análisis -- fetch
+  // propio, disparado solo cuando esta pestaña está activa.
+  const [configPresupuestos, setConfigPresupuestos] = useState<Presupuesto[]>([])
+  const [configLoading, setConfigLoading] = useState(false)
+  const [frecuenciaPagoDefault, setFrecuenciaPagoDefault] = useState<string | null>(null)
+
+  const [txSinPresupuesto, setTxSinPresupuesto] = useState<TxSinPresupuesto[]>([])
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingP, setEditingP] = useState<Presupuesto | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; p: Presupuesto } | null>(null)
+  const [editScopeBody, setEditScopeBody] = useState<Record<string, unknown> | null>(null)
+  // Partida cuyo detalle de gasto se esta viendo en la ventana flotante
+  const [detalleP, setDetalleP] = useState<Presupuesto | null>(null)
+  // Partida de Gasto con saldo libre desde la que se esta traspasando hacia otra linea
+  const [traspasoOrigen, setTraspasoOrigen] = useState<Presupuesto | null>(null)
+
+  const [form, setForm] = useState(EMPTY_FORM)
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/quincenas').then(r => r.json()),
+      fetch('/api/categorias').then(r => r.json()),
+      fetch('/api/configuracion').then(r => r.json()),
+    ]).then(([q, c, cfg]) => {
+      setQuincenas(q.map(normalizeReferencia))
+      setCategorias(c)
+      setQuincenaId(getInitialQuincenaId(q))
+      setTablaQuincenaId(getDefaultQuincenaId(q))
+      setLimiteReferencia(cfg.limiteGastoReferencia != null ? Number(cfg.limiteGastoReferencia) : null)
+      setFrecuenciaPagoDefault(cfg.frecuenciaPagoDefault ?? null)
+    })
+  }, [])
+
+  function selectQuincena(id: string) {
+    setQuincenaId(id)
+    setExtraQuincenaIds(new Set())
+    persistQuincenaId(id)
+  }
+
+  function toggleExtraQuincena(id: string) {
+    if (id === quincenaId) return
+    setExtraQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  // Todas las quincenas combinadas para la vista Tarjetas: la primaria mas
+  // las agregadas via Ctrl/Cmd+clic.
+  const selectedQuincenaIds = useMemo(() => {
+    return Array.from(new Set([quincenaId, ...extraQuincenaIds].filter(Boolean)))
+  }, [quincenaId, extraQuincenaIds])
+
+  function selectTablaQuincena(id: string) {
+    setTablaQuincenaId(id)
+    setExtraTablaQuincenaIds(new Set())
+  }
+
+  function toggleExtraTablaQuincena(id: string) {
+    if (id === tablaQuincenaId || tablaQuincenaId === ALL_QUINCENAS) return
+    setExtraTablaQuincenaIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function clearExtraTablaQuincenas() {
+    setExtraTablaQuincenaIds(new Set())
+  }
+
+  const selectedTablaQuincenaIds = useMemo(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) return [ALL_QUINCENAS]
+    return Array.from(new Set([tablaQuincenaId, ...extraTablaQuincenaIds].filter(Boolean)))
+  }, [tablaQuincenaId, extraTablaQuincenaIds])
+
+  const fetchPresupuestosTabla = useCallback(async () => {
+    setTablaLoading(true)
+    try {
+      if (tablaQuincenaId === ALL_QUINCENAS) {
+        setPresupuestosTabla(await (await fetch('/api/presupuestos')).json())
+      } else {
+        const porQuincena = await Promise.all(
+          selectedTablaQuincenaIds.map(id => fetch(`/api/presupuestos?quincenaId=${id}`).then(r => r.json()))
+        )
+        setPresupuestosTabla(porQuincena.flat())
+      }
+    } finally { setTablaLoading(false) }
+  }, [tablaQuincenaId, selectedTablaQuincenaIds])
+
+  useEffect(() => {
+    if (vista === 'tabla') fetchPresupuestosTabla()
+  }, [vista, fetchPresupuestosTabla])
+
+  // Balance por Q necesita el detalle de TODAS las quincenas (no solo la
+  // seleccionada) para poder agregar por periodo y alimentar la analitica —
+  // /api/presupuestos sin quincenaId ya devuelve exactamente eso, mismo fetch
+  // que ya usa la vista Tabla en modo "Todas".
+  const fetchAnalisis = useCallback(async () => {
+    setAnalisisLoading(true)
+    try {
+      const [presupRes, cfgRes] = await Promise.all([
+        fetch('/api/presupuestos'),
+        fetch('/api/configuracion'),
+      ])
+      setAnalisisPresupuestos(await presupRes.json())
+      const cfg = await cfgRes.json()
+      setAnalisisConfigGlobal(normalizeReferencia(cfg))
+    } finally { setAnalisisLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (vista === 'analisis') fetchAnalisis()
+  }, [vista, fetchAnalisis])
+
+  const fetchConfiguracion = useCallback(async () => {
+    setConfigLoading(true)
+    try {
+      const res = await fetch('/api/presupuestos')
+      setConfigPresupuestos(await res.json())
+    } finally { setConfigLoading(false) }
+  }, [])
+
+  useEffect(() => {
+    if (vista === 'configuracion') fetchConfiguracion()
+  }, [vista, fetchConfiguracion])
+
+  // Pausar/eliminar una serie desde PresupuestoConfiguracion puede afectar
+  // filas que Tarjetas/Tabla ya tienen cargadas para otras quincenas -- se
+  // refrescan ambas, igual que ya hace handleDelete/saveBody.
+  function refetchTrasCambioRecurrente() {
+    fetchPresupuestos()
+    fetchPresupuestosTabla()
+  }
+
+  function handleQuincenaReferenciaUpdated(updated: Quincena) {
+    setQuincenas(qs => qs.map(q => q.id === updated.id ? { ...q, ...normalizeReferencia(updated) } : q))
+  }
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc') }
+    else { setSortKey(key); setSortDir('desc') }
+  }
+
+  const fetchPresupuestos = useCallback(async () => {
+    if (selectedQuincenaIds.length === 0) return
+    setLoading(true)
+    try {
+      // Un fetch por quincena seleccionada y se concatenan los resultados --
+      // calcularFaltaPorPagar/buildGrupos ya son agnosticos a quincena (cada
+      // fila trae su propio quincenaId), asi que combinan solas sin tocar
+      // los endpoints ni esas funciones. La liquidez sigue atada solo a
+      // `quincenaId` (la quincena "principal") -- no tiene un concepto
+      // natural de "combinada" entre varias quincenas.
+      const [porQuincena, liqRes] = await Promise.all([
+        Promise.all(selectedQuincenaIds.map(async id => {
+          const [presupRes, txRes] = await Promise.all([
+            fetch(`/api/presupuestos?quincenaId=${id}`),
+            fetch(`/api/transacciones?quincenaId=${id}&limit=500`),
+          ])
+          return { data: await presupRes.json() as Presupuesto[], txData: await txRes.json() }
+        })),
+        fetch(`/api/liquidez?quincenaId=${quincenaId}`),
+      ])
+
+      const data = porQuincena.flatMap(r => r.data)
+      const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> =
+        porQuincena.flatMap(r => r.txData.data ?? [])
+      const liqData = await liqRes.json()
+
+      setPresupuestos(data)
+      setQuincenaActual(quincenas.find(q => q.id.toString() === quincenaId) ?? data.find(p => p.quincenaId.toString() === quincenaId)?.quincena ?? null)
+
+      setTxSinPresupuesto(transacciones.filter(t => t.presupuestoId == null))
+      setGastoParaLimite(porQuincena.reduce((s, r) => s + Number(r.txData.totales?.GastoParaLimite ?? 0), 0))
+      setIngresosReal(porQuincena.reduce((s, r) => s + Number(r.txData.totales?.Ingreso ?? 0), 0))
+
+      setPendientePorPagar(calcularFaltaPorPagar(data))
+
+      const rawSnap = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
+      setLiquidezSnapshot(rawSnap ? { ...normalizeMontos(rawSnap), faltaPagar: Number(rawSnap.faltaPagar) || 0 } : null)
+    } finally { setLoading(false) }
+  }, [selectedQuincenaIds, quincenaId, quincenas])
+
+  useEffect(() => { fetchPresupuestos() }, [fetchPresupuestos])
+
+  function openCreate() {
+    setEditingP(null)
+    setForm({ ...EMPTY_FORM })
+    setFormErrors({})
+    setModalOpen(true)
+  }
+
+  function openEdit(p: Presupuesto) {
+    setEditingP(p)
+    setForm({
+      categoriaId: p.categoriaId.toString(), descripcion: p.descripcion,
+      tipo: p.tipo, montoPresupuestado: p.montoPresupuestado.toString(),
+      clasificacion: p.clasificacion ?? '', notas: p.notas ?? '',
+      recurrente: p.recurrente, frecuencia: p.frecuencia ?? 'CADA_QUINCENA',
+      terminaCon: p.numOcurrencias ? 'n_ocurrencias' : 'sin_fin', numOcurrencias: p.numOcurrencias?.toString() ?? '6',
+      diaCobro: p.diaCobro?.toString() ?? '',
+      fechaVencimiento: p.fechaVencimiento ? p.fechaVencimiento.split('T')[0] : '',
+      targetQuincenaId: '',
+    })
+    setFormErrors({})
+    setModalOpen(true)
+  }
+
+  function validate() {
+    const errors: Record<string, string> = {}
+    if (!form.categoriaId) errors.categoriaId = 'Requerido'
+    if (!form.descripcion.trim()) errors.descripcion = 'Requerido'
+    if (!form.montoPresupuestado || Number(form.montoPresupuestado) <= 0) errors.montoPresupuestado = 'Monto válido requerido'
+    return errors
+  }
+
+  function buildSaveBody() {
+    const ownQuincenaId = editingP?.quincenaId?.toString() ?? quincenaId
+    return {
+      quincenaId: (form.targetQuincenaId && form.targetQuincenaId !== 'keep') ? form.targetQuincenaId : ownQuincenaId,
+      categoriaId: form.categoriaId, descripcion: form.descripcion.trim(),
+      tipo: form.tipo, montoPresupuestado: form.montoPresupuestado,
+      clasificacion: form.clasificacion || null, notas: form.notas || null,
+      recurrente: form.recurrente,
+      frecuencia: form.recurrente ? form.frecuencia : null,
+      numOcurrencias: form.recurrente && form.terminaCon === 'n_ocurrencias'
+        ? parseInt(form.numOcurrencias) || null
+        : null,
+      diaCobro: form.diaCobro ? parseInt(form.diaCobro) : null,
+      fechaVencimiento: form.fechaVencimiento || null,
+    }
+  }
+
+  async function handleSave() {
+    const errors = validate()
+    if (Object.keys(errors).length) { setFormErrors(errors); return }
+    const body = buildSaveBody()
+    // Editing a line that's already part of a recurring series: hide the
+    // edit form and ask which quincenas to apply the change to before saving.
+    if (editingP?.recurrenciaGrupoId) { setModalOpen(false); setEditScopeBody(body); return }
+    await saveBody(body)
+  }
+
+  async function saveBody(body: Record<string, unknown>) {
+    setSaving(true)
+    try {
+      const res = editingP
+        ? await fetch(`/api/presupuestos/${editingP.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        : await fetch('/api/presupuestos', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      if (!res.ok) throw new Error(await res.text())
+      const msg = editingP
+        ? 'Presupuesto actualizado'
+        : form.recurrente
+          ? `Partida recurrente creada en ${form.terminaCon === 'n_ocurrencias' ? form.numOcurrencias : 'todas las'} quincenas`
+          : 'Presupuesto creado'
+      toast(msg)
+      setModalOpen(false)
+      setEditScopeBody(null)
+      fetchPresupuestos()
+      fetchPresupuestosTabla()
+    } catch { toast('Error al guardar', 'error') } finally { setSaving(false) }
+  }
+
+  async function handleSaveWithScope(scope: 'single' | 'future' | 'this_forward' | 'all') {
+    if (!editScopeBody) return
+    await saveBody({ ...editScopeBody, scope })
+  }
+
+  async function handleDelete(mode: 'single' | 'future' | 'all') {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const { id, p } = deleteTarget
+      const url = mode !== 'single' && p.recurrenciaGrupoId
+        ? `/api/presupuestos/${id}?grupoId=${p.recurrenciaGrupoId}${mode === 'future' ? '&scope=future' : ''}`
+        : `/api/presupuestos/${id}`
+      const res = await fetch(url, { method: 'DELETE' })
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      toast(mode !== 'single' && p.recurrenciaGrupoId
+        ? mode === 'future'
+          ? (data.count > 0 ? `${data.count} ocurrencias futuras eliminadas` : 'No había ocurrencias futuras que pausar')
+          : `${data.count} partidas eliminadas`
+        : 'Presupuesto eliminado')
+      setDeleteTarget(null)
+      fetchPresupuestos()
+      fetchPresupuestosTabla()
+    } catch { toast('Error al eliminar', 'error') } finally { setDeleting(false) }
+  }
+
+  async function handleCopiar() {
+    const idx = quincenas.findIndex(q => q.id.toString() === quincenaId)
+    if (idx < 0 || idx >= quincenas.length - 1) { toast('No hay quincena anterior disponible', 'error'); return }
+    const prevQ = quincenas[idx + 1]
+    setCopying(true)
+    try {
+      const res = await fetch(`/api/presupuestos?quincenaId=${prevQ.id}`)
+      const prev: Presupuesto[] = await res.json()
+      if (prev.length === 0) { toast('La quincena anterior no tiene presupuesto', 'error'); return }
+      await Promise.all(prev.map(p =>
+        fetch('/api/presupuestos', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            quincenaId, categoriaId: p.categoriaId.toString(), descripcion: p.descripcion,
+            tipo: p.tipo, montoPresupuestado: p.montoPresupuestado.toString(),
+            clasificacion: p.clasificacion, notas: p.notas,
+          }),
+        })
+      ))
+      toast(`${prev.length} presupuestos copiados de ${prevQ.codigo}`)
+      fetchPresupuestos()
+    } catch { toast('Error al copiar presupuestos', 'error') } finally { setCopying(false) }
+  }
+
+  function handleExportCsv() {
+    const csv = toCsv(presupuestos, [
+      { key: 'categoria', label: 'Categoría', value: p => p.categoria?.nombre ?? '' },
+      { key: 'descripcion', label: 'Descripción', value: p => p.descripcion },
+      { key: 'presupuestado', label: 'Presupuestado', value: p => p.montoEfectivo.toFixed(2) },
+      { key: 'real', label: 'Real', value: p => Number(p.real).toFixed(2) },
+      { key: 'pct', label: '% Usado', value: p => p.pct.toFixed(0) },
+      { key: 'restante', label: 'Restante', value: p => Number(Math.max(p.montoEfectivo - p.real, 0)).toFixed(2) },
+      { key: 'excedido', label: 'Excedido', value: p => Number(p.excedido).toFixed(2) },
+      { key: 'recurrente', label: 'Recurrente', value: p => p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : 'No' },
+      { key: 'vence', label: 'Vence', value: p => p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short', year: 'numeric' }) : '' },
+    ])
+    const quincenaLabel = quincenaActual?.codigo ?? quincenas.find(q => q.id.toString() === quincenaId)?.codigo ?? 'quincena'
+    downloadCsv(`presupuesto-${quincenaLabel}-${getMexicoDateString()}.csv`, csv)
+  }
+
+  function toggleGroup(key: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
+      return next
+    })
+  }
+
+  const grupos = buildGrupos(presupuestos)
+  const gruposFiltrados = grupos.filter(g => matchesBusqueda(g, busqueda))
+
+  // Totals: only categories of tipo Gasto — excludes Ingresos/Ahorro categories from spending progress
+  const gastoGrupos = grupos.filter(g => g.categoria.tipo === 'Gasto')
+  const totalPresupuestado = gastoGrupos.reduce((s, g) => s + g.montoPresupuestado, 0)
+  const totalGastado = gastoGrupos.reduce((s, g) => s + g.real, 0)
+  const pctGlobal = totalPresupuestado > 0 ? (totalGastado / totalPresupuestado) * 100 : 0
+
+  // Card de Ingresos fija: total presupuestado y real, sin importar que filtro
+  // de busqueda oculte las demas tarjetas por categoria.
+  const ingresoGrupos = grupos.filter(g => g.categoria.tipo === 'Ingreso')
+  const totalIngresoPresupuestado = ingresoGrupos.reduce((s, g) => s + g.montoPresupuestado, 0)
+  const totalIngresoReal = ingresoGrupos.reduce((s, g) => s + g.real, 0)
+
+  // "Lo que sobra" -- mismo cálculo que "Planificación del presupuesto" del
+  // Dashboard (dashboard/src/app/page.tsx), replicado aquí para la vista
+  // Tarjetas: cuánto de los ingresos reales no tiene partida asignada
+  // (según presupuesto) y cuánto queda libre de verdad (según liquidez).
+  const ahorroComprometido = presupuestos
+    .filter(p => p.categoria.tipo === 'Ahorro' && cuentaParaAgregados(p))
+    .reduce((s, p) => s + p.montoEfectivo, 0)
+  const gastosNoCubiertos = txSinPresupuesto
+    .filter(t => t.tipo === 'Gasto')
+    .reduce((s, t) => s + Number(t.monto), 0)
+  const totalExcedidoLineas = presupuestos
+    .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+    .reduce((s, p) => s + (p.excedido ?? 0), 0)
+  const sinAsignar = ingresosReal - totalPresupuestado - ahorroComprometido
+  const totalComprometido = totalPresupuestado + gastosNoCubiertos + totalExcedidoLineas + ahorroComprometido
+  const disponibleSegunPresupuesto = ingresosReal - totalComprometido
+  const totalLiquidoSnap = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
+  const disponibleEfectivo = totalLiquidoSnap - pendientePorPagar
+  const pctPresupAsignado = ingresosReal > 0 ? (totalPresupuestado / ingresosReal) * 100 : 0
+  const pctSinPresupuesto = ingresosReal > 0 ? (gastosNoCubiertos / ingresosReal) * 100 : 0
+  const pctExcedidoLineasRatio = ingresosReal > 0 ? (totalExcedidoLineas / ingresosReal) * 100 : 0
+  const pctExcedidoBar = totalExcedidoLineas > 0 ? Math.max(pctExcedidoLineasRatio, 1) : 0
+  const pctDisponibleReal = ingresosReal > 0 && disponibleSegunPresupuesto > 0 ? (disponibleSegunPresupuesto / ingresosReal) * 100 : 0
+  const pctSinPresupuestoBar = Math.min(pctSinPresupuesto, Math.max(0, 100 - pctPresupAsignado))
+  const pctExcedidoBarClamped = Math.min(pctExcedidoBar, Math.max(0, 100 - pctPresupAsignado - pctSinPresupuestoBar))
+
+  const today = getMexicoDateString()
+  const qInfo = quincenaActual ?? quincenas.find(q => q.id.toString() === quincenaId)
+  // El encabezado (titulo, Liquidez, Reporte) es compartido por todas las
+  // vistas, pero Tabla tiene su propio selector de quincena (tablaQuincenaId)
+  // independiente de `quincenaId` (el de Tarjetas) -- sin esto, el encabezado
+  // seguia mostrando la quincena de Tarjetas aunque el usuario hubiera
+  // elegido otra en Tabla, y el Reporte salia de la quincena equivocada.
+  const qInfoHeader = (vista === 'tabla' && tablaQuincenaId !== ALL_QUINCENAS)
+    ? quincenas.find(q => q.id.toString() === tablaQuincenaId) ?? qInfo
+    : qInfo
+  const multiSelectActivo = selectedQuincenaIds.length > 1
+  // Limite de referencia efectivo: el override propio de esta quincena
+  // (configurable en Presupuesto → Análisis) si existe, si no el global de
+  // Configuración → Períodos de pago. Con varias quincenas combinadas, se
+  // suma el limite efectivo de cada una (el "personalizado" pierde sentido
+  // cuando son varias, asi que solo se muestra con una sola seleccionada).
+  const refEfectiva = resolveReferencia(qInfo, { limiteGastoReferencia: limiteReferencia })
+  const limiteGastoReferenciaEfectivo = multiSelectActivo
+    ? (() => {
+        const valores = selectedQuincenaIds
+          .map(id => resolveReferencia(quincenas.find(q => q.id.toString() === id), { limiteGastoReferencia: limiteReferencia }).limiteGastoReferencia)
+          .filter((v): v is number => v != null)
+        return valores.length > 0 ? valores.reduce((s, v) => s + v, 0) : null
+      })()
+    : refEfectiva.limiteGastoReferencia
+  // Presupuestos puede traer varias quincenas combinadas (Tarjetas con
+  // Ctrl/Cmd+clic); cada grupo de cierre queda por su propia quincena.
+  const gruposCierre = quincenasPendientesDeCierre(presupuestos, today)
+  const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
+  const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
+  // El compromiso original ya no se toca a mano una vez que la linea esta en
+  // curso (algo real registrado, o ya se le hizo un traspaso) -- de ahi en
+  // adelante el ajuste pasa por Recortar/traspaso, que dejan rastro en notas.
+  // Ese flujo (DeficitTriagePanel) solo opera sobre partidas de Gasto, asi que
+  // el bloqueo no aplica a Ingreso/Ahorro -- de lo contrario quedarian sin
+  // forma de corregir el monto una vez que entra el primer movimiento real.
+  const montoOriginalBloqueado = editingP != null && editingP.tipo === 'Gasto' && (editingP.real > 0 || editingP.montoRevisado != null)
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-start justify-between flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Presupuesto</h2>
+          {qInfoHeader && (
+            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+              {qInfoHeader.codigo} · {formatDateStr(qInfoHeader.fechaInicio, { day: '2-digit', month: 'long' })}
+              {' — '}
+              {formatDateStr(qInfoHeader.fechaFin, { day: '2-digit', month: 'long' })}
+              {vista !== 'tabla' && multiSelectActivo && (
+                <span className="ml-1.5 text-indigo-500 dark:text-indigo-400 font-medium">
+                  + {selectedQuincenaIds.length - 1} combinada{selectedQuincenaIds.length - 1 === 1 ? '' : 's'}
+                </span>
+              )}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center flex-wrap gap-3">
+          {qInfoHeader && (
+            <Link href={`/quincena/${qInfoHeader.codigo}`}
+              className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg transition-colors">
+              <Droplets size={14} /> Liquidez
+            </Link>
+          )}
+          {qInfoHeader && <ReporteButton quincenaId={qInfoHeader.id} quincenaCodigo={qInfoHeader.codigo} fechaInicio={qInfoHeader.fechaInicio} fechaFin={qInfoHeader.fechaFin} />}
+          {presupuestos.length === 0 && !loading && (
+            <button onClick={handleCopiar} disabled={copying}
+              className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
+              <Copy size={14} />
+              {copying ? 'Copiando...' : 'Copiar anterior'}
+            </button>
+          )}
+          {gruposCierre.length > 0 && (
+            <button onClick={() => setWizardCierreOpen(true)}
+              className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-950/20 hover:bg-amber-100 dark:hover:bg-amber-950/40 px-3 py-2 rounded-lg cursor-pointer transition-colors">
+              <AlertTriangle size={14} />
+              Cerrar quincena ({gruposCierre[0].items.length})
+            </button>
+          )}
+          <button onClick={handleExportCsv} disabled={presupuestos.length === 0}
+            className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 px-3 py-2 rounded-lg cursor-pointer disabled:opacity-50 transition-colors">
+            <Download size={14} /> Descargar CSV
+          </button>
+          <button onClick={openCreate}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2.5 rounded-lg cursor-pointer transition-colors">
+            <Plus size={16} /> Nuevo
+          </button>
+        </div>
+      </div>
+
+      <CierreQuincenaWizard
+        open={wizardCierreOpen}
+        onOpenChange={setWizardCierreOpen}
+        grupos={gruposCierre}
+        quincenaActualId={quincenaActualCierre ? quincenaActualCierre.id : null}
+        quincenaActualCodigo={quincenaActualCierre?.codigo}
+        onResuelto={() => { fetchPresupuestos(); fetchPresupuestosTabla() }}
+      />
+
+      {/* Toggle de vista */}
+      <div className="inline-flex flex-wrap items-center gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
+        <button onClick={() => setVista('tarjetas')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tarjetas' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <LayoutGrid size={14} /> Tarjetas
+        </button>
+        <button onClick={() => setVista('tabla')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'tabla' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <Table2 size={14} /> Tabla
+        </button>
+        <button onClick={() => setVista('analisis')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'analisis' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <Sparkles size={14} /> Análisis
+        </button>
+        <button onClick={() => setVista('configuracion')}
+          className={`flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-md cursor-pointer transition-colors ${vista === 'configuracion' ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'}`}>
+          <SlidersHorizontal size={14} /> Configuración
+        </button>
+      </div>
+
+      {vista === 'tabla' ? (
+        <PresupuestoTabla
+          quincenas={quincenas} categorias={categorias} today={today}
+          tablaQuincenaId={tablaQuincenaId} setTablaQuincenaId={selectTablaQuincena}
+          extraTablaQuincenaIds={extraTablaQuincenaIds} onToggleExtraTablaQuincena={toggleExtraTablaQuincena}
+          onClearExtraTablaQuincenas={clearExtraTablaQuincenas}
+          selectedTablaQuincenaIds={selectedTablaQuincenaIds} onDataChanged={fetchPresupuestosTabla}
+          presupuestosTabla={presupuestosTabla} tablaLoading={tablaLoading}
+          tablaCategoriaId={tablaCategoriaId} setTablaCategoriaId={setTablaCategoriaId}
+          tablaClasificacion={tablaClasificacion} setTablaClasificacion={setTablaClasificacion}
+          tablaRecurrente={tablaRecurrente} setTablaRecurrente={setTablaRecurrente}
+          tablaEstado={tablaEstado} setTablaEstado={setTablaEstado}
+          tablaSaldo={tablaSaldo} setTablaSaldo={setTablaSaldo}
+          tablaPorCubrir={tablaPorCubrir} setTablaPorCubrir={setTablaPorCubrir}
+          tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
+          busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
+          sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
+          openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP} setTraspasoOrigen={setTraspasoOrigen}
+        />
+      ) : vista === 'analisis' ? (
+        <PresupuestoAnalisis
+          quincenas={quincenas} categorias={categorias} today={today}
+          presupuestos={analisisPresupuestos} loading={analisisLoading}
+          configGlobal={analisisConfigGlobal}
+          desdeId={analisisDesdeId} setDesdeId={setAnalisisDesdeId}
+          hastaId={analisisHastaId} setHastaId={setAnalisisHastaId}
+          categoriaId={analisisCategoriaId} setCategoriaId={setAnalisisCategoriaId}
+          onQuincenaUpdated={handleQuincenaReferenciaUpdated}
+          openEdit={openEdit}
+        />
+      ) : vista === 'configuracion' ? (
+        <PresupuestoConfiguracion
+          quincenas={quincenas} categorias={categorias} today={today}
+          frecuenciaPagoDefault={frecuenciaPagoDefault}
+          presupuestos={configPresupuestos} loading={configLoading}
+          onChanged={() => { fetchConfiguracion(); refetchTrasCambioRecurrente() }}
+          openEdit={openEdit}
+        />
+      ) : (
+        <>
+      {/* Selector de quincena */}
+      <div className="flex items-center flex-wrap gap-2">
+        <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena}
+          extraSelectedIds={extraQuincenaIds} onToggleExtra={toggleExtraQuincena} />
+        {multiSelectActivo ? (
+          <button onClick={() => setExtraQuincenaIds(new Set())}
+            className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+            Quitar combinación
+          </button>
+        ) : (
+          <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+            Ctrl/Cmd+clic para combinar quincenas
+          </span>
+        )}
+      </div>
+
+      <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
+
+      {/* Summary cards */}
+      {grupos.length > 0 && (
+        <div className={`grid grid-cols-1 gap-4 ${limiteGastoReferenciaEfectivo != null ? 'sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5' : 'sm:grid-cols-2 lg:grid-cols-4'}`}>
+          <KpiCard
+            label="Ingresos" value={formatMXN(totalIngresoReal)}
+            subtitle={`de ${formatMXN(totalIngresoPresupuestado)} presupuestado`}
+            icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
+            color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+            action={(() => {
+              const pct = totalIngresoPresupuestado > 0 ? (totalIngresoReal / totalIngresoPresupuestado) * 100 : 0
+              const cumplido = pct >= 100
+              return (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                    <div className={`h-1.5 rounded-full transition-all ${cumplido ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                  </div>
+                  <span className={`text-[10px] font-semibold tabular-nums ${cumplido ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{pct.toFixed(0)}%</span>
+                </div>
+              )
+            })()}
+          />
+
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Progreso global</p>
+            <div className="flex justify-between items-end mb-2">
+              <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">
+                {formatMXN(totalGastado)}
+                <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(totalPresupuestado)}</span>
+              </p>
+              <span className={`text-lg font-bold ${pctTextColor(pctGlobal)}`}>{pctGlobal.toFixed(0)}%</span>
+            </div>
+            <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-3">
+              <div className={`h-3 rounded-full transition-all ${pctColor(pctGlobal)}`} style={{ width: `${Math.min(pctGlobal, 100)}%` }} />
+            </div>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Restante</p>
+            <p className={`text-2xl font-bold tabular-nums ${totalPresupuestado - totalGastado >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+              {formatMXN(totalPresupuestado - totalGastado)}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+              {pctGlobal > 90 ? 'Cuidado: casi agotado' : pctGlobal > 70 ? 'Va bien, pero vigilante' : 'Suficiente para la quincena'}
+            </p>
+          </div>
+
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Falta por pagar</p>
+            <p className={`text-2xl font-bold tabular-nums ${pendientePorPagar > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+              {formatMXN(pendientePorPagar)}
+            </p>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">
+              {pendientePorPagar > 0 ? 'Pendiente de pago + presupuesto que aún no registras' : 'Todo pagado y registrado en esta quincena'}
+            </p>
+          </div>
+
+          {limiteGastoReferenciaEfectivo != null && (() => {
+            const limiteEfectivo = limiteGastoReferenciaEfectivo!
+            const pctLimite = limiteEfectivo > 0 ? (gastoParaLimite / limiteEfectivo) * 100 : 0
+            return (
+              <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+                <p className="text-sm text-slate-500 dark:text-slate-400 mb-1 flex items-center gap-1">
+                  Límite de referencia
+                  {!multiSelectActivo && refEfectiva.limiteEsOverride && (
+                    <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">personalizado</span>
+                  )}
+                  {multiSelectActivo && (
+                    <span className="text-[10px] font-medium text-indigo-500 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-1.5 py-0.5 rounded-full">combinado</span>
+                  )}
+                  <span className="cursor-help text-slate-300 dark:text-slate-600" title="Tu límite de gasto de referencia (Configuración → Períodos de pago, o personalizado para esta quincena en Presupuesto → Análisis). Es solo informativo, no bloquea nada.">ⓘ</span>
+                </p>
+                <div className="flex justify-between items-end mb-2">
+                  <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 tabular-nums">
+                    {formatMXN(gastoParaLimite)}
+                    <span className="text-slate-400 dark:text-slate-500 font-normal text-base"> / {formatMXN(limiteEfectivo)}</span>
+                  </p>
+                  <span className={`text-lg font-bold ${pctTextColor(pctLimite)}`}>{pctLimite.toFixed(0)}%</span>
+                </div>
+                <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-3">
+                  <div className={`h-3 rounded-full transition-all ${pctColor(pctLimite)}`} style={{ width: `${Math.min(pctLimite, 100)}%` }} />
+                </div>
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {/* Lo que sobra -- mismo bloque "Planificación del presupuesto" que el
+          Dashboard (Ingresos, Presupuestado, Sin destino en el presupuesto,
+          Disponible real), replicado aquí para esta quincena. */}
+      {ingresosReal > 0 && (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Lo que sobra</h3>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Ingresos</p>
+              <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(ingresosReal)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Presupuestado</p>
+              <p className="text-base font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalPresupuestado)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Sin destino en el presupuesto</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">de tus ingresos, esto no tiene partida asignada</p>
+              <p className={`text-base font-bold tabular-nums mt-0.5 ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
+              {gastosNoCubiertos > 0 && (
+                <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-md px-1.5 py-0.5 inline-block">
+                  ⚠ incluye {formatMXN(gastosNoCubiertos)} sin presupuestar
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Disponible real</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">
+                {liquidezSnapshot ? 'tu efectivo hoy, menos lo que aún debes' : 'captura tu corte de liquidez para verlo'}
+              </p>
+              {liquidezSnapshot ? (
+                <>
+                  <p className={`text-base font-bold tabular-nums mt-0.5 ${disponibleEfectivo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {formatMXN(Math.abs(disponibleEfectivo))}{disponibleEfectivo < 0 ? ' de más' : ''}
+                  </p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
+                    {formatMXN(totalLiquidoSnap)} en cuentas − {formatMXN(pendientePorPagar)} comprometido
+                  </p>
+                </>
+              ) : (
+                <Link href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+                  className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline">
+                  Capturar corte <ArrowRight size={10} />
+                </Link>
+              )}
+              <p className="mt-1.5 flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500">
+                según presupuesto:
+                <span className={`font-semibold tabular-nums ${disponibleSegunPresupuesto < 0 ? 'text-rose-500 dark:text-rose-400' : ''}`}>{formatMXN(disponibleSegunPresupuesto)}</span>
+              </p>
+              {ahorroComprometido > 0 && (
+                <p className="mt-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/40 rounded-md px-1.5 py-0.5 inline-block">
+                  incluye {formatMXN(ahorroComprometido)} de ahorro comprometido
+                </p>
+              )}
+            </div>
+          </div>
+          {/* Stacked bar con tooltips */}
+          <div className="relative mt-1">
+            <div className="h-3 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden flex">
+              <div className="h-full transition-all bg-indigo-400 dark:bg-indigo-500" style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }} />
+              {gastosNoCubiertos > 0 && (
+                <div className="h-full bg-amber-400 dark:bg-amber-500 transition-all" style={{ width: `${pctSinPresupuestoBar}%` }} />
+              )}
+              {totalExcedidoLineas > 0 && (
+                <div className="h-full bg-rose-500 dark:bg-rose-500 transition-all" style={{ width: `${pctExcedidoBarClamped}%` }} />
+              )}
+              {pctDisponibleReal > 0 && (
+                <div className="h-full bg-emerald-400 dark:bg-emerald-500 transition-all" style={{ width: `${pctDisponibleReal}%` }} />
+              )}
+            </div>
+            <div className="absolute inset-0 flex">
+              <div className="relative group/budget h-full cursor-default" style={{ width: `${Math.min(pctPresupAsignado, 100)}%` }}>
+                <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/budget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                  <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-indigo-400" />
+                  Presupuestado: <span className="font-semibold">{formatMXN(totalPresupuestado)}</span> · {pctPresupAsignado.toFixed(0)}%
+                </div>
+              </div>
+              {gastosNoCubiertos > 0 && (
+                <div className="relative group/unbudget h-full cursor-default" style={{ width: `${pctSinPresupuestoBar}%` }}>
+                  <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/unbudget:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-amber-400" />
+                    Sin presupuesto: <span className="font-semibold">{formatMXN(gastosNoCubiertos)}</span> · {pctSinPresupuesto.toFixed(1)}%
+                  </div>
+                </div>
+              )}
+              {totalExcedidoLineas > 0 && (
+                <div className="relative group/excedido h-full cursor-default" style={{ width: `${pctExcedidoBarClamped}%` }}>
+                  <div className="absolute bottom-full mb-2 right-0 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/excedido:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-rose-500" />
+                    Excedido: <span className="font-semibold">{formatMXN(totalExcedidoLineas)}</span> sobre partidas presupuestadas
+                  </div>
+                </div>
+              )}
+              {pctDisponibleReal > 0 && (
+                <div className="relative group/free h-full cursor-default" style={{ width: `${pctDisponibleReal}%` }}>
+                  <div className="absolute bottom-full mb-2 right-0 bg-slate-900 dark:bg-slate-700 text-white text-[11px] px-2.5 py-1.5 rounded-lg opacity-0 group-hover/free:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20 shadow-lg">
+                    <span className="inline-block w-2 h-2 rounded-full mr-1.5 bg-emerald-400" />
+                    Saldo libre: <span className="font-semibold">{formatMXN(disponibleSegunPresupuesto)}</span> · {pctDisponibleReal.toFixed(1)}%
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          {/* Legend */}
+          <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+            <span className="flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+              <span className="w-2 h-2 rounded-full shrink-0 bg-indigo-400" />
+              {pctPresupAsignado.toFixed(0)}% presupuestado
+            </span>
+            {gastosNoCubiertos > 0 && (
+              <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
+                <span className="w-2 h-2 rounded-full shrink-0 bg-amber-400" />
+                {pctSinPresupuesto.toFixed(1)}% sin presupuesto
+              </span>
+            )}
+            {totalExcedidoLineas > 0 && (
+              <span className="flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400">
+                <TrendingUp size={11} className="shrink-0" />
+                {formatMXN(totalExcedidoLineas)} excedido en partidas
+              </span>
+            )}
+            {pctDisponibleReal > 0 && (
+              <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                <span className="w-2 h-2 rounded-full shrink-0 bg-emerald-400" />
+                {pctDisponibleReal.toFixed(1)}% saldo libre
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Movimientos sin presupuesto */}
+      {!loading && (
+        <TxSinPresupuestoPanel
+          txSinPresupuesto={txSinPresupuesto} setTxSinPresupuesto={setTxSinPresupuesto}
+          presupuestos={presupuestos} categorias={categorias}
+          onAssigned={fetchPresupuestos}
+        />
+      )}
+
+      {/* Buscador */}
+      {!loading && grupos.length > 0 && (
+        <div className="relative">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+          <input ref={busquedaInputRef} type="text" placeholder="Buscar por categoría o descripción..." value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+          {busqueda && (
+            <button type="button" onClick={() => setBusqueda('')} aria-label="Quitar búsqueda"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer">
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Per-category groups */}
+      {loading ? (
+        <PresupuestoSkeleton />
+      ) : grupos.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+            <Copy size={28} className="text-slate-300 dark:text-slate-600" />
+          </div>
+          <p className="font-medium text-slate-600 dark:text-slate-400">Sin presupuesto configurado</p>
+          <p className="text-sm mt-1">Crea un presupuesto o copia el de la quincena anterior</p>
+        </div>
+      ) : gruposFiltrados.length === 0 ? (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-12 text-center text-slate-400 dark:text-slate-500">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+            <Search size={28} className="text-slate-300 dark:text-slate-600" />
+          </div>
+          <p className="font-medium text-slate-600 dark:text-slate-400">Sin resultados</p>
+          <p className="text-sm mt-1">Ninguna partida coincide con &quot;{busqueda}&quot;</p>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          {gruposFiltrados.map(grupo => {
+            const isMulti = grupo.items.length > 1
+            const expanded = expandedGroups.has(grupo.key)
+            const singleItem = grupo.items[0]
+
+            return (
+              <div key={grupo.key} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-indigo-200 dark:hover:border-indigo-700 hover:shadow-sm transition-all">
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {isMulti && (
+                        <button onClick={() => toggleGroup(grupo.key)}
+                          className="text-slate-400 dark:text-slate-500 hover:text-indigo-500 transition-colors cursor-pointer shrink-0">
+                          {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                        </button>
+                      )}
+                      <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${CAT_DOT[grupo.categoria.nombre] ?? 'bg-slate-400'}`} />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">
+                            {isMulti ? grupo.categoria.nombre : singleItem.descripcion}
+                          </p>
+                          {!isMulti && singleItem.recurrente && (
+                            <span className="inline-flex items-center gap-1 text-xs font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-1.5 py-0.5 rounded-full shrink-0">
+                              <Repeat size={9} />
+                              {singleItem.frecuencia === 'MENSUAL'
+                                ? singleItem.diaCobro ? `mensual · día ${singleItem.diaCobro}` : 'mensual'
+                                : 'quincenal'}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <p className="text-xs text-slate-400 dark:text-slate-500">
+                            {isMulti
+                              ? `${grupo.items.length} conceptos`
+                              : `${grupo.categoria.nombre}${singleItem.clasificacion ? ` · ${singleItem.clasificacion}` : ''}`}
+                          </p>
+                          {!isMulti && singleItem.fechaVencimiento && (() => {
+                            const d = new Date(`${singleItem.fechaVencimiento.split('T')[0]}T00:00:00`)
+                            const esQ1 = d.getDate() <= 15
+                            return (
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
+                                <CalendarClock size={10} />
+                                vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}
+                              </span>
+                            )
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-right">
+                        <p className="font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(grupo.real)}</p>
+                        <p className="text-xs text-slate-400 dark:text-slate-500">de {formatMXN(grupo.montoPresupuestado)}</p>
+                      </div>
+                      {!isMulti && (
+                        <>
+                          {singleItem.categoria.tipo === 'Gasto' && singleItem.montoEfectivo - singleItem.real > 0 && (
+                            <button onClick={() => setTraspasoOrigen(singleItem)}
+                              className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                              <ArrowRightLeft size={14} />
+                            </button>
+                          )}
+                          <button onClick={() => openEdit(singleItem)}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => setDeleteTarget({ id: singleItem.id, p: singleItem })}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                            <Trash2 size={14} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-2">
+                      <div className={`h-2 rounded-full transition-all ${pctColor(grupo.pct)}`} style={{ width: `${Math.min(grupo.pct, 100)}%` }} />
+                    </div>
+                    <span className={`text-xs font-semibold w-10 text-right tabular-nums ${pctTextColor(grupo.pct)}`}>
+                      {grupo.pct.toFixed(0)}%
+                    </span>
+                  </div>
+                  {grupo.excedido > 0 && (
+                    <p className="text-xs font-semibold text-rose-600 dark:text-rose-400 mt-1">
+                      +{formatMXN(grupo.excedido)} excedido
+                    </p>
+                  )}
+                </div>
+
+                {/* Sub-items for multi-category groups */}
+                {isMulti && expanded && (
+                  <div className="border-t border-slate-100 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
+                    {grupo.items.map(item => (
+                      <div key={item.id} className="px-4 py-2.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="w-1 h-4 rounded-full bg-slate-200 dark:bg-slate-600 shrink-0" />
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="text-sm font-medium text-slate-700 dark:text-slate-300 truncate">{item.descripcion}</p>
+                                {item.recurrente && (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/30 px-1 py-0.5 rounded-full shrink-0">
+                                    <Repeat size={8} />
+                                    {item.frecuencia === 'MENSUAL' ? (item.diaCobro ? `día ${item.diaCobro}` : 'mensual') : 'quincenal'}
+                                  </span>
+                                )}
+                                {estadoLineaBadge(item.estadoLinea)}
+                              </div>
+                              {item.fechaVencimiento && (() => {
+                                const d = new Date(`${item.fechaVencimiento.split('T')[0]}T00:00:00`)
+                                const esQ1 = d.getDate() <= 15
+                                return (
+                                  <span className={`text-[10px] flex items-center gap-0.5 mt-0.5 font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
+                                    <CalendarClock size={9} />
+                                    vence {d.toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}
+                                  </span>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-sm font-semibold text-slate-600 dark:text-slate-400 tabular-nums">
+                              <button onClick={() => setDetalleP(item)}
+                                className="hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline cursor-pointer transition-colors"
+                                aria-label={`Ver movimientos de ${item.descripcion}`}>
+                                {formatMXN(item.real)}
+                              </button>
+                              <span className="text-slate-400 dark:text-slate-500 font-normal"> de {formatMXN(item.montoEfectivo)}</span>
+                            </span>
+                            {item.categoria.tipo === 'Gasto' && item.montoEfectivo - item.real > 0 && (
+                              <button onClick={() => setTraspasoOrigen(item)}
+                                className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                                <ArrowRightLeft size={13} />
+                              </button>
+                            )}
+                            <button onClick={() => openEdit(item)}
+                              className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => setDeleteTarget({ id: item.id, p: item })}
+                              className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1.5 pl-3">
+                          <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                            <div className={`h-1.5 rounded-full transition-all ${pctColor(item.pct)}`} style={{ width: `${Math.min(item.pct, 100)}%` }} />
+                          </div>
+                          <span className={`text-[11px] font-semibold w-9 text-right tabular-nums ${pctTextColor(item.pct)}`}>
+                            {item.pct.toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="px-4 py-2 flex items-center justify-between bg-slate-50 dark:bg-slate-700/40 rounded-b-xl">
+                      <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Total {grupo.categoria.nombre}</span>
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300 tabular-nums">{formatMXN(grupo.real)} de {formatMXN(grupo.montoPresupuestado)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Collapsed hint for multi groups */}
+                {isMulti && !expanded && (
+                  <button onClick={() => toggleGroup(grupo.key)}
+                    className="w-full px-4 py-1.5 text-xs text-slate-400 dark:text-slate-500 hover:text-indigo-500 dark:hover:text-indigo-400 text-left border-t border-slate-100 dark:border-slate-700 transition-colors cursor-pointer rounded-b-xl">
+                    Ver {grupo.items.length} conceptos: {grupo.items.map(i => i.descripcion).join(', ')}
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+        </>
+      )}
+
+      <FormModal open={modalOpen} onOpenChange={setModalOpen} title={editingP ? 'Editar presupuesto' : 'Nuevo presupuesto'}>
+        <div className="space-y-4">
+          <div>
+            <Label htmlFor="p-cat">Categoría *</Label>
+            <select id="p-cat" value={form.categoriaId} onChange={e => setForm(f => ({ ...f, categoriaId: e.target.value }))} className={fieldClass(formErrors.categoriaId)}>
+              <option value="">Seleccionar...</option>
+              {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            </select>
+            {formErrors.categoriaId && <p className="text-xs text-rose-500 mt-1">{formErrors.categoriaId}</p>}
+          </div>
+          <div>
+            <Label htmlFor="p-desc">Descripción *</Label>
+            <input id="p-desc" type="text" placeholder="Ej: Renta, Súper quincenal..." value={form.descripcion}
+              onChange={e => setForm(f => ({ ...f, descripcion: e.target.value }))} className={fieldClass(formErrors.descripcion)} />
+            {formErrors.descripcion && <p className="text-xs text-rose-500 mt-1">{formErrors.descripcion}</p>}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="col-span-2">
+              <Label htmlFor="p-monto">Monto (MXN) *</Label>
+              <input id="p-monto" type="number" min="0" step="0.01" placeholder="0.00" value={form.montoPresupuestado}
+                disabled={montoOriginalBloqueado}
+                title={montoOriginalBloqueado ? 'Esta línea ya está en curso -- usa Recortar (Configuración → Liquidez) o un traspaso para ajustarla sin perder el monto original.' : undefined}
+                onChange={e => setForm(f => ({ ...f, montoPresupuestado: e.target.value }))} className={`${fieldClass(formErrors.montoPresupuestado)} disabled:opacity-60 disabled:cursor-not-allowed`} />
+              {formErrors.montoPresupuestado && <p className="text-xs text-rose-500 mt-1">{formErrors.montoPresupuestado}</p>}
+              {montoOriginalBloqueado && <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Ya está en curso -- usa Recortar o un traspaso para ajustarla.</p>}
+            </div>
+            <div>
+              <label htmlFor="p-fechavenc" className="flex items-center gap-1 text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                <CalendarClock size={11} />
+                Vence el día
+              </label>
+              <input id="p-fechavenc" type="date"
+                value={form.fechaVencimiento}
+                onChange={e => {
+                  const val = e.target.value
+                  const suggestedId = val ? getQuincenaIdForDate(quincenas, val) : ''
+                  const currentId = (editingP?.quincenaId?.toString() ?? quincenaId)
+                  const isDifferent = suggestedId && suggestedId !== currentId
+                  setForm(f => ({
+                    ...f,
+                    fechaVencimiento: val,
+                    targetQuincenaId: isDifferent ? suggestedId : '',
+                  }))
+                }}
+                className={fieldClass()} />
+              {(() => {
+                if (!form.fechaVencimiento) return (
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">Opcional — sin fecha específica</p>
+                )
+                const suggestedId = getQuincenaIdForDate(quincenas, form.fechaVencimiento)
+                const suggestedQ = quincenas.find(q => q.id.toString() === suggestedId)
+                const currentId = (editingP?.quincenaId?.toString() ?? quincenaId)
+                const isDifferent = suggestedId && suggestedId !== currentId
+
+                if (isDifferent && suggestedQ) {
+                  const confirmed = form.targetQuincenaId === suggestedId
+                  return (
+                    <div className={`mt-1.5 rounded-lg px-2.5 py-2 border text-[11px] ${confirmed ? 'bg-indigo-50 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800/40' : 'bg-amber-50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/40'}`}>
+                      <p className={`font-medium mb-1.5 ${confirmed ? 'text-indigo-700 dark:text-indigo-300' : 'text-amber-700 dark:text-amber-300'}`}>
+                        {confirmed ? `✓ Se moverá a ${suggestedQ.codigo}` : `Esta fecha corresponde a ${suggestedQ.codigo} · ${formatQuincenaRange(suggestedQ)}`}
+                      </p>
+                      {!confirmed && (
+                        <div className="flex gap-1.5">
+                          <button type="button"
+                            onClick={() => setForm(f => ({ ...f, targetQuincenaId: suggestedId }))}
+                            className="px-2 py-0.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md cursor-pointer transition-colors">
+                            Mover a {suggestedQ.codigo}
+                          </button>
+                          <button type="button"
+                            onClick={() => setForm(f => ({ ...f, targetQuincenaId: 'keep' }))}
+                            className="px-2 py-0.5 border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-md cursor-pointer transition-colors">
+                            Mantener Q actual
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                }
+
+                const d = new Date(`${form.fechaVencimiento}T00:00:00`)
+                const esQ1 = d.getDate() <= 15
+                return (
+                  <p className={`text-[11px] mt-1 flex items-center gap-1 font-medium ${esQ1 ? 'text-sky-600 dark:text-sky-400' : 'text-violet-600 dark:text-violet-400'}`}>
+                    <CalendarClock size={10} />
+                    {esQ1 ? 'Cae en 1ª quincena (días 1–15)' : 'Cae en 2ª quincena (días 16–fin)'}
+                  </p>
+                )
+              })()}
+            </div>
+          </div>
+          <div>
+            <Label htmlFor="p-clasificacion">Clasificación</Label>
+            <select id="p-clasificacion" value={form.clasificacion} onChange={e => setForm(f => ({ ...f, clasificacion: e.target.value }))} className={fieldClass()}>
+              <option value="">Sin clasificar</option>
+              <option value="Fijo">Fijo</option>
+              <option value="Variable">Variable</option>
+            </select>
+          </div>
+          <div>
+            <Label htmlFor="p-notas">Notas</Label>
+            <textarea id="p-notas" rows={2} placeholder="Notas adicionales (opcional)" value={form.notas}
+              onChange={e => setForm(f => ({ ...f, notas: e.target.value }))} className={`${fieldClass()} resize-none`} />
+          </div>
+
+          {/* Recurrence section — shown both when creating and editing */}
+          <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+              {editingP?.recurrenciaGrupoId && (
+                <p className="px-4 py-2 text-xs text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/30 border-b border-slate-200 dark:border-slate-700">
+                  Esta partida es parte de una serie recurrente. Al guardar te preguntaremos qué quincenas quieres actualizar.
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => setForm(f => ({ ...f, recurrente: !f.recurrente }))}
+                className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 dark:bg-slate-800/60 hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors cursor-pointer"
+                aria-expanded={form.recurrente}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Repeat size={15} className={form.recurrente ? 'text-indigo-500' : 'text-slate-400 dark:text-slate-500'} />
+                  <span className={`text-sm font-medium ${form.recurrente ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-600 dark:text-slate-400'}`}>
+                    Repetir esta partida
+                  </span>
+                  {form.recurrente && (
+                    <span className="text-xs bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full font-medium">
+                      Activo
+                    </span>
+                  )}
+                </div>
+                <ChevronDown size={15} className={`text-slate-400 transition-transform duration-200 ${form.recurrente ? 'rotate-180' : ''}`} />
+              </button>
+
+              {form.recurrente && (
+                <div className="px-4 py-4 space-y-4 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/20">
+                  {/* Frequency pills */}
+                  <div>
+                    <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">Frecuencia</p>
+                    <div className="flex gap-2">
+                      {[
+                        { value: 'CADA_QUINCENA', label: 'Cada quincena', hint: 'cada 15 días' },
+                        { value: 'MENSUAL', label: 'Mensual', hint: 'día 1 de cada mes' },
+                      ].map(opt => (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, frecuencia: opt.value }))}
+                          className={`flex-1 flex flex-col items-center py-2.5 px-3 rounded-lg border text-sm font-medium transition-all cursor-pointer ${
+                            form.frecuencia === opt.value
+                              ? 'bg-indigo-600 border-indigo-600 text-white'
+                              : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-indigo-300 dark:hover:border-indigo-700 hover:bg-indigo-50 dark:hover:bg-indigo-950/20'
+                          }`}
+                        >
+                          <span>{opt.label}</span>
+                          <span className={`text-[10px] mt-0.5 ${form.frecuencia === opt.value ? 'text-indigo-200' : 'text-slate-400 dark:text-slate-500'}`}>{opt.hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Day of charge — only for monthly */}
+                  {form.frecuencia === 'MENSUAL' && (
+                    <div>
+                      <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
+                        Día de cobro <span className="font-normal text-slate-400">(opcional)</span>
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="number" min="1" max="31" placeholder="—"
+                          value={form.diaCobro}
+                          onChange={e => setForm(f => ({ ...f, diaCobro: e.target.value }))}
+                          className="w-16 text-center border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                        <span className="text-sm text-slate-500 dark:text-slate-400">del mes</span>
+                        {form.diaCobro && parseInt(form.diaCobro) >= 1 && parseInt(form.diaCobro) <= 31 && (
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${parseInt(form.diaCobro) <= 15 ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'}`}>
+                            {parseInt(form.diaCobro) <= 15 ? '→ 1ª quincena' : '→ 2ª quincena'}
+                          </span>
+                        )}
+                      </div>
+                      {!form.diaCobro && (
+                        <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Sin día especificado → se asigna a la 1ª quincena del mes</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* End condition */}
+                  <div>
+                    <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">Termina</p>
+                    <div className="space-y-2.5">
+                      <label className="flex items-center gap-2.5 cursor-pointer">
+                        <input
+                          type="radio" name="termina" value="sin_fin"
+                          checked={form.terminaCon === 'sin_fin'}
+                          onChange={() => setForm(f => ({ ...f, terminaCon: 'sin_fin' }))}
+                          className="accent-indigo-600 w-4 h-4"
+                        />
+                        <span className="text-sm text-slate-700 dark:text-slate-300">Sin fin</span>
+                        <span className="text-xs text-slate-400 dark:text-slate-500">(todas las quincenas futuras)</span>
+                      </label>
+                      <label className="flex items-center gap-2.5 cursor-pointer">
+                        <input
+                          type="radio" name="termina" value="n_ocurrencias"
+                          checked={form.terminaCon === 'n_ocurrencias'}
+                          onChange={() => setForm(f => ({ ...f, terminaCon: 'n_ocurrencias' }))}
+                          className="accent-indigo-600 w-4 h-4"
+                        />
+                        <span className="text-sm text-slate-700 dark:text-slate-300">Después de</span>
+                        <input
+                          type="number" min="1" max="52"
+                          value={form.numOcurrencias}
+                          onChange={e => setForm(f => ({ ...f, numOcurrencias: e.target.value, terminaCon: 'n_ocurrencias' }))}
+                          onClick={() => setForm(f => ({ ...f, terminaCon: 'n_ocurrencias' }))}
+                          className="w-14 text-center border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-sm bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                        />
+                        <span className="text-sm text-slate-700 dark:text-slate-300">
+                          {form.frecuencia === 'MENSUAL' ? 'meses' : 'quincenas'}
+                        </span>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Preview en vivo -- mismo computeQuincenasTarget que ya usa el
+                      servidor para generar las filas reales, así este resumen
+                      nunca puede decir algo distinto de lo que se va a guardar. */}
+                  {(() => {
+                    const anclaId = (form.targetQuincenaId && form.targetQuincenaId !== 'keep')
+                      ? form.targetQuincenaId
+                      : (editingP?.quincenaId?.toString() ?? quincenaId)
+                    const inicioQ = quincenas.find(q => q.id.toString() === anclaId)
+                    const preview = inicioQ ? computeQuincenasTarget(
+                      quincenas.map(q => ({ ...q, fechaInicio: new Date(q.fechaInicio), fechaFin: new Date(q.fechaFin) })),
+                      { ...inicioQ, fechaInicio: new Date(inicioQ.fechaInicio), fechaFin: new Date(inicioQ.fechaFin) },
+                      form.frecuencia,
+                      form.diaCobro ? parseInt(form.diaCobro) : null,
+                      form.terminaCon === 'n_ocurrencias' ? (parseInt(form.numOcurrencias) || null) : null
+                    ) : []
+
+                    if (preview.length === 0) {
+                      return (
+                        <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 rounded-lg px-3 py-2.5 text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                          <AlertTriangle size={12} className="shrink-0" />
+                          Sin quincenas disponibles para esta configuración -- revisa la frecuencia o el día de cobro.
+                        </div>
+                      )
+                    }
+                    const primera = preview[0]
+                    const ultima = preview[preview.length - 1]
+                    return (
+                      <div className="bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-100 dark:border-indigo-900/50 rounded-lg px-3 py-2.5 text-xs text-indigo-700 dark:text-indigo-300 space-y-1.5">
+                        <p>
+                          <Repeat size={11} className="inline mr-1.5 mb-0.5" />
+                          {editingP ? 'Se aplicará a' : 'Se creará en'}{' '}
+                          <strong>{preview.length}</strong> {preview.length === 1 ? 'quincena' : 'quincenas'}: {primera.codigo} → {ultima.codigo}{' '}
+                          ({formatDate(primera.fechaInicio)} – {formatDate(ultima.fechaFin)})
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          {preview.map(q => (
+                            <span key={q.id} className="text-[10px] font-medium bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 px-1.5 py-0.5 rounded">
+                              {q.codigo}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
+          </div>
+
+          <div className="flex gap-3 justify-end pt-2">
+            <button type="button" onClick={() => setModalOpen(false)} disabled={saving}
+              className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 disabled:opacity-50 cursor-pointer transition-colors">
+              Cancelar
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving}
+              className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-60 cursor-pointer font-medium min-w-[100px] transition-colors">
+              {saving ? 'Guardando...' : editingP ? 'Guardar cambios' : form.recurrente ? 'Crear recurrente' : 'Crear'}
+            </button>
+          </div>
+        </div>
+      </FormModal>
+
+      {/* Detalle: transacciones que componen el gasto real de una partida */}
+      <FormModal
+        open={detalleP != null}
+        onOpenChange={open => !open && setDetalleP(null)}
+        title={detalleP?.descripcion ?? ''}
+        maxWidthClass="max-w-2xl"
+        subtitle={detalleP && (
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            {detalleP.categoria.nombre} · {detalleP.quincena.codigo}
+          </p>
+        )}
+      >
+        {detalleP && (
+          <DetalleGastoContent
+            key={detalleP.id}
+            partida={{
+              id: detalleP.id,
+              descripcion: detalleP.descripcion,
+              montoPresupuestado: detalleP.montoPresupuestado,
+              montoRevisado: detalleP.montoRevisado,
+              montoEfectivo: detalleP.montoEfectivo,
+              real: detalleP.real,
+              categoriaNombre: detalleP.categoria.nombre,
+              categoriaTipo: detalleP.categoria.tipo,
+              estadoLinea: detalleP.estadoLinea,
+              quincenaCodigo: detalleP.quincena.codigo,
+              recurrenciaGrupoId: detalleP.recurrenciaGrupoId,
+            }}
+            onTraspasar={() => { const p = detalleP; setDetalleP(null); setTraspasoOrigen(p) }}
+            onEditar={() => { const p = detalleP; setDetalleP(null); openEdit(p) }}
+            onAjustado={nuevo => {
+              setDetalleP(p => p && { ...p, montoRevisado: nuevo, montoEfectivo: nuevo, excedido: Math.max(p.real - nuevo, 0) })
+              fetchPresupuestos(); fetchPresupuestosTabla()
+            }}
+            onCancelado={() => { setDetalleP(null); fetchPresupuestos(); fetchPresupuestosTabla() }}
+          />
+        )}
+      </FormModal>
+
+      <TraspasoModal
+        open={traspasoOrigen != null}
+        onOpenChange={open => !open && setTraspasoOrigen(null)}
+        origen={traspasoOrigen && { id: traspasoOrigen.id, descripcion: traspasoOrigen.descripcion, quincenaId: traspasoOrigen.quincenaId, disponible: traspasoOrigen.montoEfectivo - traspasoOrigen.real }}
+        onDone={() => { fetchPresupuestos(); fetchPresupuestosTabla() }}
+      />
+
+      {/* Non-recurring delete — simple confirm */}
+      <ConfirmDialog
+        open={deleteTarget != null && !deleteTarget.p.recurrenciaGrupoId}
+        onOpenChange={open => !open && setDeleteTarget(null)}
+        title="Eliminar presupuesto"
+        description="Se eliminará este presupuesto. El historial de transacciones no se verá afectado."
+        onConfirm={() => handleDelete('single')}
+        loading={deleting}
+      />
+
+      {/* Recurring delete — smart dialog */}
+      {deleteTarget?.p.recurrenciaGrupoId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl p-6 w-full max-w-sm space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/30 flex items-center justify-center shrink-0">
+                <Repeat size={16} className="text-rose-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-800 dark:text-slate-100">Eliminar partida recurrente</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5 truncate">{deleteTarget.p.descripcion}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Esta partida forma parte de una serie recurrente. ¿Qué deseas eliminar?
+            </p>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => handleDelete('single')}
+                disabled={deleting}
+                className="w-full text-left px-4 py-3 rounded-xl border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Solo esta quincena</p>
+                <p className="text-xs text-rose-400 dark:text-rose-500 mt-0.5">Elimina únicamente este registro</p>
+              </button>
+
+              <button
+                onClick={() => handleDelete('future')}
+                disabled={deleting}
+                className="w-full text-left px-4 py-3 rounded-xl border border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Pausar futuras</p>
+                <p className="text-xs text-amber-500 dark:text-amber-500/80 mt-0.5">Elimina las quincenas futuras; esta y las anteriores quedan igual</p>
+              </button>
+
+              <button
+                onClick={() => handleDelete('all')}
+                disabled={deleting}
+                className="w-full text-left px-4 py-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={14} />
+                  <p className="text-sm font-medium">
+                    Eliminar todas las repeticiones
+                    {deleteTarget.p.numOcurrencias ? ` · ${deleteTarget.p.numOcurrencias} elementos` : ''}
+                  </p>
+                </div>
+                <p className="text-xs text-rose-200 mt-0.5 ml-5">Borra todas las quincenas del grupo</p>
+              </button>
+            </div>
+
+            <button
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+              className="w-full py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-50 cursor-pointer transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Editing a line that's part of a recurring series — ask scope */}
+      {editScopeBody && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl p-6 w-full max-w-sm space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/30 flex items-center justify-center shrink-0">
+                <Repeat size={16} className="text-indigo-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-slate-800 dark:text-slate-100">Actualizar partida recurrente</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5 truncate">{editingP?.descripcion}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              Esta partida forma parte de una serie recurrente. ¿A qué quincenas quieres aplicar los cambios?
+            </p>
+
+            <div className="space-y-2">
+              <button
+                onClick={() => handleSaveWithScope('single')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Solo esta quincena</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Cambia únicamente este registro; no afecta la serie</p>
+              </button>
+
+              <button
+                onClick={() => handleSaveWithScope('future')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">De aquí en adelante</p>
+                <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5">Sólo las quincenas futuras; esta no se modifica</p>
+              </button>
+
+              <button
+                onClick={() => handleSaveWithScope('this_forward')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <p className="text-sm font-medium">Incluyendo esta quincena</p>
+                <p className="text-xs text-indigo-400 dark:text-indigo-500 mt-0.5">Esta quincena y todas las futuras</p>
+              </button>
+
+              <button
+                onClick={() => handleSaveWithScope('all')}
+                disabled={saving}
+                className="w-full text-left px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50 cursor-pointer transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <AlertTriangle size={14} />
+                  <p className="text-sm font-medium">Todo, absolutamente todo</p>
+                </div>
+                <p className="text-xs text-indigo-200 mt-0.5 ml-5">Incluye quincenas ya pasadas de la serie</p>
+              </button>
+            </div>
+
+            <button
+              onClick={() => { setEditScopeBody(null); setModalOpen(true) }}
+              disabled={saving}
+              className="w-full py-2 text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 disabled:opacity-50 cursor-pointer transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SortableTh({ label, sortKeyName, align, sortKey, sortDir, onSort }: {
+  label: string; sortKeyName: SortKey; align?: 'right'
+  sortKey: SortKey; sortDir: 'asc' | 'desc'; onSort: (key: SortKey) => void
+}) {
+  const active = sortKey === sortKeyName
+  return (
+    <th className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}>
+      <button onClick={() => onSort(sortKeyName)}
+        className={`inline-flex items-center gap-1 font-medium cursor-pointer transition-colors ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400'}`}>
+        {label}
+        {active && (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+      </button>
+    </th>
+  )
+}
+
+interface PresupuestoTablaProps {
+  quincenas: Quincena[]; categorias: Categoria[]; today: string
+  tablaQuincenaId: string; setTablaQuincenaId: (id: string) => void
+  extraTablaQuincenaIds: Set<string>; onToggleExtraTablaQuincena: (id: string) => void
+  onClearExtraTablaQuincenas: () => void
+  selectedTablaQuincenaIds: string[]
+  onDataChanged: () => void
+  presupuestosTabla: Presupuesto[]; tablaLoading: boolean
+  tablaCategoriaId: string; setTablaCategoriaId: (v: string) => void
+  tablaClasificacion: string; setTablaClasificacion: (v: string) => void
+  tablaRecurrente: string; setTablaRecurrente: (v: string) => void
+  tablaEstado: string; setTablaEstado: (v: string) => void
+  tablaSaldo: string; setTablaSaldo: (v: string) => void
+  tablaPorCubrir: string; setTablaPorCubrir: (v: string) => void
+  tablaOcultarIngresos: boolean; setTablaOcultarIngresos: (v: boolean) => void
+  busquedaTabla: string; setBusquedaTabla: (v: string) => void
+  sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
+  openEdit: (p: Presupuesto) => void
+  setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
+  setDetalleP: (p: Presupuesto | null) => void
+  setTraspasoOrigen: (p: Presupuesto | null) => void
+}
+
+interface TxSinPresupuestoPanelProps {
+  txSinPresupuesto: TxSinPresupuesto[]
+  setTxSinPresupuesto: React.Dispatch<React.SetStateAction<TxSinPresupuesto[]>>
+  presupuestos: Presupuesto[]
+  categorias: Categoria[]
+  // Refetch de los datos del padre (presupuestos/totales) tras asignar o
+  // crear una linea -- reemplaza por completo lo que este componente haya
+  // quitado de forma optimista de txSinPresupuesto.
+  onAssigned: () => void
+}
+
+// Lista de transacciones sin partida de presupuesto asignada, con acciones
+// para asignarlas a una linea existente o crear una nueva al vuelo.
+// Compartido entre las vistas Tarjetas y Tabla -- cada una le pasa sus
+// propios txSinPresupuesto/presupuestos ya acotados a la(s) quincena(s)
+// que tenga seleccionada(s).
+function TxSinPresupuestoPanel({ txSinPresupuesto, setTxSinPresupuesto, presupuestos, categorias, onAssigned }: TxSinPresupuestoPanelProps) {
+  const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
+  const [assigningTxId, setAssigningTxId] = useState<number | null>(null)
+  const [crearLineaForTxId, setCrearLineaForTxId] = useState<number | null>(null)
+  const [crearLineaForm, setCrearLineaForm] = useState({ descripcion: '', categoriaId: '', monto: '' })
+  const [creatingLinea, setCreatingLinea] = useState(false)
+
+  async function handleAsignar(txId: number, presupuestoId: number) {
+    setAssigningTxId(txId)
+    setOpenPopoverId(null)
+    try {
+      const res = await fetch(`/api/transacciones/${txId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presupuestoId }),
+      })
+      if (res.ok) {
+        setTxSinPresupuesto(prev => prev.filter(t => t.id !== txId))
+        onAssigned()
+      }
+    } finally { setAssigningTxId(null) }
+  }
+
+  async function handleCrearYAsignar(tx: TxSinPresupuesto) {
+    if (!crearLineaForm.descripcion || !crearLineaForm.categoriaId || !crearLineaForm.monto) return
+    setCreatingLinea(true)
+    try {
+      // La linea nueva siempre va en la quincena de la propia transaccion --
+      // asi no hay ambiguedad ni con "Todas" ni con varias quincenas
+      // combinadas en la vista Tabla.
+      const presupRes = await fetch('/api/presupuestos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quincenaId: tx.quincenaId, descripcion: crearLineaForm.descripcion,
+          categoriaId: crearLineaForm.categoriaId,
+          montoPresupuestado: crearLineaForm.monto,
+          tipo: tx.tipo,
+        }),
+      })
+      if (!presupRes.ok) return
+      const newPresup = await presupRes.json()
+      const txRes = await fetch(`/api/transacciones/${tx.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ presupuestoId: newPresup.id }),
+      })
+      if (txRes.ok) {
+        setTxSinPresupuesto(prev => prev.filter(t => t.id !== tx.id))
+        setOpenPopoverId(null)
+        setCrearLineaForTxId(null)
+        onAssigned()
+      }
+    } finally { setCreatingLinea(false) }
+  }
+
+  if (txSinPresupuesto.length === 0) return null
+
+  return (
+    <div className="bg-amber-50 dark:bg-amber-950/20 rounded-2xl border border-amber-200 dark:border-amber-800/50 p-5">
+      <div className="flex items-center gap-2 mb-3">
+        <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 shrink-0" />
+        <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">Movimientos sin presupuesto</h3>
+        <span className="ml-auto text-xs text-amber-600 dark:text-amber-500">{txSinPresupuesto.length} {txSinPresupuesto.length === 1 ? 'transacción' : 'transacciones'}</span>
+      </div>
+      <div className="border border-amber-200 dark:border-amber-800/40 rounded-xl overflow-visible bg-white dark:bg-slate-800/60">
+        {txSinPresupuesto.map((tx, idx) => {
+          const isOpen = openPopoverId === tx.id
+          const isAssigning = assigningTxId === tx.id
+          const showCrearForm = crearLineaForTxId === tx.id
+          // Una transaccion solo puede asignarse a una linea de su misma
+          // quincena (no tendria sentido cubrir un gasto de Q35 con una linea
+          // de Q36) y de su mismo tipo: un Ingreso no se mezcla con partidas
+          // de Gasto/Ahorro.
+          const presupuestosDelTipo = presupuestos.filter(p => p.categoria.tipo === tx.tipo && p.quincenaId === tx.quincenaId)
+          const categoriasDisponibles = Array.from(
+            new Map([tx.categoria, ...categorias.filter(c => c.tipo === tx.tipo)].map(c => [c.id, c])).values()
+          ).sort((a, b) => a.nombre.localeCompare(b.nombre))
+          return (
+            <div key={tx.id}
+              className={`relative flex items-center justify-between gap-3 px-3 py-2.5 ${idx < txSinPresupuesto.length - 1 ? 'border-b border-amber-100 dark:border-amber-900/40' : ''}`}>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[tx.categoria.nombre] ?? 'bg-slate-400'}`} />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{tx.descripcion}</p>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">{tx.tipo} · {tx.categoria.nombre} · {new Date(tx.fecha).toLocaleDateString('es-MX', { day: '2-digit', month: 'short', timeZone: 'UTC' })}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className={`text-xs font-semibold tabular-nums ${montoTipoColor(tx.tipo)}`}>{formatMXN(Number(tx.monto))}</span>
+                <div className="relative">
+                  <button
+                    onClick={() => { setOpenPopoverId(isOpen ? null : tx.id); setCrearLineaForTxId(null) }}
+                    disabled={isAssigning}
+                    className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/40 hover:bg-amber-200 dark:hover:bg-amber-900/70 text-amber-700 dark:text-amber-400 flex items-center justify-center transition-colors disabled:opacity-50 cursor-pointer"
+                    aria-label="Asignar a línea de presupuesto"
+                  >
+                    {isAssigning ? <Loader2 size={10} className="animate-spin" /> : <Plus size={12} />}
+                  </button>
+                  {isOpen && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => { setOpenPopoverId(null); setCrearLineaForTxId(null) }} aria-hidden />
+                      <div className="absolute right-0 bottom-full mb-1.5 w-64 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl z-30 overflow-hidden">
+                        {!showCrearForm ? (
+                          <>
+                            <div className="px-3 pt-2 pb-1 border-b border-slate-100 dark:border-slate-700">
+                              <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Asignar a:</p>
+                            </div>
+                            <div className="max-h-48 overflow-y-auto py-1">
+                              {presupuestosDelTipo.length > 0 ? presupuestosDelTipo.map(p => (
+                                <button key={p.id} onClick={() => handleAsignar(tx.id, p.id)}
+                                  className="w-full text-left px-3 py-2 hover:bg-slate-50 dark:hover:bg-slate-700/60 flex items-start justify-between gap-2 transition-colors cursor-pointer">
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-medium text-slate-700 dark:text-slate-200 truncate">{p.descripcion}</p>
+                                    <p className="text-[11px] text-slate-400 dark:text-slate-500">{p.categoria.nombre}</p>
+                                  </div>
+                                  <span className="text-xs text-slate-400 dark:text-slate-500 tabular-nums shrink-0 pt-0.5">{formatMXN(p.montoEfectivo)}</span>
+                                </button>
+                              )) : (
+                                <p className="px-3 py-2 text-xs text-slate-400 dark:text-slate-500">Sin líneas de {tx.tipo.toLowerCase()} en esta quincena</p>
+                              )}
+                            </div>
+                            <div className="border-t border-slate-100 dark:border-slate-700">
+                              <button
+                                onClick={() => { setCrearLineaForTxId(tx.id); setCrearLineaForm({ descripcion: tx.descripcion, categoriaId: tx.categoria.id.toString(), monto: tx.monto.toString() }) }}
+                                className="w-full text-left px-3 py-2 text-xs text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 flex items-center gap-1.5 transition-colors font-medium cursor-pointer">
+                                <Plus size={11} /> Crear nueva línea
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <div className="p-3 space-y-2">
+                            <p className="text-[10px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wider">Nueva línea de presupuesto</p>
+                            <div>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">Descripción</p>
+                              <input type="text" value={crearLineaForm.descripcion}
+                                onChange={e => setCrearLineaForm(f => ({ ...f, descripcion: e.target.value }))}
+                                className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                            </div>
+                            <div>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">Categoría</p>
+                              <select value={crearLineaForm.categoriaId}
+                                onChange={e => setCrearLineaForm(f => ({ ...f, categoriaId: e.target.value }))}
+                                className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                                {categoriasDisponibles.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                              </select>
+                            </div>
+                            <div>
+                              <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-0.5">Presupuesto $</p>
+                              <input type="number" value={crearLineaForm.monto} min="0"
+                                onChange={e => setCrearLineaForm(f => ({ ...f, monto: e.target.value }))}
+                                className="w-full text-xs px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                            </div>
+                            <div className="flex gap-2 pt-0.5">
+                              <button onClick={() => setCrearLineaForTxId(null)}
+                                className="flex-1 text-xs py-1.5 rounded-lg border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer">
+                                Cancelar
+                              </button>
+                              <button onClick={() => handleCrearYAsignar(tx)}
+                                disabled={creatingLinea || !crearLineaForm.descripcion || !crearLineaForm.monto}
+                                className="flex-1 text-xs py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-1 cursor-pointer">
+                                {creatingLinea && <Loader2 size={10} className="animate-spin" />}
+                                Crear y asignar
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      {/* "Fuera de plan" solo tiene sentido para Gasto — mezclar Ingreso/Ahorro
+          en la misma suma daria un numero que no significa nada (son flujos
+          en sentido contrario). Los montos de cada tipo ya se ven arriba,
+          coloreados, en la lista. */}
+      <div className="mt-3 flex justify-between items-center">
+        <span className="text-xs text-amber-600 dark:text-amber-500">Gasto fuera de plan</span>
+        <span className="text-sm font-bold tabular-nums text-amber-900 dark:text-amber-100">
+          {formatMXN(txSinPresupuesto.filter(t => t.tipo === 'Gasto').reduce((s, t) => s + Number(t.monto), 0))}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function PresupuestoTabla({
+  quincenas, categorias, today,
+  tablaQuincenaId, setTablaQuincenaId, extraTablaQuincenaIds, onToggleExtraTablaQuincena,
+  onClearExtraTablaQuincenas, selectedTablaQuincenaIds, onDataChanged,
+  presupuestosTabla, tablaLoading,
+  tablaCategoriaId, setTablaCategoriaId, tablaClasificacion, setTablaClasificacion,
+  tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
+  tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
+  tablaOcultarIngresos, setTablaOcultarIngresos,
+  busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
+  openEdit, setDeleteTarget, setDetalleP, setTraspasoOrigen,
+}: PresupuestoTablaProps) {
+  const busquedaTablaInputRef = useRef<HTMLInputElement>(null)
+  useSearchShortcut(busquedaTablaInputRef)
+  const { visible: colVisible, toggle: toggleCol } = useColumnVisibility('milo:columns:presupuesto-tabla', PRESUPUESTO_TABLA_COLUMNS_DEFAULT)
+  // Descripción + las columnas opcionales del grupo inicial (Quincena,
+  // Categoría, Clasificación) van antes de Presupuestado; Recurrente/Vence +
+  // Acciones van despues de Restante -- estos conteos alimentan el colSpan
+  // del tfoot, que si no se ajustara quedaria desalineado apenas se oculte
+  // alguna columna.
+  const leadingCols = 1 + ['quincena', 'categoria', 'clasificacion'].filter(k => colVisible.has(k)).length
+  const trailingCols = 1 + ['recurrente', 'vence'].filter(k => colVisible.has(k)).length
+  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
+  const filasTabla = presupuestosTabla
+    .filter(p => matchesFiltrosTabla(p, filtros))
+    .sort((a, b) => {
+      const va = getSortValue(a, sortKey)
+      const vb = getSortValue(b, sortKey)
+      const cmp = typeof va === 'number' && typeof vb === 'number' ? va - vb : String(va).localeCompare(String(vb))
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+
+  // Los totales de dinero solo deben sumar partidas de Gasto — Ingreso/Ahorro (p.ej.
+  // una línea "Salario") nunca se suman a un total de gasto. Mismo criterio que la
+  // vista Tarjetas (gastoGrupos). Las filas siguen mostrándose todas; solo se excluyen
+  // de las sumas.
+  const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+
+  // Dynamic totals over the filtered Gasto rows — recompute on every filter change
+  const totalPresupuestado = gastoFilasTabla.reduce((s, p) => s + p.montoEfectivo, 0)
+  const totalReal = gastoFilasTabla.reduce((s, p) => s + p.real, 0)
+  const totalPendiente = gastoFilasTabla.reduce((s, p) => s + p.pendiente, 0)
+  const totalPct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
+  const totalExcedido = totalReal > totalPresupuestado ? totalReal - totalPresupuestado : 0
+  const totalRestante = totalPresupuestado - totalReal
+  const totalFaltaPorPagar = calcularFaltaPorPagar(gastoFilasTabla)
+
+  // Las cards de Ingresos y Balance son fijas: muestran el total de la
+  // quincena seleccionada, sin importar los filtros de la tabla (categoria,
+  // clasificacion, "cubierto menos de 100%", etc). Los filtros son conceptos
+  // de partidas de Gasto -- filtrar por Categoria o Clasificacion no tiene
+  // sentido para una linea de Ingreso, asi que dejarlas filtrar Ingresos/
+  // Balance los hacia caer a $0 o a un subtotal parcial sin que el usuario
+  // lo notara, y ese numero dejaba de ser comparable con el "Sobrante neto"
+  // del Dashboard (que siempre es de la quincena completa).
+  const ingresoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Ingreso' && cuentaParaAgregados(p))
+  const totalIngresoPresupuestadoFijo = ingresoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
+  const totalIngresoRealFijo = ingresoFilasFijo.reduce((s, p) => s + p.real, 0)
+  const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+  const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
+  const totalRealFijo = gastoFilasFijo.reduce((s, p) => s + p.real, 0)
+  const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
+  const balanceReal = totalIngresoRealFijo - totalRealFijo
+
+  const multiSelectTablaActivo = selectedTablaQuincenaIds.length > 1
+
+  // Liquidez es un corte puntual de cuentas bancarias (una foto en el
+  // tiempo), no un flujo -- sumar el snapshot de varias quincenas no
+  // significaria nada (no es "cuanto dinero tuviste en total"). Se queda
+  // atada solo a tablaQuincenaId (la primaria), igual que en Tarjetas.
+  const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
+  useEffect(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) { setLiquidezSnapshot(null); return }
+    fetch(`/api/liquidez?quincenaId=${tablaQuincenaId}`)
+      .then(r => r.json())
+      .then(data => {
+        const raw = Array.isArray(data) && data.length > 0 ? data[0] : null
+        setLiquidezSnapshot(raw ? { ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0 } : null)
+      })
+  }, [tablaQuincenaId])
+  const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
+
+  // Ingreso real total (asignado o no) y gasto sin presupuestar, agregados no
+  // paginados del servidor -- misma fuente que usa el dashboard para
+  // "Disponible real"/"según presupuesto", ver calcularLibreSinAsignar. A
+  // diferencia de Liquidez, esto SI es un flujo y se puede sumar entre las
+  // quincenas combinadas.
+  const [totalesTx, setTotalesTx] = useState<{ ingreso: number; gasto: number } | null>(null)
+  useEffect(() => {
+    if (tablaQuincenaId === ALL_QUINCENAS) { setTotalesTx(null); return }
+    Promise.all(selectedTablaQuincenaIds.map(id => fetch(`/api/transacciones?quincenaId=${id}&limit=1`).then(r => r.json())))
+      .then(datas => setTotalesTx(datas.reduce((acc, data) => ({
+        ingreso: acc.ingreso + Number(data?.totales?.Ingreso ?? 0),
+        gasto: acc.gasto + Number(data?.totales?.Gasto ?? 0),
+      }), { ingreso: 0, gasto: 0 })))
+  }, [tablaQuincenaId, selectedTablaQuincenaIds])
+  // gastoTotal (todo el Gasto real, asignado o no) menos totalRealFijo (el ya
+  // contabilizado en lineas de Gasto) = lo que quedo sin presupuestoId -- evita
+  // un segundo fetch con asignado=no.
+  const libreSinAsignar = totalesTx != null
+    ? calcularLibreSinAsignar(totalesTx.ingreso, presupuestosTabla, Math.max(totalesTx.gasto - totalRealFijo, 0))
+    : null
+
+  // Movimientos sin partida asignada -- mismo panel que la vista Tarjetas,
+  // pero acotado a la(s) quincena(s) elegidas aqui. Oculto en modo "Todas":
+  // no tiene sentido triar una lista sin fondo de todo el historial.
+  const [txSinPresupuestoTabla, setTxSinPresupuestoTabla] = useState<TxSinPresupuesto[]>([])
+  const fetchTxSinPresupuestoTabla = useCallback(async () => {
+    if (tablaQuincenaId === ALL_QUINCENAS) { setTxSinPresupuestoTabla([]); return }
+    const porQuincena = await Promise.all(
+      selectedTablaQuincenaIds.map(id => fetch(`/api/transacciones?quincenaId=${id}&limit=500`).then(r => r.json()))
+    )
+    const transacciones: Array<TxSinPresupuesto & { presupuestoId: number | null }> =
+      porQuincena.flatMap(json => json.data ?? [])
+    setTxSinPresupuestoTabla(transacciones.filter(t => t.presupuestoId == null))
+  }, [tablaQuincenaId, selectedTablaQuincenaIds])
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void fetchTxSinPresupuestoTabla() }, 0)
+    return () => window.clearTimeout(timer)
+  }, [fetchTxSinPresupuestoTabla])
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 space-y-3">
+        <div className="flex items-center flex-wrap gap-2">
+          <QuincenaChips quincenas={quincenas} quincenaId={tablaQuincenaId} today={today} onSelect={setTablaQuincenaId} showAll
+            extraSelectedIds={extraTablaQuincenaIds} onToggleExtra={onToggleExtraTablaQuincena} />
+          {multiSelectTablaActivo ? (
+            <button onClick={onClearExtraTablaQuincenas}
+              className="flex-none text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer whitespace-nowrap">
+              Quitar combinación
+            </button>
+          ) : tablaQuincenaId !== ALL_QUINCENAS ? (
+            <span className="flex-none text-xs text-slate-400 dark:text-slate-500 whitespace-nowrap">
+              Ctrl/Cmd+clic para combinar quincenas
+            </span>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <FilterChip value={tablaCategoriaId} onChange={setTablaCategoriaId} onClear={() => setTablaCategoriaId('')} placeholder="Categoría">
+            {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+          </FilterChip>
+          <FilterChip value={tablaClasificacion} onChange={setTablaClasificacion} onClear={() => setTablaClasificacion('')} placeholder="Clasificación">
+            <option value="Fijo">Fijo</option>
+            <option value="Variable">Variable</option>
+            <option value="sin">Sin clasificar</option>
+          </FilterChip>
+          <FilterChip value={tablaRecurrente} onChange={setTablaRecurrente} onClear={() => setTablaRecurrente('')} placeholder="Recurrente">
+            <option value="si">Sí</option>
+            <option value="no">No</option>
+          </FilterChip>
+          <FilterChip value={tablaEstado} onChange={setTablaEstado} onClear={() => setTablaEstado('')} placeholder="Estado">
+            <option value="excedido">Excedido</option>
+            <option value="dentro">Dentro de presupuesto</option>
+          </FilterChip>
+          <FilterChip value={tablaSaldo} onChange={setTablaSaldo} onClear={() => setTablaSaldo('')} placeholder="Saldo">
+            <option value="pendiente">Con saldo pendiente</option>
+            <option value="pagado">Sin saldo pendiente</option>
+          </FilterChip>
+          <FilterChip value={tablaPorCubrir} onChange={setTablaPorCubrir} onClear={() => setTablaPorCubrir('')} placeholder="Por cubrir">
+            <option value="0">Sin registrar (0%)</option>
+            <option value="50">Cubierto menos de 50%</option>
+            <option value="100">Cubierto menos de 100%</option>
+          </FilterChip>
+          <div className="relative flex-1 min-w-[160px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 dark:text-slate-500" />
+            <input ref={busquedaTablaInputRef} type="text" placeholder="Buscar por categoría o descripción..." value={busquedaTabla} onChange={e => setBusquedaTabla(e.target.value)}
+              className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg pl-8 pr-8 py-2 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            {busquedaTabla && (
+              <button type="button" onClick={() => setBusquedaTabla('')} aria-label="Quitar búsqueda"
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 cursor-pointer">
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          <label className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" checked={tablaOcultarIngresos} onChange={e => setTablaOcultarIngresos(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400" />
+            Ocultar ingresos
+          </label>
+          <ColumnsMenu columns={PRESUPUESTO_TABLA_COLUMNS} visible={colVisible} onToggle={toggleCol} />
+        </div>
+        <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
+      </div>
+
+      <div className={`grid grid-cols-2 gap-3 ${tablaQuincenaId !== ALL_QUINCENAS ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
+        <KpiCard
+          label="Ingresos" value={formatMXN(totalIngresoRealFijo)}
+          subtitle={`de ${formatMXN(totalIngresoPresupuestadoFijo)} presupuestado`}
+          icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
+          color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+          action={(() => {
+            const pct = totalIngresoPresupuestadoFijo > 0 ? (totalIngresoRealFijo / totalIngresoPresupuestadoFijo) * 100 : 0
+            const cumplido = pct >= 100
+            return (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                  <div className={`h-1.5 rounded-full transition-all ${cumplido ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <span className={`text-[10px] font-semibold tabular-nums ${cumplido ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{pct.toFixed(0)}%</span>
+              </div>
+            )
+          })()}
+        />
+        <KpiCard
+          label="Gastos" value={formatMXN(totalReal)}
+          subtitle={`de ${formatMXN(totalPresupuestado)} presupuestado`}
+          icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
+          color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
+          action={(() => {
+            const pct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
+            return (
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                  <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                </div>
+                <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
+              </div>
+            )
+          })()}
+        />
+        <KpiCard
+          label="Balance (plan)" value={formatMXN(balanceReal)}
+          subtitle={`plan ${formatMXN(balancePresupuestado)}`}
+          icon={<Scale size={20} className={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
+          color={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
+          bg={balanceReal >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+        />
+        {tablaQuincenaId !== ALL_QUINCENAS && (
+          liquidezSnapshot ? (
+            <KpiCard
+              label={multiSelectTablaActivo ? 'Liquidez (Q primaria)' : 'Liquidez'} value={formatMXN(totalLiquidez)}
+              subtitle={`falta por cubrir ${formatMXN(totalFaltaPorPagar)}`}
+              subtitleColor={totalFaltaPorPagar > totalLiquidez ? 'text-rose-500 dark:text-rose-400' : undefined}
+              icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
+              color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
+              action={(() => {
+                const pct = totalLiquidez > 0 ? (totalFaltaPorPagar / totalLiquidez) * 100 : 0
+                return (
+                  <div className="mt-1.5 flex items-center gap-1.5">
+                    <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
+                      <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                    </div>
+                    <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
+                  </div>
+                )
+              })()}
+            />
+          ) : (
+            <Link href={`/configuracion/liquidez?quincenaId=${tablaQuincenaId}`}>
+              <KpiCard
+                label="Liquidez" value="—" subtitle="Sin corte capturado"
+                icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
+                color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
+              />
+            </Link>
+          )
+        )}
+        {tablaQuincenaId !== ALL_QUINCENAS && libreSinAsignar != null && (
+          <KpiCard
+            label={multiSelectTablaActivo ? 'Libre / sin asignar (combinado)' : 'Libre / sin asignar'} value={formatMXN(Math.abs(libreSinAsignar))}
+            subtitle={libreSinAsignar < 0 ? 'de más' : 'de tus ingresos reales'}
+            subtitleColor={libreSinAsignar < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
+            icon={<Coins size={20} className={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'} />}
+            color={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
+            bg={libreSinAsignar >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+          />
+        )}
+      </div>
+
+      {tablaQuincenaId !== ALL_QUINCENAS && (
+        <TxSinPresupuestoPanel
+          txSinPresupuesto={txSinPresupuestoTabla} setTxSinPresupuesto={setTxSinPresupuestoTabla}
+          presupuestos={presupuestosTabla} categorias={categorias}
+          onAssigned={() => { onDataChanged(); fetchTxSinPresupuestoTabla() }}
+        />
+      )}
+
+      <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        {tablaLoading ? (
+          <div className="py-20 flex justify-center items-center text-slate-400 dark:text-slate-500 text-sm">Cargando...</div>
+        ) : presupuestosTabla.length === 0 ? (
+          <div className="text-center py-20 text-slate-400 dark:text-slate-500">
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin partidas de presupuesto</p>
+          </div>
+        ) : filasTabla.length === 0 ? (
+          <div className="text-center py-20 text-slate-400 dark:text-slate-500">
+            <p className="font-medium text-slate-600 dark:text-slate-400">Sin resultados</p>
+            <p className="text-sm mt-1">Ninguna partida coincide con estos filtros</p>
+          </div>
+        ) : (
+          <>
+            {/* Mobile cards */}
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
+              {filasTabla.map(p => (
+                <div key={p.id} className="px-4 py-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="font-semibold text-slate-800 dark:text-slate-100 truncate">{p.descripcion}</p>
+                        {estadoLineaBadge(p.estadoLinea)}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">{p.categoria.nombre} · {p.quincena.codigo}</p>
+                    </div>
+                    <span className={`shrink-0 text-xs font-semibold px-2 py-0.5 rounded-full ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</span>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between text-sm">
+                    <span className={`tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
+                      <button onClick={() => setDetalleP(p)}
+                        className="font-semibold hover:underline hover:opacity-80 cursor-pointer transition-colors"
+                        aria-label={`Ver movimientos de ${p.descripcion}`}>
+                        {formatMXN(p.real)}
+                      </button>
+                      {' '}de {formatMXN(p.montoEfectivo)}
+                    </span>
+                    {p.excedido > 0
+                      ? <span className="text-rose-600 dark:text-rose-400 font-semibold tabular-nums">+{formatMXN(p.excedido)}</span>
+                      : <span className="text-emerald-600 dark:text-emerald-400 font-semibold tabular-nums">{formatMXN(p.montoEfectivo - p.real)}</span>}
+                  </div>
+                  {p.pendiente > 0 && (
+                    <p className="mt-1 text-[11px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pendiente de pago</p>
+                  )}
+                  <div className="mt-2 flex items-center justify-end gap-1">
+                    {p.categoria.tipo === 'Gasto' && p.montoEfectivo - p.real > 0 && (
+                      <button onClick={() => setTraspasoOrigen(p)} aria-label="Traspasar saldo libre"
+                        className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors">
+                        <ArrowRightLeft size={13} />
+                      </button>
+                    )}
+                    <button onClick={() => openEdit(p)} aria-label="Editar"
+                      className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors">
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => setDeleteTarget({ id: p.id, p })} aria-label="Eliminar"
+                      className="p-1 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+              <div className="bg-slate-50 dark:bg-slate-900/60 px-4 py-3 space-y-1.5">
+                <p className="text-[11px] font-semibold text-slate-400 dark:text-slate-500 uppercase tracking-wide">
+                  Total · {gastoFilasTabla.length} {gastoFilasTabla.length === 1 ? 'partida' : 'partidas'}
+                </p>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Presupuestado</span>
+                  <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">{formatMXN(totalPresupuestado)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">Real</span>
+                  <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-100">
+                    {formatMXN(totalReal)}
+                    {totalPendiente > 0 && <span className="ml-1.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">({formatMXN(totalPendiente)} pend.)</span>}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-500 dark:text-slate-400">{totalExcedido > 0 ? 'Excedido' : 'Restante'}</span>
+                  <span className={`font-semibold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                    {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm pt-1.5 mt-0.5 border-t border-amber-200/60 dark:border-amber-900/40">
+                  <span className="text-amber-700 dark:text-amber-400 font-medium">Falta por pagar</span>
+                  <span className="font-bold tabular-nums text-amber-700 dark:text-amber-400">{formatMXN(totalFaltaPorPagar)}</span>
+                </div>
+                <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-snug">Pendiente de pago + presupuesto que aún no registras</p>
+              </div>
+            </div>
+            {/* Desktop table */}
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                  <tr>
+                    {colVisible.has('quincena') && <SortableTh label="Quincena" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    {colVisible.has('categoria') && <SortableTh label="Categoría" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    <SortableTh label="Descripción" sortKeyName="descripcion" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    {colVisible.has('clasificacion') && <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Clasificación</th>}
+                    <SortableTh label="Presupuestado" sortKeyName="presupuestado" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Real" sortKeyName="real" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="% usado" sortKeyName="pct" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    <SortableTh label="Restante/Excedido" sortKeyName="restante" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                    {colVisible.has('recurrente') && <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    {colVisible.has('vence') && <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+                  {filasTabla.map(p => (
+                    <tr key={p.id} className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 transition-colors">
+                      {colVisible.has('quincena') && <td className="px-4 py-3"><span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{p.quincena.codigo}</span></td>}
+                      {colVisible.has('categoria') && (
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                            <span className={`w-2 h-2 rounded-full shrink-0 ${CAT_DOT[p.categoria.nombre] ?? 'bg-slate-400'}`} />
+                            {p.categoria.nombre}
+                          </span>
+                        </td>
+                      )}
+                      <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100 max-w-[220px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate">{p.descripcion}</span>
+                          {estadoLineaBadge(p.estadoLinea)}
+                        </div>
+                      </td>
+                      {colVisible.has('clasificacion') && <td className="px-4 py-3 text-slate-500 dark:text-slate-400">{p.clasificacion ?? '—'}</td>}
+                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>{formatMXN(p.montoEfectivo)}</td>
+                      <td className={`px-4 py-3 text-right tabular-nums ${montoTipoColor(p.categoria.tipo)}`}>
+                        <button onClick={() => setDetalleP(p)}
+                          className="hover:underline hover:opacity-80 cursor-pointer transition-colors"
+                          aria-label={`Ver movimientos de ${p.descripcion}`}>
+                          {formatMXN(p.real)}
+                        </button>
+                        {p.pendiente > 0 && (
+                          <span className="block text-[10px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(p.pendiente)} pend.</span>
+                        )}
+                      </td>
+                      <td className={`px-4 py-3 text-right font-semibold tabular-nums ${pctTextColor(p.pct)}`}>{p.pct.toFixed(0)}%</td>
+                      <td className={`px-4 py-3 text-right font-semibold tabular-nums ${p.excedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                        {p.excedido > 0 ? `+${formatMXN(p.excedido)}` : formatMXN(p.montoEfectivo - p.real)}
+                      </td>
+                      {colVisible.has('recurrente') && (
+                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {p.recurrente ? (p.frecuencia === 'MENSUAL' ? 'Mensual' : 'Quincenal') : '—'}
+                        </td>
+                      )}
+                      {colVisible.has('vence') && (
+                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
+                          {p.fechaVencimiento ? formatDateStr(p.fechaVencimiento, { day: '2-digit', month: 'short' }) : '—'}
+                        </td>
+                      )}
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1">
+                          {p.categoria.tipo === 'Gasto' && p.montoEfectivo - p.real > 0 && (
+                            <button onClick={() => setTraspasoOrigen(p)}
+                              className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Traspasar saldo libre">
+                              <ArrowRightLeft size={14} />
+                            </button>
+                          )}
+                          <button onClick={() => openEdit(p)}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Editar">
+                            <Pencil size={14} />
+                          </button>
+                          <button onClick={() => setDeleteTarget({ id: p.id, p })}
+                            className="p-1.5 text-slate-400 dark:text-slate-500 hover:text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-lg cursor-pointer transition-colors" aria-label="Eliminar">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-slate-50 dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-700">
+                  <tr>
+                    <td colSpan={leadingCols} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                      Total · {gastoFilasTabla.length} {gastoFilasTabla.length === 1 ? 'partida' : 'partidas'}
+                    </td>
+                    <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">{formatMXN(totalPresupuestado)}</td>
+                    <td className="px-4 py-3 text-right font-bold tabular-nums text-slate-800 dark:text-slate-100">
+                      {formatMXN(totalReal)}
+                      {totalPendiente > 0 && (
+                        <span className="block text-[10px] font-medium text-amber-600 dark:text-amber-400">{formatMXN(totalPendiente)} pend.</span>
+                      )}
+                    </td>
+                    <td className={`px-4 py-3 text-right font-bold tabular-nums ${pctTextColor(totalPct)}`}>{totalPct.toFixed(0)}%</td>
+                    <td className={`px-4 py-3 text-right font-bold tabular-nums ${totalExcedido > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {totalExcedido > 0 ? `+${formatMXN(totalExcedido)}` : formatMXN(totalRestante)}
+                    </td>
+                    <td colSpan={trailingCols}></td>
+                  </tr>
+                  <tr className="bg-amber-50/70 dark:bg-amber-950/20 border-t border-amber-200/60 dark:border-amber-900/40">
+                    <td colSpan={leadingCols + 4} className="px-4 py-2.5 text-xs font-semibold text-amber-700 dark:text-amber-400">
+                      Falta por pagar <span className="font-normal text-amber-600/80 dark:text-amber-500/80">— pendiente de pago + presupuesto que aún no registras</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                      {formatMXN(totalFaltaPorPagar)}
+                    </td>
+                    <td colSpan={trailingCols}></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PresupuestoSkeleton() {
+  return (
+    <div className="space-y-3 animate-pulse">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+          <div className="flex justify-between mb-2">
+            <div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-slate-100 dark:bg-slate-700" /><div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-32" /></div>
+            <div className="h-4 bg-slate-100 dark:bg-slate-700 rounded w-20" />
+          </div>
+          <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full" />
+        </div>
+      ))}
+    </div>
+  )
+}
