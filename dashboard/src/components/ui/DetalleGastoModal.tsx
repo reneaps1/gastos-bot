@@ -1,6 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
-import { Loader2, ArrowRightLeft, ArrowUpDown, XCircle, Pencil, MessageSquare, Send } from 'lucide-react'
+import { Loader2, ArrowRightLeft, ArrowUpDown, XCircle, Pencil, MessageSquare, Send, History, ChevronDown, ChevronUp } from 'lucide-react'
 import { formatMXN, formatDateStr } from '@/lib/utils'
 import { getMexicoDateString } from '@/lib/quincena-selection'
 import { useToast } from '@/components/Toast'
@@ -67,12 +67,60 @@ interface Comentario {
   user: { id: number; nombre: string } | null
 }
 
+type TipoCambioPresupuesto =
+  | 'CREACION'
+  | 'AJUSTE_MANUAL'
+  | 'DESDE_SIN_ASIGNAR'
+  | 'TRASPASO_ENTRADA'
+  | 'TRASPASO_SALIDA'
+  | 'MIGRACION_VIGENTE'
+
+interface CambioPresupuesto {
+  id: number
+  tipo: TipoCambioPresupuesto
+  montoAnterior: number
+  montoNuevo: number
+  delta: number
+  grupoCambioId: string | null
+  presupuestoRelacionadoId: number | null
+  relacionado: { descripcion: string; categoria: string | null } | null
+  motivo: string | null
+  actor: string | null
+  fechaCreacion: string
+}
+
+interface HistorialPresupuestoResponse {
+  presupuesto: {
+    id: number
+    original: number
+    vigente: number
+    ajusteAcumulado: number
+  }
+  cambios: CambioPresupuesto[]
+}
+
 // fechaCreacion es un timestamp real (no una fecha-sin-hora como Quincena),
 // asi que se muestra en la hora local del navegador -- formatDateStr/formatDate
 // de @/lib/utils estan pensados para columnas @db.Date y truncarian/forzarian
-// UTC, perdiendo la hora real del comentario.
-function formatComentarioFecha(iso: string) {
+// UTC, perdiendo la hora real del comentario o del cambio de presupuesto.
+function formatTimestamp(iso: string) {
   return new Date(iso).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
+function etiquetaCambio(cambio: CambioPresupuesto) {
+  switch (cambio.tipo) {
+    case 'CREACION': return 'Presupuesto inicial'
+    case 'AJUSTE_MANUAL': return 'Ajuste manual'
+    case 'DESDE_SIN_ASIGNAR': return 'Desde dinero sin asignar'
+    case 'TRASPASO_ENTRADA': return cambio.relacionado ? `Desde ${cambio.relacionado.descripcion}` : 'Traspaso recibido'
+    case 'TRASPASO_SALIDA': return cambio.relacionado ? `Hacia ${cambio.relacionado.descripcion}` : 'Traspaso enviado'
+    case 'MIGRACION_VIGENTE': return 'Vigente previo al historial'
+  }
+}
+
+function formatDelta(delta: number) {
+  if (Math.abs(delta) < 0.005) return formatMXN(0)
+  return `${delta > 0 ? '+' : '−'}${formatMXN(Math.abs(delta))}`
 }
 
 interface DetalleGastoProps {
@@ -98,8 +146,15 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
   const [historial, setHistorial] = useState<ReturnType<typeof historialSerie>>(null)
   const [accionActiva, setAccionActiva] = useState<'ajustar' | 'cancelar' | null>(null)
   const [montoAjuste, setMontoAjuste] = useState('')
+  const [motivoAjuste, setMotivoAjuste] = useState('')
   const [notaCancelar, setNotaCancelar] = useState('')
   const [guardando, setGuardando] = useState(false)
+
+  const [historialPresupuesto, setHistorialPresupuesto] = useState<HistorialPresupuestoResponse | null>(null)
+  const [historialPresupuestoLoading, setHistorialPresupuestoLoading] = useState(true)
+  const [historialPresupuestoError, setHistorialPresupuestoError] = useState(false)
+  const [historialPresupuestoAbierto, setHistorialPresupuestoAbierto] = useState(false)
+  const [historialVersion, setHistorialVersion] = useState(0)
 
   const [comentarios, setComentarios] = useState<Comentario[]>([])
   const [comentariosLoading, setComentariosLoading] = useState(true)
@@ -137,6 +192,33 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
       })
     return () => { cancelado = true }
   }, [partida.id])
+
+  // Historial auditable del monto de esta línea. Es distinto al historial de
+  // la serie recurrente: aquí interesa cómo cambió Original → Vigente dentro
+  // de ESTA quincena y de dónde vino cada ajuste.
+  useEffect(() => {
+    let cancelado = false
+    setHistorialPresupuestoLoading(true)
+    setHistorialPresupuestoError(false)
+    fetch(`/api/presupuestos/${partida.id}/historial`)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.json()
+      })
+      .then((data: HistorialPresupuestoResponse) => {
+        if (!cancelado) setHistorialPresupuesto(data)
+      })
+      .catch(() => {
+        if (!cancelado) {
+          setHistorialPresupuesto(null)
+          setHistorialPresupuestoError(true)
+        }
+      })
+      .finally(() => {
+        if (!cancelado) setHistorialPresupuestoLoading(false)
+      })
+    return () => { cancelado = true }
+  }, [partida.id, historialVersion])
 
   // Historial de esta serie recurrente: solo aplica si la partida pertenece a
   // un grupo (ver recurrenciaGrupoId). Se pide aparte de las transacciones de
@@ -196,9 +278,15 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
     }
   }
 
-  const presupuestado = partida.montoEfectivo
-  const fueRevisado = partida.montoRevisado != null && Number(partida.montoRevisado) !== Number(partida.montoPresupuestado)
+  const original = historialPresupuesto?.presupuesto.original ?? Number(partida.montoPresupuestado)
+  const presupuestado = historialPresupuesto?.presupuesto.vigente ?? partida.montoEfectivo
+  const ajusteAcumulado = historialPresupuesto?.presupuesto.ajusteAcumulado ?? (presupuestado - original)
+  const fueRevisado = Math.abs(ajusteAcumulado) >= 0.005
+  const ajustePct = original > 0 ? (ajusteAcumulado / original) * 100 : null
   const restante = presupuestado - partida.real
+  const ejecucionVigentePct = presupuestado > 0 ? (partida.real / presupuestado) * 100 : null
+  const desviacionOriginal = partida.real - original
+  const desviacionOriginalPct = original > 0 ? (desviacionOriginal / original) * 100 : null
   // El total que devuelve la API es la suma no paginada con el mismo filtro que
   // usa /api/presupuestos, asi que deberia coincidir con `real`. Si no coincide
   // se avisa en vez de mostrar dos numeros distintos sin explicacion.
@@ -220,12 +308,14 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
     try {
       const res = await fetch(`/api/presupuestos/${partida.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ montoRevisado: nuevo }),
+        body: JSON.stringify({ montoRevisado: nuevo, motivoCambio: motivoAjuste.trim() || undefined }),
       })
       if (!res.ok) throw new Error()
-      toast('Monto ajustado')
+      toast('Monto vigente ajustado')
       setAccionActiva(null)
+      setMotivoAjuste('')
       onAjustado?.(nuevo)
+      setHistorialVersion(v => v + 1)
     } catch {
       toast('Error al ajustar el monto', 'error')
     } finally {
@@ -262,9 +352,9 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
                 </button>
               )}
               {puedeAjustar && (
-                <button onClick={() => { setMontoAjuste(String(presupuestado)); setAccionActiva('ajustar') }}
+                <button onClick={() => { setMontoAjuste(String(presupuestado)); setMotivoAjuste(''); setAccionActiva('ajustar') }}
                   className="inline-flex items-center gap-1.5 text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
-                  <ArrowUpDown size={13} /> Ajustar monto
+                  <ArrowUpDown size={13} /> Ajustar vigente
                 </button>
               )}
               {puedeTraspasar && (
@@ -281,20 +371,32 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
               )}
             </div>
           ) : accionActiva === 'ajustar' ? (
-            <div className="flex flex-wrap items-end gap-2 p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl">
-              <div>
-                <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Nuevo monto comprometido</label>
-                <input type="number" min={partida.real} step="0.01" value={montoAjuste} onChange={e => setMontoAjuste(e.target.value)} autoFocus
-                  className="w-32 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            <div className="p-3 bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-800 rounded-xl space-y-2.5">
+              <div className="flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Nuevo presupuesto vigente</label>
+                  <input type="number" min={partida.real} step="0.01" value={montoAjuste} onChange={e => setMontoAjuste(e.target.value)} autoFocus
+                    className="w-36 text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                </div>
+                <div className="flex-1 min-w-[180px]">
+                  <label className="block text-xs text-slate-500 dark:text-slate-400 mb-1">Motivo <span className="font-normal text-slate-400">(opcional)</span></label>
+                  <input type="text" value={motivoAjuste} onChange={e => setMotivoAjuste(e.target.value)} placeholder="Ej. gasto mayor a lo previsto"
+                    className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+                </div>
               </div>
-              <button onClick={guardarAjuste} disabled={guardando}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
-                {guardando && <Loader2 size={12} className="animate-spin" />} Guardar
-              </button>
-              <button onClick={() => setAccionActiva(null)} disabled={guardando}
-                className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
-                Cancelar
-              </button>
+              <p className="text-[11px] text-indigo-600/80 dark:text-indigo-400/80">
+                El Original ({formatMXN(original)}) no cambia. Este ajuste modifica únicamente el Vigente y queda en el historial.
+              </p>
+              <div className="flex items-center gap-2 justify-end">
+                <button onClick={() => setAccionActiva(null)} disabled={guardando}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-white/70 dark:hover:bg-slate-700 cursor-pointer">
+                  Cancelar
+                </button>
+                <button onClick={guardarAjuste} disabled={guardando}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
+                  {guardando && <Loader2 size={12} className="animate-spin" />} Guardar vigente
+                </button>
+              </div>
             </div>
           ) : (
             <div className="flex flex-wrap items-end gap-2 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800 rounded-xl">
@@ -330,15 +432,29 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-3 mb-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
         <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Presupuestado</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Original</p>
+          <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(original)}</p>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500">plan al crear la línea</p>
+        </div>
+        <div className={`rounded-xl px-3 py-2 ${fueRevisado ? 'bg-indigo-50 dark:bg-indigo-950/30 ring-1 ring-indigo-100 dark:ring-indigo-900/60' : 'bg-slate-50 dark:bg-slate-700/40'}`}>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Vigente</p>
           <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(presupuestado)}</p>
-          {fueRevisado && <p className="text-[10px] text-slate-400 dark:text-slate-500">original {formatMXN(Number(partida.montoPresupuestado))}</p>}
+          {fueRevisado ? (
+            <p className={`text-[10px] font-medium ${ajusteAcumulado > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+              {formatDelta(ajusteAcumulado)}{ajustePct != null ? ` (${ajustePct > 0 ? '+' : ''}${ajustePct.toFixed(1)}%)` : ''} vs original
+            </p>
+          ) : (
+            <p className="text-[10px] text-slate-400 dark:text-slate-500">sin ajustes</p>
+          )}
         </div>
         <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
-          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Gastado</p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">Real</p>
           <p className="text-sm font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(partida.real)}</p>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500">
+            {ejecucionVigentePct != null ? `${ejecucionVigentePct.toFixed(0)}% del vigente` : 'sin base vigente'}
+          </p>
         </div>
         <div className="rounded-xl bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
           <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">
@@ -347,7 +463,91 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
           <p className={`text-sm font-bold tabular-nums ${restante < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
             {formatMXN(Math.abs(restante))}
           </p>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500">contra vigente</p>
         </div>
+      </div>
+
+      {fueRevisado && (
+        <div className={`mb-3 rounded-xl border px-3 py-2.5 ${desviacionOriginal > 0 ? 'border-amber-200 dark:border-amber-800/50 bg-amber-50 dark:bg-amber-950/20' : 'border-emerald-200 dark:border-emerald-800/50 bg-emerald-50 dark:bg-emerald-950/20'}`}>
+          <p className={`text-xs font-medium ${desviacionOriginal > 0 ? 'text-amber-800 dark:text-amber-300' : 'text-emerald-800 dark:text-emerald-300'}`}>
+            {ejecucionVigentePct != null ? `Has usado ${ejecucionVigentePct.toFixed(0)}% del presupuesto vigente.` : 'Presupuesto vigente ajustado.'}
+            {' '}Frente al plan original, el real está {desviacionOriginal >= 0 ? 'arriba' : 'abajo'} por {formatMXN(Math.abs(desviacionOriginal))}
+            {desviacionOriginalPct != null ? ` (${Math.abs(desviacionOriginalPct).toFixed(1)}%)` : ''}.
+          </p>
+        </div>
+      )}
+
+      <div className="mb-4 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setHistorialPresupuestoAbierto(v => !v)}
+          className="w-full px-3 py-2.5 flex items-center justify-between gap-3 text-left hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors cursor-pointer"
+          aria-expanded={historialPresupuestoAbierto}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <History size={14} className="text-indigo-500 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">Historial del presupuesto</p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500">
+                {historialPresupuestoLoading
+                  ? 'Cargando cambios…'
+                  : historialPresupuestoError
+                    ? 'No se pudo cargar'
+                    : `${historialPresupuesto?.cambios.length ?? 0} evento${(historialPresupuesto?.cambios.length ?? 0) === 1 ? '' : 's'} · ajuste neto ${formatDelta(ajusteAcumulado)}`}
+              </p>
+            </div>
+          </div>
+          {historialPresupuestoAbierto ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
+        </button>
+
+        {historialPresupuestoAbierto && (
+          <div className="border-t border-slate-200 dark:border-slate-700 px-3 py-3 bg-slate-50/60 dark:bg-slate-900/20">
+            {historialPresupuestoLoading ? (
+              <div className="py-4 flex items-center justify-center gap-2 text-xs text-slate-400 dark:text-slate-500">
+                <Loader2 size={13} className="animate-spin" /> Cargando historial…
+              </div>
+            ) : historialPresupuestoError ? (
+              <p className="py-3 text-xs text-rose-600 dark:text-rose-400 text-center">No se pudo cargar el historial de esta partida.</p>
+            ) : !historialPresupuesto || historialPresupuesto.cambios.length === 0 ? (
+              <p className="py-3 text-xs text-slate-400 dark:text-slate-500 text-center">Sin eventos registrados.</p>
+            ) : (
+              <ol className="space-y-0">
+                {historialPresupuesto.cambios.map((cambio, index) => {
+                  const positivo = cambio.delta > 0.005
+                  const negativo = cambio.delta < -0.005
+                  return (
+                    <li key={cambio.id} className="relative pl-6 pb-4 last:pb-0">
+                      {index < historialPresupuesto.cambios.length - 1 && (
+                        <span className="absolute left-[6px] top-3 bottom-0 w-px bg-slate-200 dark:bg-slate-700" aria-hidden />
+                      )}
+                      <span className={`absolute left-0 top-1.5 w-3 h-3 rounded-full ring-2 ring-white dark:ring-slate-800 ${positivo ? 'bg-amber-400' : negativo ? 'bg-emerald-500' : 'bg-indigo-400'}`} aria-hidden />
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">{etiquetaCambio(cambio)}</p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
+                            {formatTimestamp(cambio.fechaCreacion)}{cambio.actor ? ` · ${cambio.actor}` : ''}
+                          </p>
+                          {cambio.motivo && (
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 break-words">{cambio.motivo}</p>
+                          )}
+                          {cambio.tipo === 'MIGRACION_VIGENTE' && (
+                            <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 italic">La fecha corresponde al backfill; Milo no conoce cuándo ocurrió el ajuste histórico original.</p>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className={`text-xs font-bold tabular-nums ${positivo ? 'text-amber-600 dark:text-amber-400' : negativo ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>
+                            {cambio.tipo === 'CREACION' ? formatMXN(cambio.montoNuevo) : formatDelta(cambio.delta)}
+                          </p>
+                          <p className="text-[10px] text-slate-400 dark:text-slate-500 tabular-nums">queda {formatMXN(cambio.montoNuevo)}</p>
+                        </div>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ol>
+            )}
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -459,7 +659,7 @@ export function DetalleGastoContent({ partida, onTraspasar, onAjustado, onCancel
               <li key={c.id} className="rounded-lg bg-slate-50 dark:bg-slate-700/40 px-3 py-2">
                 <div className="flex items-baseline justify-between gap-2">
                   <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">{c.user?.nombre ?? 'Sin usuario'}</span>
-                  <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">{formatComentarioFecha(c.fechaCreacion)}</span>
+                  <span className="text-[10px] text-slate-400 dark:text-slate-500 shrink-0">{formatTimestamp(c.fechaCreacion)}</span>
                 </div>
                 <p className="text-sm text-slate-600 dark:text-slate-300 mt-0.5 whitespace-pre-wrap break-words">{c.texto}</p>
               </li>
