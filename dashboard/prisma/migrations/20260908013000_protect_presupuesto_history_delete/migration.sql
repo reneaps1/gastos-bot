@@ -43,3 +43,33 @@ CREATE TRIGGER "trg_protect_presupuesto_history_delete"
 BEFORE DELETE ON "presupuesto"
 FOR EACH ROW
 EXECUTE FUNCTION protect_presupuesto_history_delete();
+
+-- Cancelada significa "esta partida no ocurrio". Si ya existen movimientos
+-- reales enlazados a la linea, cambiarla a Cancelada esconderia gasto real de
+-- agregados de presupuesto. Se bloquea esa transicion para preservar verdad
+-- financiera y obligar a resolver/reasignar los movimientos primero.
+CREATE OR REPLACE FUNCTION protect_cancelled_presupuesto_with_transactions()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW."estado_linea" = 'Cancelada'
+     AND OLD."estado_linea" IS DISTINCT FROM 'Cancelada'
+     AND EXISTS (
+       SELECT 1
+       FROM "transacciones" t
+       WHERE t."presupuesto_id" = OLD."id"
+     ) THEN
+    RAISE EXCEPTION
+      'Presupuesto % tiene movimientos y no puede marcarse Cancelada',
+      OLD."id"
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS "trg_protect_cancelled_presupuesto_with_transactions" ON "presupuesto";
+CREATE TRIGGER "trg_protect_cancelled_presupuesto_with_transactions"
+BEFORE UPDATE OF "estado_linea" ON "presupuesto"
+FOR EACH ROW
+EXECUTE FUNCTION protect_cancelled_presupuesto_with_transactions();
