@@ -38,6 +38,7 @@ export async function GET(
         descripcion: true,
         montoPresupuestado: true,
         montoRevisado: true,
+        estadoLinea: true,
         categoria: { select: { nombre: true } },
         quincena: { select: { codigo: true, fechaInicio: true, fechaFin: true } },
       },
@@ -72,7 +73,11 @@ export async function GET(
     `
 
     const original = Number(presupuesto.montoPresupuestado)
-    const vigente = montoEfectivoPresupuesto(presupuesto)
+    // Una Cancelada sigue existiendo para preservar el Original, pero ya no
+    // forma parte del plan actual: su Vigente es 0 para lectura histórica.
+    const vigente = presupuesto.estadoLinea === 'Cancelada'
+      ? 0
+      : montoEfectivoPresupuesto(presupuesto)
 
     return NextResponse.json({
       presupuesto: {
@@ -84,6 +89,7 @@ export async function GET(
         original,
         vigente,
         ajusteAcumulado: Number((vigente - original).toFixed(2)),
+        estadoLinea: presupuesto.estadoLinea,
       },
       cambios: cambios.map(c => ({
         id: c.id,

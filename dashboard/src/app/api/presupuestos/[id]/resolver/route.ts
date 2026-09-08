@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getSession } from '@/lib/auth'
 import { cerrarSiCorresponde, conNota } from '@/lib/cierre-quincena-server'
 import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
+import { montoEfectivoPresupuesto, registrarCambioPresupuesto } from '@/lib/presupuesto-cambios'
 
 export async function POST(
   request: Request,
@@ -23,6 +24,7 @@ export async function POST(
     const body = await request.json()
     const { accion } = body
     const session = await getSession()
+    const actor = session?.username ?? null
     const quincenaOriginalId = current.quincenaId
 
     if (accion === 'pagar_existente') {
@@ -65,10 +67,25 @@ export async function POST(
       }
       await prisma.presupuesto.update({ where: { id }, data: { quincenaId: parseInt(targetQuincenaId) } })
     } else if (accion === 'cancelar') {
-      await prisma.presupuesto.update({
-        where: { id },
-        data: { estadoLinea: 'Cancelada', notas: conNota(current.notas, 'Cancelada', body.nota) },
-      })
+      if (current.estadoLinea !== 'Cancelada') {
+        const montoActual = montoEfectivoPresupuesto(current)
+        const nota = typeof body.nota === 'string' && body.nota.trim() ? body.nota.trim() : null
+        await prisma.$transaction(async tx => {
+          await tx.presupuesto.update({
+            where: { id },
+            data: { estadoLinea: 'Cancelada', notas: conNota(current.notas, 'Cancelada', nota ?? undefined) },
+          })
+          await registrarCambioPresupuesto(tx, {
+            presupuestoId: current.id,
+            quincenaId: current.quincenaId,
+            tipo: 'AJUSTE_MANUAL',
+            montoAnterior: montoActual,
+            montoNuevo: 0,
+            motivo: nota ? `Cancelada · ${nota}` : 'Cancelada',
+            actor,
+          })
+        })
+      }
     } else if (accion === 'absorber') {
       await prisma.presupuesto.update({
         where: { id },
@@ -78,7 +95,7 @@ export async function POST(
       return NextResponse.json({ error: 'accion invalida' }, { status: 400 })
     }
 
-    await cerrarSiCorresponde(quincenaOriginalId, session?.username ?? null)
+    await cerrarSiCorresponde(quincenaOriginalId, actor)
 
     const updated = await prisma.presupuesto.findUnique({ where: { id }, include: { categoria: true, quincena: true } })
     return NextResponse.json(updated)
