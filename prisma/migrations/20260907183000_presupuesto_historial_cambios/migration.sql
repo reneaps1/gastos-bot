@@ -43,6 +43,25 @@ ALTER TABLE "presupuesto_cambios"
   ADD CONSTRAINT "presupuesto_cambios_presupuesto_relacionado_id_fkey"
   FOREIGN KEY ("presupuesto_relacionado_id") REFERENCES "presupuesto"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
+-- La inmutabilidad del Original no depende solo de la API: cualquier UPDATE
+-- que intente alterar monto_presupuestado se rechaza en PostgreSQL. Si algún
+-- día se necesita corregir un Original histórico, debe hacerse mediante una
+-- migración explícita que gestione temporalmente este trigger.
+CREATE FUNCTION "prevenir_cambio_presupuesto_original"()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW."monto_presupuestado" IS DISTINCT FROM OLD."monto_presupuestado" THEN
+    RAISE EXCEPTION 'monto_presupuestado es inmutable; use monto_revisado para ajustar el presupuesto vigente';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER "trg_presupuesto_original_inmutable"
+BEFORE UPDATE OF "monto_presupuestado" ON "presupuesto"
+FOR EACH ROW
+EXECUTE FUNCTION "prevenir_cambio_presupuesto_original"();
+
 -- Toda línea existente obtiene un punto de partida explícito. La fecha de
 -- creación real ya existía en presupuesto.fecha_registro, así que el backfill
 -- conserva ese momento en vez de fingir que se creó hoy.
