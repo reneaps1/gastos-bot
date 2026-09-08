@@ -1,9 +1,11 @@
 -- El presupuesto Original es evidencia historica una vez que el periodo empieza.
--- Los DELETE de usuario deben convertirse en Cancelada; este trigger es una
--- ultima barrera contra deletes directos desde Prisma/SQL que se salten la API.
+-- Los DELETE de usuario se convierten en Cancelada desde la API; este trigger
+-- es una ultima barrera contra deletes directos que se salten ese flujo.
 --
--- Se permite borrar una plantilla futura sin movimientos para que la logica de
--- recurrencias pueda regenerar ocurrencias que aun no han entrado en vigor.
+-- Las ocurrencias recurrentes sin movimientos se permiten borrar fisicamente:
+-- el editor de recurrencias las regenera como plantillas y ese comportamiento
+-- no debe romperse al redefinir una serie. Cualquier fila con movimientos queda
+-- protegida sin importar si es recurrente o no.
 CREATE OR REPLACE FUNCTION protect_presupuesto_history_delete()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -24,7 +26,8 @@ BEGIN
     WHERE t."presupuesto_id" = OLD."id"
   ) INTO tiene_movimientos;
 
-  IF COALESCE(periodo_iniciado, FALSE) OR COALESCE(tiene_movimientos, FALSE) THEN
+  IF COALESCE(tiene_movimientos, FALSE)
+     OR (COALESCE(periodo_iniciado, FALSE) AND NOT OLD."recurrente") THEN
     RAISE EXCEPTION
       'Presupuesto % tiene historia y no puede eliminarse fisicamente; usa Cancelada',
       OLD."id"
