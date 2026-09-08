@@ -1,4 +1,4 @@
-import { Droplets, Tag, Users, Repeat, ClipboardList, CalendarRange, KeyRound, Wallet } from 'lucide-react'
+import { Droplets, Tag, Users, Repeat, ClipboardList, CalendarRange, KeyRound, Wallet, SlidersHorizontal } from 'lucide-react'
 
 const sections = [
   {
@@ -8,6 +8,14 @@ const sections = [
     icon: CalendarRange,
     color: 'text-teal-600',
     bg: 'bg-teal-50',
+  },
+  {
+    href: '/configuracion/referencias-presupuesto',
+    title: 'Referencias de presupuesto',
+    description: 'Define excepciones de ingreso o límite de gasto para una Q específica.',
+    icon: SlidersHorizontal,
+    color: 'text-indigo-600',
+    bg: 'bg-indigo-50',
   },
   {
     href: '/configuracion/cuentas',
