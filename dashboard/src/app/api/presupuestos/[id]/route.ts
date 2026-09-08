@@ -245,6 +245,9 @@ export async function PUT(
 
       // Future rows in a recurring series are regenerated as a new future
       // definition. Their new instances therefore receive their own CREACION.
+      // The DB guard introduced in D1 prevents hard-delete once a period has
+      // started or has real movements; this path only remains safe for future
+      // placeholders that have not become historical evidence yet.
       if (futuras.length > 0) {
         await tx.presupuesto.deleteMany({ where: { id: { in: futuras.map(f => f.id) } } })
       }
@@ -324,6 +327,49 @@ export async function PUT(
   }
 }
 
+async function cancelarPresupuestos(
+  ids: number[],
+  actor: string | null,
+  motivo: string,
+  desvincularRecurrencia = false,
+) {
+  if (ids.length === 0) return 0
+
+  return prisma.$transaction(async tx => {
+    const filas = await tx.presupuesto.findMany({
+      where: { id: { in: ids } },
+    })
+    let count = 0
+
+    for (const fila of filas) {
+      if (fila.estadoLinea === 'Cancelada') continue
+      const montoActual = montoEfectivoPresupuesto(fila)
+      await tx.presupuesto.update({
+        where: { id: fila.id },
+        data: {
+          estadoLinea: 'Cancelada',
+          notas: conNota(fila.notas, 'Retirada del presupuesto', motivo),
+          ...(desvincularRecurrencia
+            ? { recurrente: false, recurrenciaGrupoId: null, frecuencia: null, numOcurrencias: null }
+            : {}),
+        },
+      })
+      await registrarCambioPresupuesto(tx, {
+        presupuestoId: fila.id,
+        quincenaId: fila.quincenaId,
+        tipo: 'AJUSTE_MANUAL',
+        montoAnterior: montoActual,
+        montoNuevo: 0,
+        motivo,
+        actor,
+      })
+      count += 1
+    }
+
+    return count
+  })
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -335,33 +381,57 @@ export async function DELETE(
       return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
     }
 
+    const session = await getSession()
+    const actor = session?.username ?? null
     const { searchParams } = new URL(request.url)
     const grupoId = searchParams.get('grupoId')
     const scope = searchParams.get('scope')
 
+    // Desde D1, "eliminar" desde la aplicación significa retirar del plan.
+    // La fila se conserva como Cancelada para que Original e historial sigan
+    // siendo auditables. Los DELETE físicos quedan reservados a plantillas
+    // futuras internas y además están protegidos por trigger en PostgreSQL.
     if (grupoId && scope === 'future') {
       const current = await prisma.presupuesto.findUnique({ where: { id }, include: { quincena: true } })
       if (!current || !current.recurrenciaGrupoId) {
         return NextResponse.json({ error: 'Presupuesto not found' }, { status: 404 })
       }
-      const { count } = await prisma.presupuesto.deleteMany({
+      const futuras = await prisma.presupuesto.findMany({
         where: {
           recurrenciaGrupoId: current.recurrenciaGrupoId,
           quincena: { fechaInicio: { gt: current.quincena.fechaInicio } },
         },
+        select: { id: true },
       })
-      return NextResponse.json({ message: 'Ocurrencias futuras eliminadas', count })
+      const count = await cancelarPresupuestos(
+        futuras.map(f => f.id),
+        actor,
+        'Ocurrencia futura retirada de la serie',
+        true,
+      )
+      return NextResponse.json({ message: 'Ocurrencias futuras retiradas', count })
     }
 
     if (grupoId) {
-      const { count } = await prisma.presupuesto.deleteMany({
+      const grupo = await prisma.presupuesto.findMany({
         where: { recurrenciaGrupoId: grupoId },
+        select: { id: true },
       })
-      return NextResponse.json({ message: 'Grupo eliminado', count })
+      const count = await cancelarPresupuestos(
+        grupo.map(f => f.id),
+        actor,
+        'Serie recurrente retirada del presupuesto',
+        true,
+      )
+      return NextResponse.json({ message: 'Grupo retirado', count })
     }
 
-    await prisma.presupuesto.delete({ where: { id } })
-    return NextResponse.json({ message: 'Presupuesto deleted' })
+    const current = await prisma.presupuesto.findUnique({ where: { id } })
+    if (!current) {
+      return NextResponse.json({ error: 'Presupuesto not found' }, { status: 404 })
+    }
+    const count = await cancelarPresupuestos([id], actor, 'Partida retirada del presupuesto')
+    return NextResponse.json({ message: 'Presupuesto retirado', count })
   } catch (error) {
     console.error('Error deleting presupuesto:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
