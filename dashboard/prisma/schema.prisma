@@ -65,6 +65,15 @@ enum EstadoLineaPresupuesto {
   Absorbida
 }
 
+enum TipoCambioPresupuesto {
+  CREACION
+  AJUSTE_MANUAL
+  DESDE_SIN_ASIGNAR
+  TRASPASO_ENTRADA
+  TRASPASO_SALIDA
+  MIGRACION_VIGENTE
+}
+
 model User {
   id            Int      @id @default(autoincrement())
   nombre        String   @unique @db.VarChar(50)
@@ -128,6 +137,7 @@ model Quincena {
   transacciones        Transaccion[]      @relation("TransaccionImpacto")
   transaccionesConsumo Transaccion[]      @relation("TransaccionConsumo")
   presupuestos         Presupuesto[]
+  presupuestoCambios   PresupuestoCambio[]
   liquidezSnapshots    LiquidezSnapshot[]
   creditoPagos         CreditoPago[]
 
@@ -276,15 +286,42 @@ model Presupuesto {
   // compromiso original) nunca se toca despues de creado.
   montoRevisado      Decimal?            @map("monto_revisado") @db.Decimal(12, 2)
 
-  quincena      Quincena      @relation(fields: [quincenaId], references: [id])
-  categoria     Categoria     @relation(fields: [categoriaId], references: [id])
-  creditoPagos  CreditoPago[]
-  transacciones Transaccion[]
-  comentarios   ComentarioPresupuesto[]
+  quincena            Quincena              @relation(fields: [quincenaId], references: [id])
+  categoria           Categoria             @relation(fields: [categoriaId], references: [id])
+  creditoPagos        CreditoPago[]
+  transacciones       Transaccion[]
+  comentarios         ComentarioPresupuesto[]
+  cambios             PresupuestoCambio[]   @relation("PresupuestoCambioPrincipal")
+  cambiosRelacionados PresupuestoCambio[]   @relation("PresupuestoCambioRelacionado")
 
   @@index([quincenaId], name: "idx_presupuesto_quincena")
   @@index([recurrenciaGrupoId], name: "idx_presupuesto_grupo")
   @@map("presupuesto")
+}
+
+model PresupuestoCambio {
+  id                       Int                    @id @default(autoincrement())
+  presupuestoId            Int                    @map("presupuesto_id")
+  quincenaId               Int                    @map("quincena_id")
+  tipo                     TipoCambioPresupuesto
+  montoAnterior            Decimal                @map("monto_anterior") @db.Decimal(12, 2)
+  montoNuevo               Decimal                @map("monto_nuevo") @db.Decimal(12, 2)
+  delta                    Decimal                @db.Decimal(12, 2)
+  grupoCambioId            String?                @map("grupo_cambio_id") @db.VarChar(36)
+  presupuestoRelacionadoId Int?                   @map("presupuesto_relacionado_id")
+  motivo                   String?                @db.VarChar(300)
+  actor                    String?                @db.VarChar(50)
+  fechaCreacion            DateTime               @default(now()) @map("fecha_creacion") @db.Timestamptz()
+
+  presupuesto            Presupuesto  @relation("PresupuestoCambioPrincipal", fields: [presupuestoId], references: [id], onDelete: Cascade)
+  presupuestoRelacionado Presupuesto? @relation("PresupuestoCambioRelacionado", fields: [presupuestoRelacionadoId], references: [id], onDelete: SetNull)
+  quincena               Quincena     @relation(fields: [quincenaId], references: [id])
+
+  @@index([presupuestoId], name: "idx_presupuesto_cambios_presupuesto")
+  @@index([quincenaId], name: "idx_presupuesto_cambios_quincena")
+  @@index([grupoCambioId], name: "idx_presupuesto_cambios_grupo")
+  @@index([fechaCreacion], name: "idx_presupuesto_cambios_fecha")
+  @@map("presupuesto_cambios")
 }
 
 // Hilo de comentarios de una linea de presupuesto (autor + fecha + texto),
