@@ -64,6 +64,7 @@ export async function PUT(
     if (!current) {
       return NextResponse.json({ error: 'Presupuesto not found' }, { status: 404 })
     }
+    const currentId = current.id
 
     const session = await getSession()
     const actor = session?.username ?? null
@@ -145,7 +146,7 @@ export async function PUT(
     async function registrarAjusteActual(tx: Prisma.TransactionClient, quincenaFinalId: number) {
       if (!hayCambioMonto) return
       await registrarCambioPresupuesto(tx, {
-        presupuestoId: current.id,
+        presupuestoId: currentId,
         quincenaId: quincenaFinalId,
         tipo: 'AJUSTE_MANUAL',
         montoAnterior: montoActual,
