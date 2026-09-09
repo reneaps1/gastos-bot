@@ -3,6 +3,7 @@ import Image from 'next/image'
 import './globals.css'
 import { NavBar } from '@/components/NavBar'
 import { Providers } from '@/components/Providers'
+import { ReconciliationBanner } from '@/components/ReconciliationBanner'
 
 export const viewport: Viewport = {
   width: 'device-width',
@@ -46,6 +47,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <NavBar />
           </header>
           <main className="flex-1 p-4 pb-24 md:p-6 md:pb-6 max-w-7xl mx-auto w-full">
+            <ReconciliationBanner />
             {children}
           </main>
           <footer className="print:hidden text-center py-4 text-xs text-slate-400 dark:text-slate-600">
