@@ -107,7 +107,6 @@ interface DashboardData {
   gastos: number
   ahorroQuincena: number
   gastosNoCubiertos: number
-  ahorroProtegido: number
   pendientesCierre: GrupoCierre[]
 }
 
@@ -120,7 +119,6 @@ const EMPTY_DATA: DashboardData = {
   gastos: 0,
   ahorroQuincena: 0,
   gastosNoCubiertos: 0,
-  ahorroProtegido: 0,
   pendientesCierre: [],
 }
 
@@ -192,14 +190,13 @@ function MetricBox({
   label: string
   value: string
   hint: string
-  tone?: 'neutral' | 'good' | 'warn' | 'bad' | 'protected'
+  tone?: 'neutral' | 'good' | 'warn' | 'bad'
 }) {
   const toneClass = {
     neutral: 'text-slate-900 dark:text-slate-100',
     good: 'text-emerald-700 dark:text-emerald-300',
     warn: 'text-amber-700 dark:text-amber-300',
     bad: 'text-rose-700 dark:text-rose-300',
-    protected: 'text-blue-700 dark:text-blue-300',
   }[tone]
 
   return (
@@ -233,24 +230,21 @@ export default function DashboardPage() {
     if (!quincenaId || !qActual) return
     setLoading(true)
     try {
-      const hasta = qActual.fechaFin.split('T')[0]
-      const [txRes, presupRes, liqRes, tendRes, sinCubrirRes, ahorroRes, allPresupRes] = await Promise.all([
+      const [txRes, presupRes, liqRes, tendRes, sinCubrirRes, allPresupRes] = await Promise.all([
         fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=200`),
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
         fetch(`/api/liquidez?quincenaId=${quincenaId}`),
         fetch(`/api/tendencia?quincenaId=${quincenaId}&range=5`),
         fetch(`/api/transacciones?quincenaId=${quincenaId}&asignado=no&limit=1`),
-        fetch(`/api/ahorro?hasta=${hasta}`),
         fetch('/api/presupuestos'),
       ])
 
-      const [txJson, presupuestos, liquidez, tendencia, sinCubrirJson, ahorroJson, allPresupuestos] = await Promise.all([
+      const [txJson, presupuestos, liquidez, tendencia, sinCubrirJson, allPresupuestos] = await Promise.all([
         txRes.json(),
         presupRes.json(),
         liqRes.json(),
         tendRes.json(),
         sinCubrirRes.json(),
-        ahorroRes.json(),
         allPresupRes.json(),
       ])
 
@@ -264,7 +258,6 @@ export default function DashboardPage() {
         gastos: Number(totales.Gasto ?? 0),
         ahorroQuincena: Number(totales.Ahorro ?? 0),
         gastosNoCubiertos: Number(sinCubrirJson?.totales?.Gasto ?? 0),
-        ahorroProtegido: Math.max(Number(ahorroJson?.total ?? 0), 0),
         pendientesCierre: quincenasPendientesDeCierre(
           Array.isArray(allPresupuestos) ? (allPresupuestos as PresupuestoConQuincena[]) : [],
           today,
@@ -293,7 +286,6 @@ export default function DashboardPage() {
 
   const posicion = calcularPosicionFinanciera({
     saldoEnCuentas,
-    ahorroProtegido: data.ahorroProtegido,
     ingresos: data.ingresos,
     presupuestos: presupuestosNormalizados,
     gastosNoCubiertos: data.gastosNoCubiertos,
@@ -340,14 +332,14 @@ export default function DashboardPage() {
       : 'good'
 
   const planSummaryText = posicion.ingresoSinAsignar >= 0
-    ? `${formatMXN(posicion.ingresoSinAsignar)} del ingreso registrado sigue libre para decidir. Este cálculo no depende del corte de liquidez.`
-    : `Tienes ${formatMXN(Math.abs(posicion.ingresoSinAsignar))} comprometidos por encima del ingreso registrado. Este cálculo no depende del corte de liquidez.`
+    ? `${formatMXN(posicion.ingresoSinAsignar)} de tus ingresos registrados aún no tiene destino en el plan. Es margen presupuestal, no efectivo en cuentas.`
+    : `Tienes ${formatMXN(Math.abs(posicion.ingresoSinAsignar))} comprometidos por encima del ingreso registrado. Este saldo pertenece al plan, no al corte de liquidez.`
 
   const liquiditySummaryText = !data.snapshot
-    ? 'No hay un corte de liquidez para esta quincena. El plan teórico sigue disponible aunque no captures liquidez hoy.'
+    ? 'No hay un corte de liquidez para esta quincena. El margen del plan sigue visible, pero no sabemos cuánto efectivo hay hoy.'
     : posicion.cubrePendiente
-      ? `Según el último corte, puedes cubrir todo lo pendiente y conservar ${formatMXN(posicion.saldoDespuesDePagar ?? 0)} de saldo operativo.`
-      : `Según el último corte, tu dinero operativo no cubre todo lo pendiente. Faltan ${formatMXN(posicion.faltanteCobertura ?? 0)}.`
+      ? `Según el último corte, puedes cubrir todo lo pendiente y quedarían ${formatMXN(posicion.saldoDespuesDePagar ?? 0)} en tus cuentas.`
+      : `Según el último corte, faltan ${formatMXN(posicion.faltanteCobertura ?? 0)} para cubrir todo lo pendiente.`
 
   const liquidityFreshnessText = liquidityAgeDays == null
     ? 'Sin corte'
@@ -409,14 +401,14 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Plan de la quincena</p>
                       <span className="rounded-full border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-950/30 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300">
-                        Teórico · independiente de liquidez
+                        Plan · no es saldo en cuentas
                       </span>
                     </div>
                     <div className="mt-2 flex items-end gap-2 flex-wrap">
                       <p className={`text-3xl md:text-4xl font-bold tabular-nums ${planTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-300'}`}>
                         {formatMXN(posicion.ingresoSinAsignar)}
                       </p>
-                      <span className="pb-1 text-sm text-slate-500 dark:text-slate-400">libre por asignar</span>
+                      <span className="pb-1 text-sm text-slate-500 dark:text-slate-400">margen del plan</span>
                     </div>
                     <p className={`mt-2 max-w-2xl text-sm ${planTone === 'bad' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
                       {planSummaryText}
@@ -435,13 +427,13 @@ export default function DashboardPage() {
                 <MetricBox
                   label="Comprometido"
                   value={formatMXN(totalComprometido)}
-                  hint="Presupuesto, ahorro, excedidos y gastos sin presupuesto."
+                  hint="Presupuesto, ahorro planificado, excedidos y gastos sin presupuesto."
                   tone={totalComprometido > data.ingresos ? 'bad' : 'neutral'}
                 />
                 <MetricBox
                   label="Pendiente del plan"
                   value={formatMXN(posicion.pendientePorCubrir)}
-                  hint="Lo que aún falta ejecutar o desembolsar del presupuesto."
+                  hint="Lo que falta registrar o pagar de las partidas de gasto."
                   tone={posicion.pendientePorCubrir > 0 ? 'warn' : 'good'}
                 />
               </div>
@@ -475,16 +467,16 @@ export default function DashboardPage() {
 
               <div className="grid grid-cols-2 gap-3 p-4 md:p-5 bg-slate-50/70 dark:bg-slate-900/30">
                 <MetricBox
-                  label="Disponible según corte"
+                  label="Liquidez del corte"
                   value={posicion.disponibleHoy == null ? '—' : formatMXN(posicion.disponibleHoy)}
-                  hint="Saldo del corte menos ahorro protegido."
+                  hint="Suma de las cuentas capturadas en el último corte."
                   tone={posicion.disponibleHoy != null && posicion.disponibleHoy < 0 ? 'bad' : 'neutral'}
                 />
                 <MetricBox
-                  label="Ahorro protegido"
-                  value={formatMXN(posicion.ahorroProtegido)}
-                  hint="Se mantiene aparte y no cubre gastos."
-                  tone="protected"
+                  label="Pendiente por cubrir"
+                  value={formatMXN(posicion.pendientePorCubrir)}
+                  hint="Lo que aún falta registrar o pagar de las partidas de gasto."
+                  tone={posicion.pendientePorCubrir > 0 ? 'warn' : 'good'}
                 />
                 {qActual && (
                   <Link
@@ -602,7 +594,7 @@ export default function DashboardPage() {
               </div>
               <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
                 {posicion.ingresoSinAsignar >= 0
-                  ? `${formatMXN(posicion.ingresoSinAsignar)} del ingreso de esta quincena sigue sin asignarse.`
+                  ? `${formatMXN(posicion.ingresoSinAsignar)} de margen presupuestal aún no tiene destino.`
                   : `Tienes ${formatMXN(Math.abs(posicion.ingresoSinAsignar))} comprometidos por encima del ingreso registrado.`}
               </p>
             </div>
@@ -633,7 +625,7 @@ export default function DashboardPage() {
             <KpiCard
               label="Saldo en cuentas"
               value={saldoEnCuentas == null ? '—' : formatMXN(saldoEnCuentas)}
-              subtitle={saldoEnCuentas == null ? 'sin corte de liquidez' : `${formatMXN(posicion.ahorroProtegido)} protegido`}
+              subtitle={saldoEnCuentas == null ? 'sin corte de liquidez' : 'según último corte'}
               icon={<WalletCards size={20} className="text-slate-600 dark:text-slate-300" />}
               color="text-slate-700 dark:text-slate-200"
               bg="bg-slate-100 dark:bg-slate-700/70"
