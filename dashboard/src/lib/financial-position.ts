@@ -4,7 +4,6 @@ export type PresupuestoPosicion = PresupuestoParaTotales & PresupuestoParaLibre
 
 export interface FinancialPositionInput {
   saldoEnCuentas: number | null
-  ahorroProtegido: number
   ingresos: number
   presupuestos: PresupuestoPosicion[]
   gastosNoCubiertos: number
@@ -12,7 +11,6 @@ export interface FinancialPositionInput {
 
 export interface FinancialPosition {
   saldoEnCuentas: number | null
-  ahorroProtegido: number
   disponibleHoy: number | null
   pendientePorCubrir: number
   saldoDespuesDePagar: number | null
@@ -23,15 +21,16 @@ export interface FinancialPosition {
 
 /**
  * Fuente unica para las preguntas ejecutivas de Milo:
- * - cuanto dinero operativo hay hoy,
- * - cuanto falta cubrir,
+ * - cuanto dinero hay en las cuentas segun el ultimo corte,
+ * - cuanto falta cubrir del presupuesto,
  * - cuanto queda si se cubre todo,
  * - cuanto ingreso de la quincena sigue sin asignar.
  *
- * El ahorro acumulado queda protegido y nunca se usa como caja operativa.
+ * El corte de liquidez ya es una foto del saldo real de las cuentas. Si un
+ * ahorro ya se registro como transaccion/salida, su efecto ya esta contenido
+ * en ese saldo y no debe restarse una segunda vez aqui.
  */
 export function calcularPosicionFinanciera(input: FinancialPositionInput): FinancialPosition {
-  const ahorroProtegido = Math.max(Number(input.ahorroProtegido) || 0, 0)
   const pendientePorCubrir = calcularFaltaPorPagar(input.presupuestos)
   const ingresoSinAsignar = calcularLibreSinAsignar(
     Number(input.ingresos) || 0,
@@ -41,7 +40,7 @@ export function calcularPosicionFinanciera(input: FinancialPositionInput): Finan
 
   const disponibleHoy = input.saldoEnCuentas == null
     ? null
-    : Number(input.saldoEnCuentas) - ahorroProtegido
+    : Number(input.saldoEnCuentas)
   const saldoDespuesDePagar = disponibleHoy == null
     ? null
     : disponibleHoy - pendientePorCubrir
@@ -50,7 +49,6 @@ export function calcularPosicionFinanciera(input: FinancialPositionInput): Finan
 
   return {
     saldoEnCuentas: input.saldoEnCuentas,
-    ahorroProtegido,
     disponibleHoy,
     pendientePorCubrir,
     saldoDespuesDePagar,
