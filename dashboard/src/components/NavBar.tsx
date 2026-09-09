@@ -15,6 +15,7 @@ const links = [
 const configLinks = [
   { href: '/configuracion/quincenas', label: 'Períodos de pago' },
   { href: '/configuracion/liquidez', label: 'Liquidez' },
+  { href: '/configuracion/liquidez/reconciliar', label: 'Conciliar plan y caja', usaQuincenaActual: true },
   { href: '/configuracion/categorias', label: 'Categorías' },
   { href: '/configuracion/lineas-recurrentes', label: 'Líneas recurrentes' },
   { href: '/configuracion/usuarios', label: 'Usuarios' },
@@ -38,6 +39,14 @@ export function NavBar() {
     await fetch('/api/auth/logout', { method: 'POST' })
     router.replace('/login')
     router.refresh()
+  }
+
+  function openConfigLink(event: React.MouseEvent<HTMLAnchorElement>, href: string, usaQuincenaActual?: boolean) {
+    if (!usaQuincenaActual) return
+    const quincenaId = window.localStorage.getItem('milo:selectedQuincenaId')
+    if (!quincenaId) return
+    event.preventDefault()
+    window.location.href = `${href}?quincenaId=${quincenaId}`
   }
 
   const isConfigActive = pathname.startsWith('/configuracion')
@@ -68,9 +77,10 @@ export function NavBar() {
             <Settings size={14} />
             Configuración
           </button>
-          <div className="absolute top-full right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg py-1 min-w-[180px] z-50 hidden group-hover:block">
+          <div className="absolute top-full right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-lg py-1 min-w-[200px] z-50 hidden group-hover:block">
             {configLinks.map(l => (
               <a key={l.href} href={l.href}
+                onClick={event => openConfigLink(event, l.href, l.usaQuincenaActual)}
                 className={`block px-4 py-2 text-sm transition-colors ${
                   isActive(l.href)
                     ? 'text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 font-semibold'
