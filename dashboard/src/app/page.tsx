@@ -129,30 +129,29 @@ function lineFalta(p: Presupuesto) {
   return Number(p.pendiente) + Math.max(Number(p.montoEfectivo) - Number(p.real), 0)
 }
 
+function daysBetweenDateStrings(fromValue: string, toValue: string) {
+  const parseDate = (value: string) => {
+    const [year, month, day] = value.split('T')[0].split('-').map(Number)
+    return Date.UTC(year, month - 1, day)
+  }
+
+  return Math.max(Math.floor((parseDate(toValue) - parseDate(fromValue)) / 86_400_000), 0)
+}
+
 function statusFor({
-  hasSnapshot,
-  saldoDespues,
+  ingresoSinAsignar,
   ingresos,
   vencidos,
   excedidos,
   gastosNoCubiertos,
 }: {
-  hasSnapshot: boolean
-  saldoDespues: number | null
+  ingresoSinAsignar: number
   ingresos: number
   vencidos: number
   excedidos: number
   gastosNoCubiertos: number
 }) {
-  if (!hasSnapshot) {
-    return {
-      label: 'Falta corte',
-      dot: 'bg-blue-500',
-      text: 'text-blue-700 dark:text-blue-300',
-      bg: 'bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-800/50',
-    }
-  }
-  if (saldoDespues != null && saldoDespues < 0) {
+  if (ingresoSinAsignar < 0) {
     return {
       label: 'Crítico',
       dot: 'bg-rose-500',
@@ -168,7 +167,7 @@ function statusFor({
       bg: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50',
     }
   }
-  if (saldoDespues != null && ingresos > 0 && saldoDespues / ingresos < 0.1) {
+  if (ingresos > 0 && ingresoSinAsignar / ingresos < 0.1) {
     return {
       label: 'Ajustado',
       dot: 'bg-amber-500',
@@ -312,9 +311,13 @@ export default function DashboardPage() {
   const excedidos = presupuestosGasto.filter(p => Number(p.excedido ?? 0) > 0)
   const vigilando = presupuestosGasto.filter(p => Number(p.excedido ?? 0) <= 0 && Number(p.pct ?? 0) > 80)
 
+  const totalComprometido = data.ingresos - posicion.ingresoSinAsignar
+  const snapshotDate = data.snapshot?.fechaCorte?.split('T')[0] ?? null
+  const liquidityAgeDays = snapshotDate ? daysBetweenDateStrings(snapshotDate, today) : null
+  const liquidityIsStale = liquidityAgeDays != null && liquidityAgeDays >= 3
+
   const status = statusFor({
-    hasSnapshot: Boolean(data.snapshot),
-    saldoDespues: posicion.saldoDespuesDePagar,
+    ingresoSinAsignar: posicion.ingresoSinAsignar,
     ingresos: data.ingresos,
     vencidos: vencidos.length,
     excedidos: excedidos.length,
@@ -329,17 +332,30 @@ export default function DashboardPage() {
     (data.gastosNoCubiertos > 0 ? 1 : 0) +
     (data.pendientesCierre.length > 0 ? 1 : 0)
 
-  const saldoTone = posicion.saldoDespuesDePagar == null
+  const planTone = posicion.ingresoSinAsignar < 0 ? 'bad' : 'good'
+  const liquidityTone = posicion.saldoDespuesDePagar == null
     ? 'neutral'
     : posicion.saldoDespuesDePagar < 0
       ? 'bad'
       : 'good'
 
-  const summaryText = !data.snapshot
-    ? 'Captura el corte de liquidez para calcular cuánto dinero operativo tienes hoy y cuánto quedaría después de cubrir lo pendiente.'
+  const planSummaryText = posicion.ingresoSinAsignar >= 0
+    ? `${formatMXN(posicion.ingresoSinAsignar)} del ingreso registrado sigue libre para decidir. Este cálculo no depende del corte de liquidez.`
+    : `Tienes ${formatMXN(Math.abs(posicion.ingresoSinAsignar))} comprometidos por encima del ingreso registrado. Este cálculo no depende del corte de liquidez.`
+
+  const liquiditySummaryText = !data.snapshot
+    ? 'No hay un corte de liquidez para esta quincena. El plan teórico sigue disponible aunque no captures liquidez hoy.'
     : posicion.cubrePendiente
-      ? `Puedes cubrir todo lo pendiente y conservar ${formatMXN(posicion.saldoDespuesDePagar ?? 0)} de saldo operativo.`
-      : `Tu dinero operativo no cubre todo lo pendiente. Faltan ${formatMXN(posicion.faltanteCobertura ?? 0)}.`
+      ? `Según el último corte, puedes cubrir todo lo pendiente y conservar ${formatMXN(posicion.saldoDespuesDePagar ?? 0)} de saldo operativo.`
+      : `Según el último corte, tu dinero operativo no cubre todo lo pendiente. Faltan ${formatMXN(posicion.faltanteCobertura ?? 0)}.`
+
+  const liquidityFreshnessText = liquidityAgeDays == null
+    ? 'Sin corte'
+    : liquidityAgeDays === 0
+      ? 'Actualizada hoy'
+      : liquidityAgeDays === 1
+        ? 'Corte de ayer'
+        : `Hace ${liquidityAgeDays} días`
 
   if (!qActual && loading) {
     return <DashboardSkeleton />
@@ -385,57 +401,100 @@ export default function DashboardPage() {
         <DashboardSkeleton />
       ) : (
         <>
-          <section className={`overflow-hidden rounded-2xl border ${posicion.cubrePendiente === false ? 'border-rose-200 dark:border-rose-800/60' : 'border-slate-200 dark:border-slate-700'} bg-white dark:bg-slate-800`}>
-            <div className="p-5 md:p-6 border-b border-slate-100 dark:border-slate-700/80">
-              <div className="flex items-start justify-between gap-4 flex-wrap">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Tu situación hoy</p>
-                  <div className="mt-2 flex items-end gap-2 flex-wrap">
-                    <p className={`text-3xl md:text-4xl font-bold tabular-nums ${saldoTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : saldoTone === 'good' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-800 dark:text-slate-100'}`}>
-                      {posicion.saldoDespuesDePagar == null ? '—' : formatMXN(posicion.saldoDespuesDePagar)}
+          <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            <div className={`lg:col-span-3 overflow-hidden rounded-2xl border ${planTone === 'bad' ? 'border-rose-200 dark:border-rose-800/60' : 'border-slate-200 dark:border-slate-700'} bg-white dark:bg-slate-800`}>
+              <div className="p-5 md:p-6 border-b border-slate-100 dark:border-slate-700/80">
+                <div className="flex items-start justify-between gap-4 flex-wrap">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Plan de la quincena</p>
+                      <span className="rounded-full border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-950/30 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300">
+                        Teórico · independiente de liquidez
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-end gap-2 flex-wrap">
+                      <p className={`text-3xl md:text-4xl font-bold tabular-nums ${planTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-300'}`}>
+                        {formatMXN(posicion.ingresoSinAsignar)}
+                      </p>
+                      <span className="pb-1 text-sm text-slate-500 dark:text-slate-400">libre por asignar</span>
+                    </div>
+                    <p className={`mt-2 max-w-2xl text-sm ${planTone === 'bad' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
+                      {planSummaryText}
                     </p>
-                    <span className="pb-1 text-sm text-slate-500 dark:text-slate-400">saldo después de pagar</span>
                   </div>
-                  <p className={`mt-2 max-w-2xl text-sm ${posicion.cubrePendiente === false ? 'text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
-                    {summaryText}
-                  </p>
                 </div>
-                {!data.snapshot && qActual && (
-                  <Link
-                    href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 transition-colors"
-                  >
-                    <Droplets size={15} /> Capturar corte
-                  </Link>
-                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 md:p-5 bg-slate-50/70 dark:bg-slate-900/30">
+                <MetricBox
+                  label="Ingreso registrado"
+                  value={formatMXN(data.ingresos)}
+                  hint="Ingreso registrado para esta quincena."
+                  tone="neutral"
+                />
+                <MetricBox
+                  label="Comprometido"
+                  value={formatMXN(totalComprometido)}
+                  hint="Presupuesto, ahorro, excedidos y gastos sin presupuesto."
+                  tone={totalComprometido > data.ingresos ? 'bad' : 'neutral'}
+                />
+                <MetricBox
+                  label="Pendiente del plan"
+                  value={formatMXN(posicion.pendientePorCubrir)}
+                  hint="Lo que aún falta ejecutar o desembolsar del presupuesto."
+                  tone={posicion.pendientePorCubrir > 0 ? 'warn' : 'good'}
+                />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-4 md:p-5 bg-slate-50/70 dark:bg-slate-900/30">
-              <MetricBox
-                label="Disponible hoy"
-                value={posicion.disponibleHoy == null ? '—' : formatMXN(posicion.disponibleHoy)}
-                hint="Saldo en cuentas menos ahorro protegido."
-                tone={posicion.disponibleHoy != null && posicion.disponibleHoy < 0 ? 'bad' : 'neutral'}
-              />
-              <MetricBox
-                label="Pendiente por cubrir"
-                value={formatMXN(posicion.pendientePorCubrir)}
-                hint="Lo que aún falta desembolsar del presupuesto."
-                tone={posicion.pendientePorCubrir > 0 ? 'warn' : 'good'}
-              />
-              <MetricBox
-                label="Ingreso sin asignar"
-                value={formatMXN(posicion.ingresoSinAsignar)}
-                hint="Ingreso de esta quincena que aún no tiene destino."
-                tone={posicion.ingresoSinAsignar < 0 ? 'bad' : 'good'}
-              />
-              <MetricBox
-                label="Ahorro protegido"
-                value={formatMXN(posicion.ahorroProtegido)}
-                hint="Se muestra aparte y no se usa para cubrir gastos."
-                tone="protected"
-              />
+            <div className={`lg:col-span-2 overflow-hidden rounded-2xl border ${liquidityTone === 'bad' ? 'border-rose-200 dark:border-rose-800/60' : liquidityIsStale ? 'border-amber-200 dark:border-amber-800/60' : 'border-slate-200 dark:border-slate-700'} bg-white dark:bg-slate-800`}>
+              <div className="p-5 md:p-6 border-b border-slate-100 dark:border-slate-700/80">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Liquidez real</p>
+                    <div className="mt-2 flex items-end gap-2 flex-wrap">
+                      <p className={`text-2xl md:text-3xl font-bold tabular-nums ${liquidityTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : liquidityTone === 'good' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-800 dark:text-slate-100'}`}>
+                        {posicion.saldoDespuesDePagar == null ? '—' : formatMXN(posicion.saldoDespuesDePagar)}
+                      </p>
+                      <span className="pb-0.5 text-xs text-slate-500 dark:text-slate-400">después de pendientes</span>
+                    </div>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold ${liquidityAgeDays == null ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/60 dark:bg-blue-950/30 dark:text-blue-300' : liquidityIsStale ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>
+                    {liquidityFreshnessText}
+                  </span>
+                </div>
+                <p className={`mt-2 text-sm ${liquidityTone === 'bad' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
+                  {liquiditySummaryText}
+                </p>
+                {data.snapshot?.fechaCorte && (
+                  <p className={`mt-2 text-xs ${liquidityIsStale ? 'text-amber-700 dark:text-amber-300' : 'text-slate-400 dark:text-slate-500'}`}>
+                    Último corte: {formatDate(data.snapshot.fechaCorte)}{liquidityIsStale ? '. Úsalo como referencia hasta actualizarlo.' : ''}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 p-4 md:p-5 bg-slate-50/70 dark:bg-slate-900/30">
+                <MetricBox
+                  label="Disponible según corte"
+                  value={posicion.disponibleHoy == null ? '—' : formatMXN(posicion.disponibleHoy)}
+                  hint="Saldo del corte menos ahorro protegido."
+                  tone={posicion.disponibleHoy != null && posicion.disponibleHoy < 0 ? 'bad' : 'neutral'}
+                />
+                <MetricBox
+                  label="Ahorro protegido"
+                  value={formatMXN(posicion.ahorroProtegido)}
+                  hint="Se mantiene aparte y no cubre gastos."
+                  tone="protected"
+                />
+                {qActual && (
+                  <Link
+                    href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+                    className="col-span-2 inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                  >
+                    <Droplets size={14} /> {data.snapshot ? 'Actualizar corte de liquidez' : 'Capturar corte de liquidez'}
+                  </Link>
+                )}
+              </div>
             </div>
           </section>
 
@@ -673,7 +732,10 @@ function AttentionRow({
 function DashboardSkeleton() {
   return (
     <div className="space-y-5 animate-pulse">
-      <div className="h-44 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+        <div className="lg:col-span-3 h-60 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
+        <div className="lg:col-span-2 h-60 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
         <div className="lg:col-span-2 h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
