@@ -34,6 +34,7 @@ import { KpiCard } from '@/components/ui/KpiCard'
 import { cuentaParaAgregados, quincenasPendientesDeCierre, type GrupoCierre } from '@/lib/cierre-quincena'
 import { calcularPosicionFinanciera } from '@/lib/financial-position'
 import { normalizeMontos, sumLiquidez, type LiquidezMontos } from '@/lib/liquidez'
+import { calcularProyeccionCaja } from '@/lib/proyeccion-caja'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { formatDate, formatDateStr, formatMXN } from '@/lib/utils'
 
@@ -104,9 +105,11 @@ interface DashboardData {
   tendencia: TendenciaPoint[]
   snapshot: Snapshot | null
   ingresos: number
+  ingresosPagados: number
   gastos: number
   ahorroQuincena: number
   gastosNoCubiertos: number
+  pagosQuincena: number
   pendientesCierre: GrupoCierre[]
 }
 
@@ -116,9 +119,11 @@ const EMPTY_DATA: DashboardData = {
   tendencia: [],
   snapshot: null,
   ingresos: 0,
+  ingresosPagados: 0,
   gastos: 0,
   ahorroQuincena: 0,
   gastosNoCubiertos: 0,
+  pagosQuincena: 0,
   pendientesCierre: [],
 }
 
@@ -230,21 +235,23 @@ export default function DashboardPage() {
     if (!quincenaId || !qActual) return
     setLoading(true)
     try {
-      const [txRes, presupRes, liqRes, tendRes, sinCubrirRes, allPresupRes] = await Promise.all([
+      const [txRes, presupRes, liqRes, tendRes, sinCubrirRes, pagosRes, allPresupRes] = await Promise.all([
         fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=200`),
         fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
         fetch(`/api/liquidez?quincenaId=${quincenaId}`),
         fetch(`/api/tendencia?quincenaId=${quincenaId}&range=5`),
         fetch(`/api/transacciones?quincenaId=${quincenaId}&asignado=no&limit=1`),
+        fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`),
         fetch('/api/presupuestos'),
       ])
 
-      const [txJson, presupuestos, liquidez, tendencia, sinCubrirJson, allPresupuestos] = await Promise.all([
+      const [txJson, presupuestos, liquidez, tendencia, sinCubrirJson, pagosJson, allPresupuestos] = await Promise.all([
         txRes.json(),
         presupRes.json(),
         liqRes.json(),
         tendRes.json(),
         sinCubrirRes.json(),
+        pagosRes.json(),
         allPresupRes.json(),
       ])
 
@@ -255,9 +262,11 @@ export default function DashboardPage() {
         tendencia: Array.isArray(tendencia) ? tendencia : [],
         snapshot: Array.isArray(liquidez) && liquidez.length > 0 ? liquidez[0] : null,
         ingresos: Number(totales.Ingreso ?? 0),
+        ingresosPagados: Number(totales.IngresoPagado ?? 0),
         gastos: Number(totales.Gasto ?? 0),
         ahorroQuincena: Number(totales.Ahorro ?? 0),
         gastosNoCubiertos: Number(sinCubrirJson?.totales?.Gasto ?? 0),
+        pagosQuincena: Number(pagosJson?.pagosQuincena ?? 0),
         pendientesCierre: quincenasPendientesDeCierre(
           Array.isArray(allPresupuestos) ? (allPresupuestos as PresupuestoConQuincena[]) : [],
           today,
@@ -289,6 +298,14 @@ export default function DashboardPage() {
     ingresos: data.ingresos,
     presupuestos: presupuestosNormalizados,
     gastosNoCubiertos: data.gastosNoCubiertos,
+  })
+
+  const proyeccionCaja = calcularProyeccionCaja({
+    saldoCorte: saldoEnCuentas,
+    ingresosRegistrados: data.ingresos,
+    ingresosPagados: data.ingresosPagados,
+    pagosPendientes: data.pagosQuincena,
+    margenPlan: posicion.ingresoSinAsignar,
   })
 
   const presupuestosGasto = data.presupuestos.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
@@ -325,21 +342,21 @@ export default function DashboardPage() {
     (data.pendientesCierre.length > 0 ? 1 : 0)
 
   const planTone = posicion.ingresoSinAsignar < 0 ? 'bad' : 'good'
-  const liquidityTone = posicion.saldoDespuesDePagar == null
+  const liquidityTone = proyeccionCaja.saldoProyectado == null
     ? 'neutral'
-    : posicion.saldoDespuesDePagar < 0
+    : proyeccionCaja.saldoProyectado < 0
       ? 'bad'
       : 'good'
 
   const planSummaryText = posicion.ingresoSinAsignar >= 0
-    ? `${formatMXN(posicion.ingresoSinAsignar)} de tus ingresos registrados aún no tiene destino en el plan. Es margen presupuestal, no efectivo en cuentas.`
-    : `Tienes ${formatMXN(Math.abs(posicion.ingresoSinAsignar))} comprometidos por encima del ingreso registrado. Este saldo pertenece al plan, no al corte de liquidez.`
+    ? `${formatMXN(posicion.ingresoSinAsignar)} de tus ingresos registrados aún no tiene destino en el plan. Debe reconciliar con la caja proyectada al cierre.`
+    : `Tienes ${formatMXN(Math.abs(posicion.ingresoSinAsignar))} comprometidos por encima del ingreso registrado.`
 
   const liquiditySummaryText = !data.snapshot
-    ? 'No hay un corte de liquidez para esta quincena. El margen del plan sigue visible, pero no sabemos cuánto efectivo hay hoy.'
-    : posicion.cubrePendiente
-      ? `Según el último corte, puedes cubrir todo lo pendiente y quedarían ${formatMXN(posicion.saldoDespuesDePagar ?? 0)} en tus cuentas.`
-      : `Según el último corte, faltan ${formatMXN(posicion.faltanteCobertura ?? 0)} para cubrir todo lo pendiente.`
+    ? 'No hay corte de liquidez. Sin una fotografía de cuentas no podemos proyectar cuánto te va a quedar.'
+    : proyeccionCaja.saldoProyectado != null && proyeccionCaja.saldoProyectado >= 0
+      ? `Con el corte actual, los ingresos aún por cobrar y los pagos que faltan, proyectas cerrar con ${formatMXN(proyeccionCaja.saldoProyectado)}.`
+      : `Con el corte actual, los ingresos aún por cobrar y los pagos que faltan, proyectas un faltante de ${formatMXN(Math.abs(proyeccionCaja.saldoProyectado ?? 0))}.`
 
   const liquidityFreshnessText = liquidityAgeDays == null
     ? 'Sin corte'
@@ -348,6 +365,16 @@ export default function DashboardPage() {
       : liquidityAgeDays === 1
         ? 'Corte de ayer'
         : `Hace ${liquidityAgeDays} días`
+
+  const diferenciaVsPlan = proyeccionCaja.diferenciaVsPlan
+  const diferenciaAbs = Math.abs(diferenciaVsPlan ?? 0)
+  const diferenciaHint = diferenciaVsPlan == null
+    ? 'Necesitas un corte de liquidez para comparar.'
+    : proyeccionCaja.cuadraConPlan
+      ? 'Plan y caja proyectada cuadran.'
+      : diferenciaVsPlan < 0
+        ? 'La caja proyectada queda por debajo del plan.'
+        : 'La caja proyectada queda por encima del plan.'
 
   if (!qActual && loading) {
     return <DashboardSkeleton />
@@ -401,14 +428,14 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Plan de la quincena</p>
                       <span className="rounded-full border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-950/30 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300">
-                        Plan · no es saldo en cuentas
+                        Plan · debe reconciliar con caja
                       </span>
                     </div>
                     <div className="mt-2 flex items-end gap-2 flex-wrap">
                       <p className={`text-3xl md:text-4xl font-bold tabular-nums ${planTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-700 dark:text-emerald-300'}`}>
                         {formatMXN(posicion.ingresoSinAsignar)}
                       </p>
-                      <span className="pb-1 text-sm text-slate-500 dark:text-slate-400">margen del plan</span>
+                      <span className="pb-1 text-sm text-slate-500 dark:text-slate-400">ingreso aún sin destino</span>
                     </div>
                     <p className={`mt-2 max-w-2xl text-sm ${planTone === 'bad' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
                       {planSummaryText}
@@ -421,7 +448,7 @@ export default function DashboardPage() {
                 <MetricBox
                   label="Ingreso registrado"
                   value={formatMXN(data.ingresos)}
-                  hint="Ingreso registrado para esta quincena."
+                  hint="Todo el ingreso registrado, cobrado o pendiente."
                   tone="neutral"
                 />
                 <MetricBox
@@ -433,7 +460,7 @@ export default function DashboardPage() {
                 <MetricBox
                   label="Pendiente del plan"
                   value={formatMXN(posicion.pendientePorCubrir)}
-                  hint="Lo que falta registrar o pagar de las partidas de gasto."
+                  hint="Ejecución presupuestal pendiente; no necesariamente sale de caja en esta quincena."
                   tone={posicion.pendientePorCubrir > 0 ? 'warn' : 'good'}
                 />
               </div>
@@ -443,12 +470,12 @@ export default function DashboardPage() {
               <div className="p-5 md:p-6 border-b border-slate-100 dark:border-slate-700/80">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Liquidez real</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Caja proyectada</p>
                     <div className="mt-2 flex items-end gap-2 flex-wrap">
                       <p className={`text-2xl md:text-3xl font-bold tabular-nums ${liquidityTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : liquidityTone === 'good' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-800 dark:text-slate-100'}`}>
-                        {posicion.saldoDespuesDePagar == null ? '—' : formatMXN(posicion.saldoDespuesDePagar)}
+                        {proyeccionCaja.saldoProyectado == null ? '—' : formatMXN(proyeccionCaja.saldoProyectado)}
                       </p>
-                      <span className="pb-0.5 text-xs text-slate-500 dark:text-slate-400">después de pendientes</span>
+                      <span className="pb-0.5 text-xs text-slate-500 dark:text-slate-400">te va a quedar</span>
                     </div>
                   </div>
                   <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold ${liquidityAgeDays == null ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/60 dark:bg-blue-950/30 dark:text-blue-300' : liquidityIsStale ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>
@@ -460,7 +487,7 @@ export default function DashboardPage() {
                 </p>
                 {data.snapshot?.fechaCorte && (
                   <p className={`mt-2 text-xs ${liquidityIsStale ? 'text-amber-700 dark:text-amber-300' : 'text-slate-400 dark:text-slate-500'}`}>
-                    Último corte: {formatDate(data.snapshot.fechaCorte)}{liquidityIsStale ? '. Úsalo como referencia hasta actualizarlo.' : ''}
+                    Último corte: {formatDate(data.snapshot.fechaCorte)}{liquidityIsStale ? '. Actualízalo para una proyección más confiable.' : ''}
                   </p>
                 )}
               </div>
@@ -468,15 +495,27 @@ export default function DashboardPage() {
               <div className="grid grid-cols-2 gap-3 p-4 md:p-5 bg-slate-50/70 dark:bg-slate-900/30">
                 <MetricBox
                   label="Liquidez del corte"
-                  value={posicion.disponibleHoy == null ? '—' : formatMXN(posicion.disponibleHoy)}
-                  hint="Suma de las cuentas capturadas en el último corte."
-                  tone={posicion.disponibleHoy != null && posicion.disponibleHoy < 0 ? 'bad' : 'neutral'}
+                  value={saldoEnCuentas == null ? '—' : formatMXN(saldoEnCuentas)}
+                  hint="Dinero capturado en tus cuentas."
+                  tone={saldoEnCuentas != null && saldoEnCuentas < 0 ? 'bad' : 'neutral'}
                 />
                 <MetricBox
-                  label="Pendiente por cubrir"
-                  value={formatMXN(posicion.pendientePorCubrir)}
-                  hint="Lo que aún falta registrar o pagar de las partidas de gasto."
-                  tone={posicion.pendientePorCubrir > 0 ? 'warn' : 'good'}
+                  label="Ingresos por cobrar"
+                  value={formatMXN(proyeccionCaja.ingresosPorCobrar)}
+                  hint="Ingresos registrados que aún no están marcados como pagados."
+                  tone={proyeccionCaja.ingresosPorCobrar > 0 ? 'good' : 'neutral'}
+                />
+                <MetricBox
+                  label="Pagos por salir"
+                  value={formatMXN(proyeccionCaja.pagosPendientes)}
+                  hint="Efectivo que todavía debe salir en esta quincena."
+                  tone={proyeccionCaja.pagosPendientes > 0 ? 'warn' : 'good'}
+                />
+                <MetricBox
+                  label="Diferencia vs plan"
+                  value={diferenciaVsPlan == null ? '—' : formatMXN(diferenciaAbs)}
+                  hint={diferenciaHint}
+                  tone={proyeccionCaja.cuadraConPlan ? 'good' : diferenciaVsPlan == null ? 'neutral' : 'warn'}
                 />
                 {qActual && (
                   <Link
@@ -489,6 +528,39 @@ export default function DashboardPage() {
               </div>
             </div>
           </section>
+
+          {saldoEnCuentas != null && (
+            <section className={`rounded-2xl border p-5 ${proyeccionCaja.cuadraConPlan ? 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/15' : 'border-amber-200 bg-amber-50/50 dark:border-amber-800/50 dark:bg-amber-950/15'}`}>
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Reconciliación plan vs caja</h2>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">La caja se proyecta con dinero real; luego se compara contra el ingreso que quedó sin destino en el plan.</p>
+                </div>
+                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${proyeccionCaja.cuadraConPlan ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
+                  {proyeccionCaja.cuadraConPlan ? 'Cuadra' : `${formatMXN(diferenciaAbs)} por conciliar`}
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+                <MetricBox label="Saldo del corte" value={formatMXN(saldoEnCuentas)} hint="Punto de partida real." tone="neutral" />
+                <MetricBox label="+ Por cobrar" value={formatMXN(proyeccionCaja.ingresosPorCobrar)} hint="Ingreso pendiente de entrar." tone="good" />
+                <MetricBox label="− Por pagar" value={formatMXN(proyeccionCaja.pagosPendientes)} hint="Pagos que aún saldrán." tone="warn" />
+                <MetricBox label="= Te va a quedar" value={formatMXN(proyeccionCaja.saldoProyectado ?? 0)} hint="Proyección de caja al cierre." tone={(proyeccionCaja.saldoProyectado ?? 0) < 0 ? 'bad' : 'good'} />
+              </div>
+
+              <div className="mt-4 rounded-xl border border-slate-200/80 bg-white/70 px-4 py-3 text-sm dark:border-slate-700 dark:bg-slate-900/40">
+                <div className="flex items-center justify-between gap-4">
+                  <span className="text-slate-600 dark:text-slate-300">El plan dice que debería quedar sin destino</span>
+                  <strong className="tabular-nums text-slate-900 dark:text-slate-100">{formatMXN(posicion.ingresoSinAsignar)}</strong>
+                </div>
+                {!proyeccionCaja.cuadraConPlan && diferenciaVsPlan != null && (
+                  <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                    La diferencia de {formatMXN(diferenciaAbs)} no se oculta: indica saldo arrastrado, un movimiento fuera del plan, un estatus de pago incorrecto o un corte que necesita actualizarse.
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
 
           <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             <div className="lg:col-span-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
@@ -594,7 +666,7 @@ export default function DashboardPage() {
               </div>
               <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
                 {posicion.ingresoSinAsignar >= 0
-                  ? `${formatMXN(posicion.ingresoSinAsignar)} de margen presupuestal aún no tiene destino.`
+                  ? `${formatMXN(posicion.ingresoSinAsignar)} de tus ingresos aún no tiene destino en el plan.`
                   : `Tienes ${formatMXN(Math.abs(posicion.ingresoSinAsignar))} comprometidos por encima del ingreso registrado.`}
               </p>
             </div>
@@ -728,6 +800,7 @@ function DashboardSkeleton() {
         <div className="lg:col-span-3 h-60 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
         <div className="lg:col-span-2 h-60 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
       </div>
+      <div className="h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <div className="lg:col-span-3 h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
         <div className="lg:col-span-2 h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />

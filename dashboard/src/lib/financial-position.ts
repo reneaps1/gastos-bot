@@ -13,22 +13,28 @@ export interface FinancialPosition {
   saldoEnCuentas: number | null
   disponibleHoy: number | null
   pendientePorCubrir: number
+  /** Referencia historica: saldo del corte menos ejecucion presupuestal pendiente. No es proyeccion de caja. */
   saldoDespuesDePagar: number | null
   ingresoSinAsignar: number
+  /** Referencia historica basada en saldoDespuesDePagar. No usar para la pregunta "cuanto me va a quedar". */
   cubrePendiente: boolean | null
+  /** Referencia historica basada en saldoDespuesDePagar. */
   faltanteCobertura: number | null
 }
 
 /**
- * Fuente unica para las preguntas ejecutivas de Milo:
- * - cuanto dinero hay en las cuentas segun el ultimo corte,
- * - cuanto falta cubrir del presupuesto,
- * - cuanto queda si se cubre todo,
- * - cuanto ingreso de la quincena sigue sin asignar.
+ * Posicion de plan/presupuesto de Milo.
  *
- * El corte de liquidez ya es una foto del saldo real de las cuentas. Si un
- * ahorro ya se registro como transaccion/salida, su efecto ya esta contenido
- * en ese saldo y no debe restarse una segunda vez aqui.
+ * Esta funcion conserva algunos campos historicos de liquidez por
+ * compatibilidad, pero `pendientePorCubrir` mide EJECUCION PRESUPUESTAL, no
+ * cuanto efectivo saldra del banco. Por eso `saldoDespuesDePagar` tampoco debe
+ * usarse como respuesta a "cuanto me va a quedar".
+ *
+ * La proyeccion de caja oficial vive en `@/lib/proyeccion-caja` y usa:
+ * saldo del corte + ingresos por cobrar - pagos que saldran en la quincena.
+ *
+ * El ahorro no se vuelve a descontar del corte: si ya se registro como
+ * transaccion/salida, su efecto ya esta reflejado en los saldos capturados.
  */
 export function calcularPosicionFinanciera(input: FinancialPositionInput): FinancialPosition {
   const pendientePorCubrir = calcularFaltaPorPagar(input.presupuestos)
