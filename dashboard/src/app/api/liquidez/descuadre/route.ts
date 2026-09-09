@@ -48,22 +48,46 @@ export async function GET(request: Request) {
       return NextResponse.json({ actual, anterior: null, capturasMismaFecha, conciliacion: null })
     }
 
-    const movimientos = await prisma.transaccion.groupBy({
-      by: ['tipo'],
-      where: {
-        fecha: { gt: anterior.fechaCorte, lte: actual.fechaCorte },
-        estatus: 'Pagado',
-        tipo: { in: ['Ingreso', 'Gasto'] },
-      },
-      _sum: { monto: true },
-    })
+    const [movimientos, pagosCreditoAgg] = await Promise.all([
+      prisma.transaccion.groupBy({
+        by: ['tipo', 'direccion'],
+        where: {
+          fecha: { gt: anterior.fechaCorte, lte: actual.fechaCorte },
+          estatus: 'Pagado',
+          tipo: { in: ['Ingreso', 'Gasto', 'Ahorro'] },
+        },
+        _sum: { monto: true },
+      }),
+      prisma.creditoPago.aggregate({
+        where: {
+          estatus: 'Pagado',
+          fechaPagoReal: { gt: anterior.fechaCorte, lte: actual.fechaCorte },
+        },
+        _sum: { montoTotal: true },
+      }),
+    ])
 
-    const ingresosPagados = Number(movimientos.find(m => m.tipo === 'Ingreso')?._sum.monto ?? 0)
-    const gastosPagados = Number(movimientos.find(m => m.tipo === 'Gasto')?._sum.monto ?? 0)
+    let ingresos = 0
+    let gastos = 0
+    let ahorroAportes = 0
+    let ahorroRetiros = 0
+
+    for (const row of movimientos) {
+      const monto = Number(row._sum.monto ?? 0)
+      if (row.tipo === 'Ingreso') ingresos += monto
+      else if (row.tipo === 'Gasto') gastos += monto
+      else if (row.tipo === 'Ahorro' && row.direccion === 'Retiro') ahorroRetiros += monto
+      else if (row.tipo === 'Ahorro') ahorroAportes += monto
+    }
+
+    const pagosCredito = Number(pagosCreditoAgg._sum.montoTotal ?? 0)
+    const ingresosCaja = ingresos + ahorroRetiros
+    const gastosCaja = gastos + ahorroAportes + pagosCredito
+
     const conciliacion = calcularDescuadre({
       saldoAnterior: totalSnapshot(anterior),
-      ingresosPagados,
-      gastosPagados,
+      ingresosPagados: ingresosCaja,
+      gastosPagados: gastosCaja,
       saldoActual: totalSnapshot(actual),
     })
 
@@ -72,6 +96,14 @@ export async function GET(request: Request) {
       anterior,
       capturasMismaFecha,
       intervalo: { desdeExclusivo: anterior.fechaCorte, hastaInclusivo: actual.fechaCorte },
+      movimientosCaja: {
+        ingresos,
+        gastos,
+        ahorroAportes,
+        ahorroRetiros,
+        pagosCredito,
+        neto: ingresosCaja - gastosCaja,
+      },
       conciliacion,
     })
   } catch (error) {
