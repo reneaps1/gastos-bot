@@ -12,6 +12,7 @@ import { ReporteButton } from '@/components/ReporteButton'
 import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
 import { sumLiquidez, normalizeMontos, calcularEfectivoDisponible } from '@/lib/liquidez'
 import { calcularFaltaPorPagar, type PresupuestoParaTotales } from '@/lib/presupuesto-totales'
+import { calcularProyeccionCaja } from '@/lib/proyeccion-caja'
 import { DeficitTriagePanel } from '@/components/ui/DeficitTriagePanel'
 import { resolveCuentaIcon } from '@/lib/cuenta-icons'
 
@@ -97,11 +98,12 @@ function LiquidezConfigContent() {
   const [faltaModal, setFaltaModal] = useState(0)
   const [presupuestosQ, setPresupuestosQ] = useState<PresupuestoParaTotales[]>([])
   const [pagosQuincenaVivo, setPagosQuincenaVivo] = useState(0)
+  const [ingresosRegistradosVivo, setIngresosRegistradosVivo] = useState(0)
+  const [ingresosPagadosVivo, setIngresosPagadosVivo] = useState(0)
 
   // Descuadre real: compara el corte mas reciente contra lo que "deberia" haber
   // segun el corte anterior (cualquier quincena) mas los movimientos ya
-  // registrados entre ambas fechas. Distinto del Delta de arriba, que compara
-  // contra "falta por pagar" (cobertura hacia adelante).
+  // registrados entre ambas fechas. Distinto de la proyeccion al cierre.
   const [descuadreData, setDescuadreData] = useState<Conciliacion | null>(null)
   const [previousSnapshot, setPreviousSnapshot] = useState<Snapshot | null>(null)
   const [capturasMismaFecha, setCapturasMismaFecha] = useState(0)
@@ -177,9 +179,7 @@ function LiquidezConfigContent() {
 
   useEffect(() => { fetchPresupuestosQ() }, [fetchPresupuestosQ])
 
-  // "Pendiente por cubrir" de una quincena = misma formula que Presupuesto/Dashboard
-  // (lib/presupuesto-totales.calcularFaltaPorPagar), para que el snapshot de
-  // liquidez no quede desincronizado con el presupuesto real.
+  // "Pendiente por cubrir" es ejecucion de presupuesto, no una proyeccion de caja.
   async function fetchFaltaPorPagar(qId: string): Promise<number | null> {
     if (!qId) return null
     try {
@@ -201,23 +201,14 @@ function LiquidezConfigContent() {
     if (falta != null) setFaltaModal(falta)
   }
 
-  // Recalcula al elegir quincena: se usa al crear un snapshot nuevo y al
-  // reasignar la quincena de uno existente. faltaModal alimenta solo la
-  // previsualizacion de "Saldo tras pendientes" -- ya no es un campo del form,
-  // el servidor calcula y guarda el faltaPagar y el pagosQuincena reales al
-  // hacer submit (ver /api/liquidez).
+  // Recalcula la referencia presupuestal al elegir quincena. No se usa para
+  // responder cuanto efectivo quedara; la proyeccion de caja usa pagosQuincena.
   async function applyQuincena(qId: string) {
     setForm(f => ({ ...f, quincenaId: qId }))
     await recalcularFalta(qId)
   }
 
-  // "Pagos que caen esta quincena" = cuanto efectivo va a salir del banco EN
-  // esta quincena (pendientes directos + abonos de credito/TDC programados +
-  // presupuesto sin ejecutar) — a diferencia de "pendiente por cubrir", que mide
-  // ejecucion de presupuesto sin importar cuando sale la caja. Es la fuente
-  // real de "¿me alcanza?". Se recalcula en vivo (nunca se confia en el valor
-  // guardado del snapshot) cada vez que cambia la quincena filtrada o los
-  // datos que la afectan (ver onChanged del panel de triage).
+  // Cuanto efectivo todavia saldra del banco en esta quincena.
   const fetchPagosQuincenaVivo = useCallback(async () => {
     if (!quincenaId) { setPagosQuincenaVivo(0); return }
     try {
@@ -231,6 +222,29 @@ function LiquidezConfigContent() {
   }, [quincenaId])
 
   useEffect(() => { fetchPagosQuincenaVivo() }, [fetchPagosQuincenaVivo])
+
+  // El plan usa todo ingreso registrado. Para reconciliarlo con caja separamos
+  // lo ya cobrado de lo que aun debe entrar.
+  const fetchIngresosVivo = useCallback(async () => {
+    if (!quincenaId) {
+      setIngresosRegistradosVivo(0)
+      setIngresosPagadosVivo(0)
+      return
+    }
+    try {
+      const res = await fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=1`)
+      if (!res.ok) throw new Error()
+      const data = await res.json()
+      const totales = data?.totales ?? {}
+      setIngresosRegistradosVivo(Number(totales.Ingreso ?? 0))
+      setIngresosPagadosVivo(Number(totales.IngresoPagado ?? 0))
+    } catch {
+      setIngresosRegistradosVivo(0)
+      setIngresosPagadosVivo(0)
+    }
+  }, [quincenaId])
+
+  useEffect(() => { fetchIngresosVivo() }, [fetchIngresosVivo])
 
   function montosDesdeActivas(): MontoFormLinea[] {
     return cuentasActivas.map(c => ({ cuentaId: c.id, nombre: c.nombre, tipo: c.tipo, icono: c.icono, monto: '', nota: '' }))
@@ -247,10 +261,6 @@ function LiquidezConfigContent() {
 
   function openEdit(s: Snapshot) {
     setEditing(s)
-    // Las cuentas activas siempre aparecen (aunque el corte no tuviera línea
-    // para ellas todavía); las que el corte ya tenía pero fueron desactivadas
-    // después se agregan al final marcadas "inactiva" para no perder su valor
-    // al guardar (ver handleSave: se manda el arreglo completo).
     const activas = cuentasActivas.map(c => {
       const existente = s.montos.find(m => m.cuentaId === c.id)
       return { cuentaId: c.id, nombre: c.nombre, tipo: c.tipo, icono: c.icono, monto: existente ? existente.monto.toString() : '', nota: existente?.nota ?? '' }
@@ -298,6 +308,7 @@ function LiquidezConfigContent() {
       setModalOpen(false)
       fetchData()
       fetchPagosQuincenaVivo()
+      fetchIngresosVivo()
     } catch {
       toast('Error al guardar', 'error')
     } finally {
@@ -323,11 +334,8 @@ function LiquidezConfigContent() {
 
   // Descuadre real: lo que hay ahora vs. lo que "deberia" haber segun el corte
   // anterior (cualquier quincena) mas ingresos cobrados y gastos ya pagados
-  // registrados entre las dos fechas de corte. Se usa GastoPagado (no Gasto)
-  // e IngresoPagado (no Ingreso) porque un movimiento Pendiente todavia no
-  // ha entrado ni salido del bolsillo. No se restan movimientos de Ahorro:
-  // si el destino tipico es Uala Inversion, que ya es una de las cuentas
-  // contadas, restarlo tambien lo restaria dos veces.
+  // registrados entre las dos fechas de corte. No se restan movimientos de
+  // Ahorro porque el corte ya refleja el saldo real de las cuentas.
   const fetchDescuadre = useCallback(async (snapshotId: number) => {
     setDescuadreLoading(true)
     try {
@@ -379,6 +387,8 @@ function LiquidezConfigContent() {
       toast('Ajuste registrado')
       setAjusteModalOpen(false)
       fetchDescuadre(latestSnapshot.id)
+      fetchIngresosVivo()
+      fetchPagosQuincenaVivo()
     } catch {
       toast('Error al registrar el ajuste', 'error')
     } finally {
@@ -390,14 +400,15 @@ function LiquidezConfigContent() {
   const setMontoLinea = (cuentaId: number, field: 'monto' | 'nota', val: string) =>
     setForm(f => ({ ...f, montos: f.montos.map(m => m.cuentaId === cuentaId ? { ...m, [field]: val } : m) }))
 
-  // La API ordena por fechaCorte desc, asi que el primero es el corte mas
-  // reciente de la quincena seleccionada.
   const latestSnapshot = snapshots[0] ?? null
   const efectivo = calcularEfectivoDisponible(latestSnapshot, presupuestosQ)
-  // "¿Me alcanza?" se basa en pagosQuincenaVivo (cuanto sale de banco EN esta
-  // quincena), no en efectivo.faltaPagar (ejecucion de presupuesto sin
-  // importar cuando sale la caja) -- ver lib/pagos-quincena.ts.
-  const deltaLiquido = efectivo.totalLiquido - pagosQuincenaVivo
+  const proyeccionCaja = calcularProyeccionCaja({
+    saldoCorte: latestSnapshot ? efectivo.totalLiquido : null,
+    ingresosRegistrados: ingresosRegistradosVivo,
+    ingresosPagados: ingresosPagadosVivo,
+    pagosPendientes: pagosQuincenaVivo,
+  })
+  const saldoProyectado = proyeccionCaja.saldoProyectado ?? 0
   const currentQuincena = quincenas.find(q => q.id.toString() === quincenaId)
 
   useEffect(() => {
@@ -420,7 +431,7 @@ function LiquidezConfigContent() {
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Liquidez</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Snapshots de caja por quincena</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Fotografía de cuentas y proyección de caja al cierre</p>
         </div>
         <div className="flex items-center flex-wrap gap-2">
           {currentQuincena && <ReporteButton quincenaId={currentQuincena.id} quincenaCodigo={currentQuincena.codigo} fechaInicio={currentQuincena.fechaInicio} fechaFin={currentQuincena.fechaFin} />}
@@ -434,7 +445,6 @@ function LiquidezConfigContent() {
         </div>
       </div>
 
-      {/* Filter */}
       <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
         <select
           value={quincenaId}
@@ -445,7 +455,6 @@ function LiquidezConfigContent() {
         </select>
       </div>
 
-      {/* Analítica: líquido vs pendiente por cubrir del corte más reciente */}
       {!loading && latestSnapshot && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard
@@ -455,34 +464,34 @@ function LiquidezConfigContent() {
             color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
           />
           <KpiCard
-            label="Pendiente por cubrir" value={formatMXN(efectivo.faltaPagar)}
-            subtitle={`en vivo · al corte ${formatMXN(latestSnapshot.faltaPagar)}`}
-            icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
-            color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
+            label="Ingresos por cobrar" value={formatMXN(proyeccionCaja.ingresosPorCobrar)}
+            subtitle="registrados, aún no marcados como pagados"
+            icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
+            color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
           />
           <KpiCard
-            label="Pagos que caen esta quincena" value={formatMXN(pagosQuincenaVivo)}
+            label="Pagos por salir" value={formatMXN(pagosQuincenaVivo)}
             subtitle={`en vivo · al corte ${formatMXN(latestSnapshot.pagosQuincena)}`}
             icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
           />
           <KpiCard
-            label="¿Me alcanza?" value={formatMXN(deltaLiquido)}
-            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : deltaLiquido > 0 ? 'te sobra después de los pagos de esta quincena' : 'alcanza justo'}
+            label="Saldo proyectado al cierre" value={formatMXN(saldoProyectado)}
+            subtitle={saldoProyectado < 0 ? 'te falta para cerrar' : saldoProyectado > 0 ? 'te va a quedar' : 'cierra justo'}
             icon={
-              deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
-              : deltaLiquido > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
+              saldoProyectado < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
+              : saldoProyectado > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
               : <Equal size={20} className="text-slate-500 dark:text-slate-300" />
             }
-            color={deltaLiquido < 0 ? 'text-rose-600 dark:text-rose-400' : deltaLiquido > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}
+            color={saldoProyectado < 0 ? 'text-rose-600 dark:text-rose-400' : saldoProyectado > 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-600 dark:text-slate-300'}
             bg={
-              deltaLiquido < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
-              : deltaLiquido > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
+              saldoProyectado < 0 ? 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'
+              : saldoProyectado > 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50'
               : 'bg-slate-100 dark:bg-slate-700/50 dark:ring-1 dark:ring-slate-600/50'
             }
             action={
               <div className="mt-1.5 flex flex-col items-start gap-1">
-                {deltaLiquido < 0 && currentQuincena && (
+                {saldoProyectado < 0 && currentQuincena && (
                   <button
                     onClick={() => setTriageOpen(true)}
                     className="text-xs font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
@@ -491,7 +500,7 @@ function LiquidezConfigContent() {
                   </button>
                 )}
                 <Link href="/" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
-                  ver margen del plan en dashboard <ArrowRight size={10} />
+                  reconciliar con el plan <ArrowRight size={10} />
                 </Link>
               </div>
             }
@@ -521,6 +530,18 @@ function LiquidezConfigContent() {
               )}
             />
           )}
+        </div>
+      )}
+
+      {!loading && latestSnapshot && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-800">
+          <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">Cómo se calcula el cierre</p>
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            {formatMXN(efectivo.totalLiquido)} del corte + {formatMXN(proyeccionCaja.ingresosPorCobrar)} por cobrar − {formatMXN(pagosQuincenaVivo)} por salir = {formatMXN(saldoProyectado)}.
+          </p>
+          <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+            El "pendiente por cubrir" del presupuesto se conserva como referencia de ejecución, pero no se usa para responder cuánto efectivo te va a quedar.
+          </p>
         </div>
       )}
 
@@ -578,7 +599,6 @@ function LiquidezConfigContent() {
         </div>
       )}
 
-      {/* Table */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {loading ? (
           <div className="py-16 flex justify-center text-slate-400 dark:text-slate-500 text-sm gap-2">
@@ -605,10 +625,10 @@ function LiquidezConfigContent() {
                   <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Corte</th>
                   <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Cuentas</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Total</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Pendiente por cubrir</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Pendiente del plan</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Gasto real</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Pronóstico</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Saldo tras pendientes</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Referencia histórica</th>
                   <th className="text-center px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Validado</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -653,7 +673,7 @@ function LiquidezConfigContent() {
                       <td className="px-3 py-3.5 text-right text-slate-700 dark:text-slate-300 hidden lg:table-cell">
                         {s.gastosPronosticados == null ? '—' : formatMXN(s.gastosPronosticados)}
                       </td>
-                      <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">
+                      <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100" title="Cálculo histórico: total del corte menos pendiente presupuestal guardado">
                         {formatMXN(saldoTrasPendientes)}
                       </td>
                       <td className="px-3 py-3.5 text-center">
@@ -681,7 +701,6 @@ function LiquidezConfigContent() {
         )}
       </div>
 
-      {/* Modal */}
       <FormModal open={modalOpen} onOpenChange={setModalOpen} title={editing ? 'Editar snapshot' : 'Nuevo snapshot'}>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
@@ -741,17 +760,13 @@ function LiquidezConfigContent() {
             </div>
           )}
 
-          {/* Saldo tras pendientes -- "pendiente por cubrir" ya no es un campo editable
-              del corte: se calcula en vivo contra el presupuesto real de la
-              quincena y el servidor la guarda al hacer submit (junto con
-              pagosQuincena -- ver /api/liquidez). */}
           <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3 space-y-1">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Saldo tras pendientes</span>
+              <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Referencia presupuestal</span>
               <span className="text-lg font-bold text-slate-800 dark:text-slate-100">{formatMXN(calcSaldoTrasPendientes(form, faltaModal))}</span>
             </div>
             <p className="text-[11px] text-slate-400 dark:text-slate-500">
-              cuentas − {formatMXN(faltaModal)} pendiente por cubrir{faltaLoading ? ' (actualizando...)' : ' (calculado en vivo del presupuesto)'}
+              cuentas − {formatMXN(faltaModal)} pendiente del plan{faltaLoading ? ' (actualizando...)' : ''}. No es la proyección de caja al cierre.
             </p>
           </div>
 
@@ -782,7 +797,6 @@ function LiquidezConfigContent() {
         </div>
       </FormModal>
 
-      {/* Modal de ajuste de descuadre */}
       <FormModal open={ajusteModalOpen} onOpenChange={setAjusteModalOpen} title={ajusteTipo === 'Gasto' ? 'Registrar gasto faltante' : 'Registrar ingreso no explicado'}>
         <div className="space-y-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -828,7 +842,7 @@ function LiquidezConfigContent() {
           quincenaId={currentQuincena.id}
           quincenaCodigo={currentQuincena.codigo}
           quincenas={quincenas}
-          onChanged={() => { fetchData(); fetchPresupuestosQ(); fetchPagosQuincenaVivo() }}
+          onChanged={() => { fetchData(); fetchPresupuestosQ(); fetchPagosQuincenaVivo(); fetchIngresosVivo() }}
         />
       )}
     </div>
