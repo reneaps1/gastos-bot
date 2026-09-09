@@ -70,7 +70,7 @@ function Label({ htmlFor, children }: { htmlFor: string; children: React.ReactNo
   return <label htmlFor={htmlFor} className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">{children}</label>
 }
 
-function calcTeorico(f: typeof EMPTY_FORM, faltaVivo: number) {
+function calcSaldoTrasPendientes(f: typeof EMPTY_FORM, faltaVivo: number) {
   const sum = f.montos.reduce((s, m) => s + (parseFloat(m.monto) || 0), 0)
   return sum - faltaVivo
 }
@@ -161,7 +161,7 @@ function LiquidezConfigContent() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  // Presupuesto de la quincena filtrada, para calcular "falta por pagar" en
+  // Presupuesto de la quincena filtrada, para calcular "pendiente por cubrir" en
   // vivo (nunca confiar en el faltaPagar guardado del snapshot -- ver
   // calcularEfectivoDisponible en lib/liquidez.ts).
   const fetchPresupuestosQ = useCallback(async () => {
@@ -177,7 +177,7 @@ function LiquidezConfigContent() {
 
   useEffect(() => { fetchPresupuestosQ() }, [fetchPresupuestosQ])
 
-  // "Falta por pagar" de una quincena = misma formula que Presupuesto/Dashboard
+  // "Pendiente por cubrir" de una quincena = misma formula que Presupuesto/Dashboard
   // (lib/presupuesto-totales.calcularFaltaPorPagar), para que el snapshot de
   // liquidez no quede desincronizado con el presupuesto real.
   async function fetchFaltaPorPagar(qId: string): Promise<number | null> {
@@ -203,7 +203,7 @@ function LiquidezConfigContent() {
 
   // Recalcula al elegir quincena: se usa al crear un snapshot nuevo y al
   // reasignar la quincena de uno existente. faltaModal alimenta solo la
-  // previsualizacion de "Teorico calculado" -- ya no es un campo del form,
+  // previsualizacion de "Saldo tras pendientes" -- ya no es un campo del form,
   // el servidor calcula y guarda el faltaPagar y el pagosQuincena reales al
   // hacer submit (ver /api/liquidez).
   async function applyQuincena(qId: string) {
@@ -213,7 +213,7 @@ function LiquidezConfigContent() {
 
   // "Pagos que caen esta quincena" = cuanto efectivo va a salir del banco EN
   // esta quincena (pendientes directos + abonos de credito/TDC programados +
-  // presupuesto sin ejecutar) — a diferencia de "falta por pagar", que mide
+  // presupuesto sin ejecutar) — a diferencia de "pendiente por cubrir", que mide
   // ejecucion de presupuesto sin importar cuando sale la caja. Es la fuente
   // real de "¿me alcanza?". Se recalcula en vivo (nunca se confia en el valor
   // guardado del snapshot) cada vez que cambia la quincena filtrada o los
@@ -286,7 +286,7 @@ function LiquidezConfigContent() {
         quincenaId: form.quincenaId,
         fechaCorte: form.fechaCorte,
         montos: form.montos.map(m => ({ cuentaId: m.cuentaId, monto: m.monto || '0', nota: m.nota || null })),
-        teorico: calcTeorico(form, faltaModal).toString(),
+        teorico: calcSaldoTrasPendientes(form, faltaModal).toString(),
         notas: form.notas || null,
         validado: form.validado,
       }
@@ -445,7 +445,7 @@ function LiquidezConfigContent() {
         </select>
       </div>
 
-      {/* Analítica: líquido vs falta por pagar del corte más reciente */}
+      {/* Analítica: líquido vs pendiente por cubrir del corte más reciente */}
       {!loading && latestSnapshot && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
           <KpiCard
@@ -455,7 +455,7 @@ function LiquidezConfigContent() {
             color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
           />
           <KpiCard
-            label="Falta por pagar" value={formatMXN(efectivo.faltaPagar)}
+            label="Pendiente por cubrir" value={formatMXN(efectivo.faltaPagar)}
             subtitle={`en vivo · al corte ${formatMXN(latestSnapshot.faltaPagar)}`}
             icon={<Clock size={20} className="text-amber-600 dark:text-amber-300" />}
             color="text-amber-600 dark:text-amber-400" bg="bg-amber-50 dark:bg-amber-950/50 dark:ring-1 dark:ring-amber-800/50"
@@ -468,7 +468,7 @@ function LiquidezConfigContent() {
           />
           <KpiCard
             label="¿Me alcanza?" value={formatMXN(deltaLiquido)}
-            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : deltaLiquido > 0 ? 'te sobra' : 'alcanza justo'}
+            subtitle={deltaLiquido < 0 ? 'te falta cubrir' : deltaLiquido > 0 ? 'te sobra después de los pagos de esta quincena' : 'alcanza justo'}
             icon={
               deltaLiquido < 0 ? <TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />
               : deltaLiquido > 0 ? <TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />
@@ -491,7 +491,7 @@ function LiquidezConfigContent() {
                   </button>
                 )}
                 <Link href="/" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
-                  ver disponible real del presupuesto <ArrowRight size={10} />
+                  ver margen del plan en dashboard <ArrowRight size={10} />
                 </Link>
               </div>
             }
@@ -605,10 +605,10 @@ function LiquidezConfigContent() {
                   <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Corte</th>
                   <th className="text-left px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden md:table-cell">Cuentas</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Total</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Falta por pagar</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden sm:table-cell">Pendiente por cubrir</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Gasto real</th>
                   <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Pronóstico</th>
-                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Teórico</th>
+                  <th className="text-right px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Saldo tras pendientes</th>
                   <th className="text-center px-3 py-3 text-slate-500 dark:text-slate-400 font-medium">Validado</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -616,7 +616,7 @@ function LiquidezConfigContent() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
                 {snapshots.map(s => {
                   const total = sumLiquidez(s)
-                  const teorico = s.teorico ?? (total - s.faltaPagar)
+                  const saldoTrasPendientes = s.teorico ?? (total - s.faltaPagar)
                   const montosConSaldo = s.montos.filter(m => m.monto > 0)
                   return (
                     <tr key={s.id} className="hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
@@ -654,7 +654,7 @@ function LiquidezConfigContent() {
                         {s.gastosPronosticados == null ? '—' : formatMXN(s.gastosPronosticados)}
                       </td>
                       <td className="px-3 py-3.5 text-right font-semibold text-slate-800 dark:text-slate-100">
-                        {formatMXN(teorico)}
+                        {formatMXN(saldoTrasPendientes)}
                       </td>
                       <td className="px-3 py-3.5 text-center">
                         {s.validado
@@ -741,17 +741,17 @@ function LiquidezConfigContent() {
             </div>
           )}
 
-          {/* Teórico calculado -- "falta por pagar" ya no es un campo editable
+          {/* Saldo tras pendientes -- "pendiente por cubrir" ya no es un campo editable
               del corte: se calcula en vivo contra el presupuesto real de la
               quincena y el servidor la guarda al hacer submit (junto con
               pagosQuincena -- ver /api/liquidez). */}
           <div className="bg-slate-50 dark:bg-slate-700 rounded-lg p-3 space-y-1">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Teórico calculado</span>
-              <span className="text-lg font-bold text-slate-800 dark:text-slate-100">{formatMXN(calcTeorico(form, faltaModal))}</span>
+              <span className="text-sm text-slate-600 dark:text-slate-400 font-medium">Saldo tras pendientes</span>
+              <span className="text-lg font-bold text-slate-800 dark:text-slate-100">{formatMXN(calcSaldoTrasPendientes(form, faltaModal))}</span>
             </div>
             <p className="text-[11px] text-slate-400 dark:text-slate-500">
-              cuentas − {formatMXN(faltaModal)} por pagar{faltaLoading ? ' (actualizando...)' : ' (calculado en vivo del presupuesto)'}
+              cuentas − {formatMXN(faltaModal)} pendiente por cubrir{faltaLoading ? ' (actualizando...)' : ' (calculado en vivo del presupuesto)'}
             </p>
           </div>
 
