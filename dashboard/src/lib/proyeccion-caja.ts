@@ -18,6 +18,10 @@ export interface ProyeccionCaja {
 
 const TOLERANCIA_CENTAVOS = 0.01
 
+function dinero(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100
+}
+
 /**
  * Proyeccion de caja de cierre a partir de una fotografia real de cuentas.
  *
@@ -28,22 +32,23 @@ const TOLERANCIA_CENTAVOS = 0.01
  * efecto ya debe estar reflejado en el saldo capturado de las cuentas.
  */
 export function calcularProyeccionCaja(input: ProyeccionCajaInput): ProyeccionCaja {
-  const ingresosRegistrados = Number(input.ingresosRegistrados) || 0
-  const ingresosPagados = Number(input.ingresosPagados) || 0
-  const pagosPendientes = Math.max(Number(input.pagosPendientes) || 0, 0)
-  const ingresosPorCobrar = Math.max(ingresosRegistrados - ingresosPagados, 0)
-  const margenPlan = input.margenPlan == null ? null : Number(input.margenPlan)
+  const ingresosRegistrados = dinero(Number(input.ingresosRegistrados) || 0)
+  const ingresosPagados = dinero(Number(input.ingresosPagados) || 0)
+  const pagosPendientes = dinero(Math.max(Number(input.pagosPendientes) || 0, 0))
+  const ingresosPorCobrar = dinero(Math.max(ingresosRegistrados - ingresosPagados, 0))
+  const margenPlan = input.margenPlan == null ? null : dinero(Number(input.margenPlan))
 
-  const saldoProyectado = input.saldoCorte == null
+  const saldoCorte = input.saldoCorte == null ? null : dinero(Number(input.saldoCorte))
+  const saldoProyectado = saldoCorte == null
     ? null
-    : Number(input.saldoCorte) + ingresosPorCobrar - pagosPendientes
+    : dinero(saldoCorte + ingresosPorCobrar - pagosPendientes)
 
   const diferenciaVsPlan = saldoProyectado == null || margenPlan == null
     ? null
-    : saldoProyectado - margenPlan
+    : dinero(saldoProyectado - margenPlan)
 
   return {
-    saldoCorte: input.saldoCorte,
+    saldoCorte,
     ingresosPorCobrar,
     pagosPendientes,
     saldoProyectado,
