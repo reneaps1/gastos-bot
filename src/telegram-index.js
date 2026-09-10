@@ -29,7 +29,14 @@ const db = require('./database')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
 const { parseMessage, formatConfirmation } = require('./parser')
 const { ensureFreshQuincenas } = require('./quincenas')
-const { sendTelegramMessage, extractTelegramMessage, isEnabled } = require('./telegram')
+const {
+  sendTelegramMessage,
+  extractTelegramMessage,
+  isEnabled,
+  getWebhookUrl,
+  registerWebhook,
+  getWebhookInfo,
+} = require('./telegram')
 const { resolveBudgetLine, getBudgetLineStatus, formatBudgetStatus } = require('./budgetTracker')
 
 const app = express()
@@ -87,7 +94,6 @@ async function saveTransaction(parsed, user, categoria, metodoPago, quincena, pr
 }
 
 app.post('/telegram/webhook', async (req, res) => {
-  // Telegram puede firmar el webhook con este secreto opcional.
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET
   if (expectedSecret && req.get('X-Telegram-Bot-Api-Secret-Token') !== expectedSecret) {
     return res.sendStatus(403)
@@ -150,14 +156,38 @@ app.post('/telegram/webhook', async (req, res) => {
 })
 
 app.get('/', (_req, res) => {
-  res.json({ status: 'ok', service: 'milo-telegram-bot', telegramEnabled: isEnabled(), timestamp: new Date().toISOString() })
+  res.json({
+    status: 'ok',
+    service: 'milo-telegram-bot',
+    telegramEnabled: isEnabled(),
+    webhookUrl: getWebhookUrl(),
+    timestamp: new Date().toISOString(),
+  })
 })
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
+app.get('/telegram/status', async (_req, res) => {
+  const info = await getWebhookInfo()
+  if (!info.ok) return res.status(500).json(info)
+
+  const result = info.data?.result || {}
+  return res.json({
+    ok: true,
+    url: result.url || null,
+    pendingUpdateCount: result.pending_update_count || 0,
+    lastErrorDate: result.last_error_date || null,
+    lastErrorMessage: result.last_error_message || null,
+  })
+})
+
 const PORT = process.env.PORT || 3001
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Milo Telegram bot running on port ${PORT}`)
+  const result = await registerWebhook()
+  if (!result.ok && !result.skipped) {
+    console.error('Telegram webhook registration failed during startup')
+  }
 })
