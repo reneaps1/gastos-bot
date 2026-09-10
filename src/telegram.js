@@ -4,6 +4,62 @@ function isEnabled() {
   return !!process.env.TELEGRAM_BOT_TOKEN
 }
 
+function getWebhookUrl() {
+  if (process.env.TELEGRAM_WEBHOOK_URL) return process.env.TELEGRAM_WEBHOOK_URL
+  if (process.env.RENDER_EXTERNAL_URL) {
+    return `${process.env.RENDER_EXTERNAL_URL.replace(/\/$/, '')}/telegram/webhook`
+  }
+  return null
+}
+
+async function registerWebhook() {
+  if (!isEnabled()) {
+    console.warn('Telegram webhook not registered: TELEGRAM_BOT_TOKEN not configured')
+    return { ok: false, skipped: true }
+  }
+
+  const url = getWebhookUrl()
+  if (!url) {
+    console.warn('Telegram webhook not registered: TELEGRAM_WEBHOOK_URL/RENDER_EXTERNAL_URL unavailable')
+    return { ok: false, skipped: true }
+  }
+
+  try {
+    const payload = { url }
+    if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+      payload.secret_token = process.env.TELEGRAM_WEBHOOK_SECRET
+    }
+
+    const response = await axios.post(
+      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/setWebhook`,
+      payload,
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+
+    console.log(`Telegram webhook registered: ${url}`)
+    return { ok: true, data: response.data, url }
+  } catch (error) {
+    const details = error.response?.data || error.message
+    console.error('Telegram setWebhook error:', JSON.stringify(details))
+    return { ok: false, error: details, url }
+  }
+}
+
+async function getWebhookInfo() {
+  if (!isEnabled()) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
+
+  try {
+    const response = await axios.get(
+      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/getWebhookInfo`,
+    )
+    return { ok: true, data: response.data }
+  } catch (error) {
+    const details = error.response?.data || error.message
+    console.error('Telegram getWebhookInfo error:', JSON.stringify(details))
+    return { ok: false, error: details }
+  }
+}
+
 async function sendTelegramMessage(chatId, message, replyToMessageId = null) {
   if (!isEnabled()) {
     return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
@@ -49,4 +105,4 @@ function extractTelegramMessage(update) {
   }
 }
 
-module.exports = { isEnabled, sendTelegramMessage, extractTelegramMessage }
+module.exports = { isEnabled, getWebhookUrl, registerWebhook, getWebhookInfo, sendTelegramMessage, extractTelegramMessage }
