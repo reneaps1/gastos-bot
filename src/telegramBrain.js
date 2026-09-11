@@ -2,11 +2,13 @@ const { GoogleGenerativeAI } = require('@google/generative-ai')
 const prisma = require('./lib/prisma')
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash'
 let model = null
 
 function isEnabled() {
-  return !!GEMINI_API_KEY
+  // El cerebro financiero tiene un router local que funciona aun si Gemini
+  // esta caido. Gemini queda como respaldo para lenguaje realmente ambiguo.
+  return true
 }
 
 function getModel() {
@@ -69,6 +71,75 @@ function similarity(a, b) {
   return common / Math.max(aa.size, bb.size)
 }
 
+function inferScope(normalized) {
+  if (/\b(nos|nosotros|tenemos|nuestro|nuestra|familia|casa)\b/.test(normalized)) return 'household'
+  if (/\b(yo|me|mi|mis|tengo|gaste|gasto|llevo|hice)\b/.test(normalized)) return 'me'
+  return 'household'
+}
+
+function extractBudgetSubject(normalized) {
+  const patterns = [
+    /(?:presupuesto|linea)(?: de| del| para)? (.+)$/,
+    /(?:cuanto|cuanta).*?(?:queda|resta|disponible)(?: de| del| para)? (.+)$/,
+    /(?:como voy|como vamos)(?: con| en)? (.+)$/,
+  ]
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern)
+    if (match?.[1]) {
+      const subject = match[1]
+        .replace(/\b(presupuesto|esta quincena|la quincena|ahorita|hoy)\b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (subject && subject.length >= 3) return subject
+    }
+  }
+  return null
+}
+
+function classifyQuestionLocally(text) {
+  const n = normalize(text)
+  if (!n) return null
+  const scope = inferScope(n)
+
+  if (
+    /\b(sin asignar|sin asignacion|no asignad|sin presupuesto|sin linea|sin una linea|no vinculad|sueltos?|huerfanos?)\b/.test(n) ||
+    (/\bgastos?\b/.test(n) && /\b(asignar|presupuesto)\b/.test(n) && /\b(que|cuales|cuantos|tengo|tenemos)\b/.test(n))
+  ) {
+    return { intent: 'unassigned_expenses', subject: null, scope }
+  }
+
+  if (/\bhoy\b/.test(n) && /\b(gaste|gasto|gastado|gastos|compras|movimientos)\b/.test(n)) {
+    return { intent: 'expenses_today', subject: null, scope }
+  }
+
+  if (
+    /\b(liquidez|saldo en cuentas|dinero real|dinero disponible|efectivo disponible|cuanto dinero|cuanta lana tenemos|cuanta lana tengo)\b/.test(n)
+  ) {
+    return { intent: 'liquidity', subject: null, scope }
+  }
+
+  if (
+    (/\bquincena\b/.test(n) && /\b(como|resumen|vamos|va|estado|balance)\b/.test(n)) ||
+    /^como (vamos|voy)$/.test(n)
+  ) {
+    return { intent: 'quincena_summary', subject: null, scope }
+  }
+
+  if (/\b(ultimos movimientos|movimientos recientes|gastos recientes|ultimas compras|que he registrado|que hemos registrado)\b/.test(n)) {
+    return { intent: 'recent_transactions', subject: null, scope }
+  }
+
+  if (
+    /\bpresupuesto\b/.test(n) && /\b(cuanto|cuanta|queda|resta|disponible|voy|vamos|estado)\b/.test(n) ||
+    /\bcuanto me queda de\b/.test(n) ||
+    /\bcuanto queda de\b/.test(n)
+  ) {
+    return { intent: 'budget_remaining', subject: extractBudgetSubject(n), scope }
+  }
+
+  return null
+}
+
 async function currentQuincena() {
   const today = dbDate(mexicoDateString())
   return prisma.quincena.findFirst({
@@ -78,6 +149,15 @@ async function currentQuincena() {
 }
 
 async function classifyQuestion(text) {
+  // Primero resolvemos localmente las preguntas frecuentes. Esto evita una
+  // llamada redundante a Gemini y mantiene funcionando las consultas clave
+  // incluso si Google responde 503 por alta demanda.
+  const local = classifyQuestionLocally(text)
+  if (local) {
+    console.log('TELEGRAM_BRAIN_LOCAL_INTENT:', JSON.stringify(local))
+    return local
+  }
+
   const m = getModel()
   if (!m) return null
 
