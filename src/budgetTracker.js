@@ -10,8 +10,15 @@ function normalize(value) {
     .trim()
 }
 
+const TOKEN_ALIASES = {
+  gasolina: 'gas',
+  combustible: 'gas',
+  nafta: 'gas',
+}
+
 function tokenSet(value) {
-  return new Set(normalize(value).split(' ').filter(token => token.length >= 3))
+  const tokens = normalize(value).split(' ').filter(token => token.length >= 3)
+  return new Set(tokens.flatMap(token => [token, TOKEN_ALIASES[token]].filter(Boolean)))
 }
 
 function similarity(a, b) {
@@ -34,10 +41,10 @@ function effectiveBudgetAmount(line) {
   return Number(line.montoRevisado ?? line.montoPresupuestado ?? 0)
 }
 
-async function resolveBudgetLine({ quincenaId, categoriaId, descripcion, tipo = 'Gasto' }) {
-  if (!quincenaId || !categoriaId || tipo !== 'Gasto') return null
+async function getActiveBudgetLines({ quincenaId, categoriaId, tipo = 'Gasto' }) {
+  if (!quincenaId || !categoriaId || tipo !== 'Gasto') return []
 
-  const lines = await prisma.presupuesto.findMany({
+  return prisma.presupuesto.findMany({
     where: {
       quincenaId,
       categoriaId,
@@ -46,6 +53,10 @@ async function resolveBudgetLine({ quincenaId, categoriaId, descripcion, tipo = 
     },
     orderBy: { id: 'asc' },
   })
+}
+
+async function resolveBudgetLine({ quincenaId, categoriaId, descripcion, tipo = 'Gasto' }) {
+  const lines = await getActiveBudgetLines({ quincenaId, categoriaId, tipo })
 
   if (lines.length === 0) return null
   if (lines.length === 1) return lines[0]
@@ -62,6 +73,21 @@ async function resolveBudgetLine({ quincenaId, categoriaId, descripcion, tipo = 
   if (best.score >= 0.75 && (!second || best.score - second.score >= 0.15)) return best.line
 
   return null
+}
+
+async function getBudgetCandidates({ quincenaId, categoriaId, descripcion, tipo = 'Gasto', limit = 4 }) {
+  const lines = await getActiveBudgetLines({ quincenaId, categoriaId, tipo })
+  if (lines.length === 0) return []
+
+  return lines
+    .map(line => ({
+      id: line.id,
+      descripcion: line.descripcion,
+      score: similarity(descripcion, line.descripcion),
+      presupuesto: effectiveBudgetAmount(line),
+    }))
+    .sort((a, b) => b.score - a.score || a.descripcion.localeCompare(b.descripcion))
+    .slice(0, limit)
 }
 
 async function getBudgetLineStatus(presupuestoId) {
@@ -114,4 +140,4 @@ function formatBudgetStatus(status) {
   ].join('\n')
 }
 
-module.exports = { resolveBudgetLine, getBudgetLineStatus, formatBudgetStatus }
+module.exports = { resolveBudgetLine, getBudgetCandidates, getBudgetLineStatus, formatBudgetStatus }
