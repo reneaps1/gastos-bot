@@ -44,6 +44,45 @@ app.use(express.json())
 
 const processingUpdates = new Set()
 
+function normalizeSimpleText(text) {
+  return String(text || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[¡!¿?.,]+/g, '')
+    .replace(/\s+/g, ' ')
+}
+
+function getSimpleConversationReply(text) {
+  const normalized = normalizeSimpleText(text)
+
+  if (/^(hola|holi|hey|buenas|buenos dias|buenas tardes|buenas noches)$/.test(normalized)) {
+    return '¡Hola! Soy Milo 👋\n\nPuedo registrar tus gastos y decirte cuánto queda en tu línea de presupuesto. Prueba con: “gasté 150 en gasolina”.'
+  }
+
+  if (/^(gracias|muchas gracias|thanks)$/.test(normalized)) {
+    return '¡De nada! 🙌 Aquí estoy para ayudarte con tus gastos y presupuesto.'
+  }
+
+  if (/^(ayuda|help|\/help|que puedes hacer|qué puedes hacer)$/.test(normalized)) {
+    return [
+      'Puedo ayudarte con cosas como:',
+      '',
+      '• “gasté 350 en gasolina”',
+      '• “pagué 800 de internet”',
+      '• registrar el movimiento en Milo',
+      '• mostrar cuánto queda en la línea de presupuesto cuando puedo identificarla con seguridad',
+    ].join('\n')
+  }
+
+  if (/^(\/start|start)$/.test(normalized)) {
+    return '¡Hola! Soy Milo. Envíame un gasto y lo registraré en tu sistema. Por ejemplo: “gasté 150 en gasolina”.'
+  }
+
+  return null
+}
+
 function telegramUserMap() {
   try {
     return JSON.parse(process.env.TELEGRAM_USER_MAP || '{}')
@@ -106,6 +145,15 @@ app.post('/telegram/webhook', async (req, res) => {
   processingUpdates.add(message.updateId)
 
   try {
+    // Conversación básica se resuelve antes del parser financiero para que un
+    // "hola" no termine tratado como un gasto incompleto.
+    const simpleReply = getSimpleConversationReply(message.text)
+    if (simpleReply) {
+      await sendTelegramMessage(message.chatId, simpleReply, message.messageId)
+      console.log(`Telegram simple reply sent; chat=${message.chatId}; text=${message.text}`)
+      return
+    }
+
     await ensureFreshQuincenas()
 
     const user = await resolveMiloUser(message)
