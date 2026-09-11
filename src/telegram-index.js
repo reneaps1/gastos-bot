@@ -27,7 +27,7 @@ if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
 const prisma = require('./lib/prisma')
 const db = require('./database')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
-const { parseMessage, formatConfirmation } = require('./parser')
+const { parseMessage } = require('./parser')
 const { ensureFreshQuincenas } = require('./quincenas')
 const {
   sendTelegramMessage,
@@ -37,7 +37,12 @@ const {
   registerWebhook,
   getWebhookInfo,
 } = require('./telegram')
-const { resolveBudgetLine, getBudgetLineStatus, formatBudgetStatus } = require('./budgetTracker')
+const {
+  resolveBudgetLine,
+  getBudgetCandidates,
+  getBudgetLineStatus,
+  formatBudgetStatus,
+} = require('./budgetTracker')
 
 const app = express()
 app.use(express.json())
@@ -84,6 +89,28 @@ function getSimpleConversationReply(text) {
   }
 
   return null
+}
+
+function formatTelegramDate(date) {
+  // parsed.fecha representa un día financiero como medianoche UTC. Si se
+  // formatea en America/Mexico_City, cae al día anterior por el offset. Para
+  // mostrar el día lógico guardado usamos UTC explícitamente.
+  return date.toLocaleDateString('es-MX', { timeZone: 'UTC' })
+}
+
+function formatTelegramConfirmation(parsed) {
+  return [
+    `✅ *${parsed.tipo} registrado*`,
+    '',
+    `📅 ${formatTelegramDate(parsed.fecha)}`,
+    `👤 ${parsed.usuario}`,
+    `$${parsed.monto}`,
+    `📝 ${parsed.descripcion}`,
+    `🏷️ ${parsed.categoria}`,
+    `💳 ${parsed.formaPago}`,
+    `📊 ${parsed.quincena} - ${parsed.clasificacion || ''}`,
+    `✅ ${parsed.estatus}`,
+  ].join('\n')
 }
 
 function telegramUserMap() {
@@ -148,8 +175,6 @@ app.post('/telegram/webhook', async (req, res) => {
   processingUpdates.add(message.updateId)
 
   try {
-    // Conversación básica se resuelve antes del parser financiero para que un
-    // "hola" no termine tratado como un gasto incompleto.
     const simpleReply = getSimpleConversationReply(message.text)
     if (simpleReply) {
       await sendTelegramMessage(message.chatId, simpleReply, message.messageId)
@@ -176,22 +201,32 @@ app.post('/telegram/webhook', async (req, res) => {
       return
     }
 
-    const presupuesto = await resolveBudgetLine({
+    const budgetLookup = {
       quincenaId: quincena.id,
       categoriaId: categoria.id,
       descripcion: parsed.descripcion,
       tipo: parsed.tipo,
-    })
+    }
 
+    const presupuesto = await resolveBudgetLine(budgetLookup)
     const tx = await saveTransaction(parsed, user, categoria, metodoPago, quincena, presupuesto)
 
-    let confirmation = formatConfirmation(parsed)
+    let confirmation = formatTelegramConfirmation(parsed)
     if (presupuesto) {
       const status = await getBudgetLineStatus(presupuesto.id)
       const budgetText = formatBudgetStatus(status)
       if (budgetText) confirmation += `\n\n${budgetText}`
     } else if (parsed.tipo === 'Gasto') {
-      confirmation += '\n\n⚠️ El gasto quedó registrado, pero no vinculé una línea de presupuesto porque no encontré una coincidencia suficientemente clara.'
+      const candidates = await getBudgetCandidates(budgetLookup)
+      confirmation += '\n\n⚠️ El gasto quedó registrado, pero no lo vinculé a una línea porque hay ambigüedad.'
+
+      if (candidates.length > 0) {
+        confirmation += '\n\nLíneas posibles en esta categoría:'
+        for (const candidate of candidates) {
+          confirmation += `\n• ${candidate.descripcion} — $${candidate.presupuesto.toFixed(2)}`
+        }
+        confirmation += '\n\nLa próxima vez especifica el concepto, por ejemplo: “100 gasolina Corolla”.'
+      }
     }
 
     await sendTelegramMessage(message.chatId, confirmation, message.messageId)
