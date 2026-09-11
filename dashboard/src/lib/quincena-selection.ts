@@ -6,6 +6,7 @@ export interface SelectableQuincena {
 }
 
 const STORAGE_KEY = 'milo:selectedQuincenaId'
+export const QUINCENA_CHANGE_EVENT = 'milo:quincena-change'
 
 export function getMexicoDateString(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -30,6 +31,7 @@ export function getStoredQuincenaId(quincenas: SelectableQuincena[]) {
 export function persistQuincenaId(quincenaId: string) {
   if (typeof window === 'undefined' || !quincenaId) return
   window.localStorage.setItem(STORAGE_KEY, quincenaId)
+  window.dispatchEvent(new CustomEvent<string>(QUINCENA_CHANGE_EVENT, { detail: quincenaId }))
 }
 
 export function getDefaultQuincenaId(quincenas: SelectableQuincena[], dateString = getMexicoDateString()) {
