@@ -18,6 +18,8 @@ No tomar decisiones de implementación sin consultar primero esta política.
 
 **AL INICIAR CADA SESION:** Leer tambien `ISSUES_FASE9.md` si se trabaja en iOS.
 
+**AL INICIAR CADA SESION:** Leer tambien `FASE11_LAYER_MILO.md` si se trabaja en el layer conversacional (cerebro unico, tools, memoria, voz, video o proactividad).
+
 El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo cuando no comparten dependencias.
 
 | Fase | Estado |
@@ -32,6 +34,8 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 | 7 - Administracion | cerrado |
 | 8 - Inteligencia Y Automatizacion | en progreso |
 | 9 - iOS App Store (Capacitor) | en progreso |
+| 10 - Autoservicio De Configuracion | cerrado |
+| 11 - Layer Milo (Asistente Multicanal) | planeado |
 
 ### Fase 0 — Entregables cerrados
 

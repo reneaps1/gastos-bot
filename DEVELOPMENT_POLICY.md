@@ -625,6 +625,24 @@ La app web de Milo Gastos se publicara en el App Store de iOS como una aplicacio
 - Xcode 16+ (macOS requerido para build y subida)
 - Politica de privacidad para la app
 
+### Fase 11: Layer Milo (Asistente Multicanal)
+
+Explicacion simple:
+
+Aqui se construye una capa amigable encima de todo lo anterior: un asistente unico con el que se puede hablar por mensajes, por llamada de voz y eventualmente por video, con acceso real al sistema.
+
+El diseno completo vive en **`FASE11_LAYER_MILO.md`** y debe leerse antes de escribir codigo de esta fase. Resumen de las decisiones cerradas:
+
+- Un solo cerebro (`src/milo/`) compartido por todos los canales. WhatsApp, Telegram, voz y video son solo entradas y salidas.
+- Se reusa y extiende `src/aiRouter.js` (DeepSeek primario, Gemini de respaldo). No se construye pipeline aparte.
+- Acceso de lectura, escritura y acciones de gestion mediante tools tipadas. El dispatcher es el unico punto de escritura y siempre audita.
+- Confirmacion configurable por usuario. Las acciones criticas siempre confirman y exigen PIN.
+- Memoria persistente por usuario, con presupuesto de tokens acotado.
+- Whitelist de numero mas PIN hablado. Aislamiento por `hogarId` inyectado por el dispatcher, nunca por el modelo.
+- Proactividad con reglas puras y dedupe por ventana.
+
+Bloqueantes que se resuelven antes de empezar (Fase 11.0): mergear la rama de Telegram, unificar los dos schemas de Prisma, aplicar `views.sql`, agregar auth minima al dashboard, configurar las claves de IA en produccion, introducir el modelo `Hogar` y validar la disponibilidad de WhatsApp Calling API.
+
 ## Orden Oficial De Ejecucion
 
 El orden recomendado es:
@@ -639,6 +657,8 @@ El orden recomendado es:
 8. Fase 7: Administracion.
 9. Fase 8: Automatizacion.
 10. Fase 9: iOS App Store.
+11. Fase 10: Autoservicio de configuracion.
+12. Fase 11: Layer Milo (asistente multicanal).
 
 ## Reglas De Desarrollo
 
