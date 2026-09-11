@@ -27,6 +27,7 @@ if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
 const prisma = require('./lib/prisma')
 const db = require('./database')
 const aiRouter = require('./aiRouter')
+const financeAgent = require('./financeAgent')
 const telegramBrain = require('./telegramBrain')
 const { getData } = require('./analytics')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
@@ -219,8 +220,18 @@ app.post('/telegram/webhook', async (req, res) => {
         aiData = await aiRouter.classify(message.text, systemContext)
 
         if (aiData?.type === 'question') {
-          // DeepSeek puede entregar una intención financiera estructurada. La
-          // respuesta numérica sigue saliendo del cerebro determinista/PostgreSQL.
+          // Antes del viejo mapa de intents, damos la pregunta al agente de
+          // herramientas. El agente puede navegar presupuesto, movimientos,
+          // liquidez, cuentas, deudas, créditos y ahorros de forma segura.
+          const agentResult = await financeAgent.answer(message.text, { senderName })
+          if (agentResult?.reply) {
+            await sendTelegramMessage(message.chatId, agentResult.reply, message.messageId)
+            console.log(`Telegram finance agent answered; chat=${message.chatId}; tools=${JSON.stringify(agentResult.trace || [])}`)
+            return
+          }
+
+          // Fallback conservador: mantenemos los intents anteriores si el agente
+          // no pudo responder por disponibilidad del proveedor o error temporal.
           if (aiData.intent && aiData.intent !== 'generic_finance') {
             const canonicalPrompts = {
               expenses_today: '¿cuánto gasté hoy?',
@@ -347,6 +358,7 @@ app.get('/', (_req, res) => {
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
     financeBrainEnabled: telegramBrain.isEnabled(),
+    financeAgentEnabled: ai.deepseekEnabled,
     webhookUrl: getWebhookUrl(),
     timestamp: new Date().toISOString(),
   })
@@ -359,6 +371,7 @@ app.get('/health', (_req, res) => {
     telegramEnabled: isEnabled(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
+    financeAgentEnabled: ai.deepseekEnabled,
     timestamp: new Date().toISOString(),
   })
 })
@@ -375,6 +388,7 @@ app.get('/telegram/status', async (_req, res) => {
     pendingUpdateCount: result.pending_update_count || 0,
     lastErrorDate: result.last_error_date || null,
     lastErrorMessage: result.last_error_message || null,
+    financeAgentEnabled: ai.deepseekEnabled,
     ...ai,
   })
 })
@@ -384,6 +398,7 @@ app.listen(PORT, async () => {
   const ai = aiRouter.status()
   console.log(`Milo Telegram bot running on port ${PORT}`)
   console.log(`AI providers: primary=${ai.primary || 'none'}; deepseek=${ai.deepseekEnabled}; gemini=${ai.geminiEnabled}`)
+  console.log(`Finance agent enabled: ${ai.deepseekEnabled}`)
   const result = await registerWebhook()
   if (!result.ok && !result.skipped) {
     console.error('Telegram webhook registration failed during startup')
