@@ -94,6 +94,11 @@ function getSimpleConversationReply(text) {
   return null
 }
 
+function looksLikeFinanceQuestion(text) {
+  const normalized = normalizeSimpleText(text)
+  return /\b(cuanto|cuanta|cuantos|cuantas|que gastos|cuales|como vamos|como voy|resumen|saldo|liquidez|presupuesto|sin asignar|sin linea|sueltos|ultimos movimientos|movimientos recientes)\b/.test(normalized)
+}
+
 function formatTelegramDate(date) {
   return date.toLocaleDateString('es-MX', { timeZone: 'UTC' })
 }
@@ -186,8 +191,18 @@ app.post('/telegram/webhook', async (req, res) => {
     const user = await resolveMiloUser(message)
     const senderName = user?.nombre || message.senderName
 
-    // Gemini interpreta el lenguaje; los cálculos sensibles del primer set de
-    // preguntas se resuelven con consultas deterministas a PostgreSQL.
+    // Las consultas financieras frecuentes se resuelven ANTES de Gemini.
+    // Así siguen funcionando aunque Google esté saturado o devuelva 503.
+    if (looksLikeFinanceQuestion(message.text)) {
+      const localAnswer = await telegramBrain.answerQuestion(message.text, user)
+      if (localAnswer) {
+        await sendTelegramMessage(message.chatId, localAnswer, message.messageId)
+        console.log(`Telegram finance brain answered; chat=${message.chatId}`)
+        return
+      }
+    }
+
+    // Gemini queda como respaldo para lenguaje ambiguo, chat y extracción de gastos.
     let geminiData = null
     let systemContext = null
     if (gemini.isEnabled()) {
@@ -196,15 +211,8 @@ app.post('/telegram/webhook', async (req, res) => {
         geminiData = await gemini.classify(message.text, systemContext)
 
         if (geminiData?.type === 'question') {
-          let answer = await telegramBrain.answerQuestion(message.text, user)
-
-          // Para preguntas todavía no cubiertas por las funciones deterministas,
-          // dejamos que Gemini redacte usando datos reales del sistema.
-          if (!answer) {
-            const data = await getData()
-            answer = await gemini.answer(message.text, data, senderName, systemContext)
-          }
-
+          const data = await getData()
+          const answer = await gemini.answer(message.text, data, senderName, systemContext)
           if (answer) {
             await sendTelegramMessage(message.chatId, answer, message.messageId)
             console.log(`Telegram Gemini question answered; chat=${message.chatId}`)
