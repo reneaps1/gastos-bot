@@ -26,7 +26,7 @@ if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
 
 const prisma = require('./lib/prisma')
 const db = require('./database')
-const gemini = require('./gemini')
+const aiRouter = require('./aiRouter')
 const telegramBrain = require('./telegramBrain')
 const { getData } = require('./analytics')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
@@ -62,10 +62,17 @@ function normalizeSimpleText(text) {
     .replace(/\s+/g, ' ')
 }
 
+function expandFinanceShorthand(text) {
+  return String(text || '')
+    .replace(/\bx\b/gi, 'por')
+    .replace(/\bppto\b/gi, 'presupuesto')
+    .replace(/\bqna\b/gi, 'quincena')
+    .replace(/\bgastos?\s+(?:pendientes?\s+)?por\s+asignar\b/gi, 'gastos sin asignar')
+}
+
 function getSimpleConversationReply(text) {
   const normalized = normalizeSimpleText(text)
 
-  // Conversación básica instantánea: no consume una llamada a Gemini.
   if (/^(hola+|holi+|hi+|hey+|buenas+|buenos dias+|buenas tardes+|buenas noches+|que onda)$/.test(normalized)) {
     return '¡Hola! Soy Milo 👋\n\nPuedo registrar gastos y consultar tus datos de Milo. Prueba: “¿cuánto gasté hoy?” o “¿qué gastos tenemos sin asignar?”.'
   }
@@ -190,11 +197,12 @@ app.post('/telegram/webhook', async (req, res) => {
     await ensureFreshQuincenas()
     const user = await resolveMiloUser(message)
     const senderName = user?.nombre || message.senderName
+    const expandedText = expandFinanceShorthand(message.text)
 
-    // Las consultas financieras frecuentes se resuelven ANTES de Gemini.
-    // Así siguen funcionando aunque Google esté saturado o devuelva 503.
-    if (looksLikeFinanceQuestion(message.text)) {
-      const localAnswer = await telegramBrain.answerQuestion(message.text, user)
+    // Primero resolvemos localmente las preguntas conocidas. Esto cubre lenguaje
+    // cotidiano como "x asignar" sin depender de ningún proveedor externo.
+    if (looksLikeFinanceQuestion(expandedText)) {
+      const localAnswer = await telegramBrain.answerQuestion(expandedText, user)
       if (localAnswer) {
         await sendTelegramMessage(message.chatId, localAnswer, message.messageId)
         console.log(`Telegram finance brain answered; chat=${message.chatId}`)
@@ -202,34 +210,56 @@ app.post('/telegram/webhook', async (req, res) => {
       }
     }
 
-    // Gemini queda como respaldo para lenguaje ambiguo, chat y extracción de gastos.
-    let geminiData = null
+    // Para lenguaje ambiguo: DeepSeek es principal y Gemini queda como fallback.
+    let aiData = null
     let systemContext = null
-    if (gemini.isEnabled()) {
+    if (aiRouter.isEnabled()) {
       try {
-        systemContext = await gemini.getSystemContext(prisma)
-        geminiData = await gemini.classify(message.text, systemContext)
+        systemContext = await aiRouter.getSystemContext(prisma)
+        aiData = await aiRouter.classify(message.text, systemContext)
 
-        if (geminiData?.type === 'question') {
+        if (aiData?.type === 'question') {
+          // DeepSeek puede entregar una intención financiera estructurada. La
+          // respuesta numérica sigue saliendo del cerebro determinista/PostgreSQL.
+          if (aiData.intent && aiData.intent !== 'generic_finance') {
+            const canonicalPrompts = {
+              expenses_today: '¿cuánto gasté hoy?',
+              unassigned_expenses: '¿qué gastos tenemos sin asignar?',
+              budget_remaining: aiData.subject ? `¿cuánto queda del presupuesto de ${aiData.subject}?` : '¿cuánto queda del presupuesto?',
+              liquidity: '¿cuánto dinero tenemos realmente?',
+              quincena_summary: '¿cómo vamos esta quincena?',
+              recent_transactions: 'últimos movimientos',
+            }
+            const canonical = canonicalPrompts[aiData.intent]
+            if (canonical) {
+              const answer = await telegramBrain.answerQuestion(canonical, user)
+              if (answer) {
+                await sendTelegramMessage(message.chatId, answer, message.messageId)
+                console.log(`Telegram ${aiData._provider} intent answered deterministically; chat=${message.chatId}`)
+                return
+              }
+            }
+          }
+
           const data = await getData()
-          const answer = await gemini.answer(message.text, data, senderName, systemContext)
-          if (answer) {
-            await sendTelegramMessage(message.chatId, answer, message.messageId)
-            console.log(`Telegram Gemini question answered; chat=${message.chatId}`)
+          const result = await aiRouter.answer(message.text, data, senderName, systemContext)
+          if (result?.reply) {
+            await sendTelegramMessage(message.chatId, result.reply, message.messageId)
+            console.log(`Telegram ${result.provider} question answered; chat=${message.chatId}`)
             return
           }
         }
 
-        if (geminiData?.type === 'chat') {
-          const reply = await gemini.chat(message.text, senderName, systemContext)
-          if (reply) {
-            await sendTelegramMessage(message.chatId, reply, message.messageId)
-            console.log(`Telegram Gemini chat replied; chat=${message.chatId}`)
+        if (aiData?.type === 'chat') {
+          const result = await aiRouter.chat(message.text, senderName, systemContext)
+          if (result?.reply) {
+            await sendTelegramMessage(message.chatId, result.reply, message.messageId)
+            console.log(`Telegram ${result.provider} chat replied; chat=${message.chatId}`)
             return
           }
         }
 
-        if (geminiData?.type === 'task') {
+        if (aiData?.type === 'task') {
           await sendTelegramMessage(
             message.chatId,
             'Entendí que quieres crear una tarea. Por ahora en Telegram estoy enfocado en gastos y consultas financieras.',
@@ -238,13 +268,11 @@ app.post('/telegram/webhook', async (req, res) => {
           return
         }
       } catch (error) {
-        console.error('Telegram Gemini routing error:', error)
+        console.error('Telegram AI routing error:', error)
       }
     }
 
-    // Si Gemini identificó un registro, aprovechamos monto/categoría/descripción
-    // extraídos por el modelo. Si no, el parser determinista sigue funcionando.
-    const expenseData = geminiData?.type === 'expense' ? geminiData : null
+    const expenseData = aiData?.type === 'expense' ? aiData : null
     const parsed = parseMessage(
       message.text,
       senderName,
@@ -254,7 +282,7 @@ app.post('/telegram/webhook', async (req, res) => {
     )
 
     if (!parsed.monto || parsed.monto <= 0) {
-      const fallback = gemini.isEnabled()
+      const fallback = aiRouter.isEnabled()
         ? 'No pude identificar una operación o pregunta financiera clara. Puedes escribirme algo como “gasté 350 en gasolina” o “¿cuánto gasté hoy?”.'
         : 'No encontré un monto válido. Ejemplo: “gasté 350 en gasolina”.'
       await sendTelegramMessage(message.chatId, fallback, message.messageId)
@@ -311,11 +339,13 @@ app.post('/telegram/webhook', async (req, res) => {
 })
 
 app.get('/', (_req, res) => {
+  const ai = aiRouter.status()
   res.json({
     status: 'ok',
     service: 'milo-telegram-bot',
     telegramEnabled: isEnabled(),
-    geminiEnabled: gemini.isEnabled(),
+    aiEnabled: aiRouter.isEnabled(),
+    ...ai,
     financeBrainEnabled: telegramBrain.isEnabled(),
     webhookUrl: getWebhookUrl(),
     timestamp: new Date().toISOString(),
@@ -323,10 +353,12 @@ app.get('/', (_req, res) => {
 })
 
 app.get('/health', (_req, res) => {
+  const ai = aiRouter.status()
   res.json({
     status: 'ok',
     telegramEnabled: isEnabled(),
-    geminiEnabled: gemini.isEnabled(),
+    aiEnabled: aiRouter.isEnabled(),
+    ...ai,
     timestamp: new Date().toISOString(),
   })
 })
@@ -336,20 +368,22 @@ app.get('/telegram/status', async (_req, res) => {
   if (!info.ok) return res.status(500).json(info)
 
   const result = info.data?.result || {}
+  const ai = aiRouter.status()
   return res.json({
     ok: true,
     url: result.url || null,
     pendingUpdateCount: result.pending_update_count || 0,
     lastErrorDate: result.last_error_date || null,
     lastErrorMessage: result.last_error_message || null,
-    geminiEnabled: gemini.isEnabled(),
+    ...ai,
   })
 })
 
 const PORT = process.env.PORT || 3001
 app.listen(PORT, async () => {
+  const ai = aiRouter.status()
   console.log(`Milo Telegram bot running on port ${PORT}`)
-  console.log(`Gemini enabled: ${gemini.isEnabled()}`)
+  console.log(`AI providers: primary=${ai.primary || 'none'}; deepseek=${ai.deepseekEnabled}; gemini=${ai.geminiEnabled}`)
   const result = await registerWebhook()
   if (!result.ok && !result.skipped) {
     console.error('Telegram webhook registration failed during startup')
