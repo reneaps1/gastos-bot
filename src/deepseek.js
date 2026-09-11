@@ -189,4 +189,4 @@ Mensaje: ${JSON.stringify(text)}`
   return reply
 }
 
-module.exports = { isEnabled, classify, answer, chat }
+module.exports = { isEnabled, complete, classify, answer, chat }
