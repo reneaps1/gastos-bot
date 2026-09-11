@@ -57,15 +57,18 @@ function normalizeSimpleText(text) {
 function getSimpleConversationReply(text) {
   const normalized = normalizeSimpleText(text)
 
-  if (/^(hola|holi|hey|buenas|buenos dias|buenas tardes|buenas noches)$/.test(normalized)) {
+  // Acepta variantes naturales como hola, holaa, holaaa, hii, heyy, etc.
+  // Se exige que todo el mensaje sea un saludo para no tragarnos frases como
+  // "hola, gaste 200 en gasolina" que sí deben seguir al parser financiero.
+  if (/^(hola+|holi+|hi+|hey+|buenas+|buenos dias+|buenas tardes+|buenas noches+|que onda)$/.test(normalized)) {
     return '¡Hola! Soy Milo 👋\n\nPuedo registrar tus gastos y decirte cuánto queda en tu línea de presupuesto. Prueba con: “gasté 150 en gasolina”.'
   }
 
-  if (/^(gracias|muchas gracias|thanks)$/.test(normalized)) {
+  if (/^(gracias+|muchas gracias+|thanks+)$/.test(normalized)) {
     return '¡De nada! 🙌 Aquí estoy para ayudarte con tus gastos y presupuesto.'
   }
 
-  if (/^(ayuda|help|\/help|que puedes hacer|qué puedes hacer)$/.test(normalized)) {
+  if (/^(ayuda|help|\/help|que puedes hacer)$/.test(normalized)) {
     return [
       'Puedo ayudarte con cosas como:',
       '',
