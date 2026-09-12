@@ -1,4 +1,5 @@
 const prisma = require('./lib/prisma')
+const { mexicoDateString, dbDate } = require('./financeUtils')
 
 function num(value) {
   return value == null ? null : Number(value)
@@ -6,15 +7,6 @@ function num(value) {
 
 function dateOnly(date) {
   return date ? date.toISOString().slice(0, 10) : null
-}
-
-function mexicoDateString() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function dbDate(value) {
-  return new Date(`${value}T00:00:00.000Z`)
 }
 
 function clampLimit(value, fallback = 20, max = 50) {

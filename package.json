@@ -5,9 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "start:telegram": "node src/telegram-index.js",
     "dev": "node --watch src/index.js",
-    "dev:telegram": "node --watch src/telegram-index.js",
     "test": "node scripts/test-bot-flow.js"
   },
   "prisma": {

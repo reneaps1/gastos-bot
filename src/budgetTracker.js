@@ -1,41 +1,6 @@
 const prisma = require('./lib/prisma')
-
-function normalize(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-const TOKEN_ALIASES = {
-  gasolina: 'gas',
-  combustible: 'gas',
-  nafta: 'gas',
-}
-
-function tokenSet(value) {
-  const tokens = normalize(value).split(' ').filter(token => token.length >= 3)
-  return new Set(tokens.flatMap(token => [token, TOKEN_ALIASES[token]].filter(Boolean)))
-}
-
-function similarity(a, b) {
-  const na = normalize(a)
-  const nb = normalize(b)
-  if (!na || !nb) return 0
-  if (na === nb) return 1
-  if (na.includes(nb) || nb.includes(na)) return 0.92
-
-  const aTokens = tokenSet(na)
-  const bTokens = tokenSet(nb)
-  if (!aTokens.size || !bTokens.size) return 0
-
-  let intersection = 0
-  for (const token of aTokens) if (bTokens.has(token)) intersection += 1
-  return intersection / Math.max(aTokens.size, bTokens.size)
-}
+const { similarity } = require('./financeUtils')
+const { escapeMarkdown } = require('./telegram')
 
 function effectiveBudgetAmount(line) {
   return Number(line.montoRevisado ?? line.montoPresupuestado ?? 0)
@@ -123,9 +88,11 @@ async function getBudgetLineStatus(presupuestoId) {
 function formatBudgetStatus(status) {
   if (!status) return null
 
+  const descripcion = escapeMarkdown(status.descripcion)
+
   if (status.restante >= 0) {
     return [
-      `📂 *${status.descripcion}*`,
+      `📂 *${descripcion}*`,
       `Presupuesto: $${status.presupuesto.toFixed(2)}`,
       `Gastado: $${status.gastado.toFixed(2)}`,
       `Disponible: *$${status.restante.toFixed(2)}*`,
@@ -133,7 +100,7 @@ function formatBudgetStatus(status) {
   }
 
   return [
-    `📂 *${status.descripcion}*`,
+    `📂 *${descripcion}*`,
     `Presupuesto: $${status.presupuesto.toFixed(2)}`,
     `Gastado: $${status.gastado.toFixed(2)}`,
     `Excedido: *$${status.excedido.toFixed(2)}*`,

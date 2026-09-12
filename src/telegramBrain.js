@@ -1,5 +1,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 const prisma = require('./lib/prisma')
+const { mexicoDateString, dbDate, normalize, similarity } = require('./financeUtils')
+const { escapeMarkdown } = require('./telegram')
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash'
@@ -25,50 +27,6 @@ function money(value) {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
-}
-
-function mexicoDateString() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-function dbDate(dateString) {
-  return new Date(`${dateString}T00:00:00.000Z`)
-}
-
-function normalize(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9 ]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-function tokenSet(value) {
-  const aliases = {
-    gasolina: 'gas',
-    combustible: 'gas',
-    super: 'supermercado',
-    despensa: 'supermercado',
-  }
-  const tokens = normalize(value).split(' ').filter(t => t.length >= 3)
-  return new Set(tokens.flatMap(t => [t, aliases[t]].filter(Boolean)))
-}
-
-function similarity(a, b) {
-  const na = normalize(a)
-  const nb = normalize(b)
-  if (!na || !nb) return 0
-  if (na === nb) return 1
-  if (na.includes(nb) || nb.includes(na)) return 0.95
-  const aa = tokenSet(na)
-  const bb = tokenSet(nb)
-  if (!aa.size || !bb.size) return 0
-  let common = 0
-  for (const t of aa) if (bb.has(t)) common += 1
-  return common / Math.max(aa.size, bb.size)
 }
 
 function inferScope(normalized) {
@@ -233,7 +191,7 @@ async function expensesToday(user, scope) {
   if (!txs.length) return scope === 'me' ? 'Hoy no tienes gastos registrados.' : 'Hoy no hay gastos registrados.'
   const total = txs.reduce((sum, tx) => sum + Number(tx.monto), 0)
   const who = scope === 'me' ? 'Tus gastos de hoy' : 'Gastos de hoy'
-  const lines = txs.slice(0, 8).map(tx => `• $${money(tx.monto)} — ${tx.descripcion} (${tx.categoria.nombre})`)
+  const lines = txs.slice(0, 8).map(tx => `• $${money(tx.monto)} — ${escapeMarkdown(tx.descripcion)} (${escapeMarkdown(tx.categoria.nombre)})`)
   return [`📅 *${who}*`, `Total: *$${money(total)}* en ${txs.length} movimiento(s).`, '', ...lines].join('\n')
 }
 
@@ -255,8 +213,8 @@ async function unassignedExpenses(user, scope) {
   if (!txs.length) return `✅ No hay gastos sin asignar en ${q.codigo}.`
   const total = txs.reduce((sum, tx) => sum + Number(tx.monto), 0)
   const lines = txs.slice(0, 10).map(tx => {
-    const owner = scope === 'household' && tx.user?.nombre ? ` — ${tx.user.nombre}` : ''
-    return `• $${money(tx.monto)} — ${tx.descripcion} (${tx.categoria.nombre})${owner}`
+    const owner = scope === 'household' && tx.user?.nombre ? ` — ${escapeMarkdown(tx.user.nombre)}` : ''
+    return `• $${money(tx.monto)} — ${escapeMarkdown(tx.descripcion)} (${escapeMarkdown(tx.categoria.nombre)})${owner}`
   })
   return [
     `🧩 *Gastos sin línea de presupuesto — ${q.codigo}*`,
@@ -310,7 +268,7 @@ async function budgetRemaining(subject) {
     const best = ranked[0]
     if (best && best.score >= 0.45) {
       return [
-        `📂 *${best.descripcion}*`,
+        `📂 *${escapeMarkdown(best.descripcion)}*`,
         `Presupuesto: $${money(best.budget)}`,
         `Gastado: $${money(best.used)}`,
         best.remaining >= 0
@@ -319,8 +277,8 @@ async function budgetRemaining(subject) {
       ].join('\n')
     }
 
-    const options = ranked.slice(0, 5).map(x => `• ${x.descripcion} (${x.categoria})`).join('\n')
-    return `No identifiqué con seguridad la línea "${subject}". Las líneas más cercanas son:\n${options}`
+    const options = ranked.slice(0, 5).map(x => `• ${escapeMarkdown(x.descripcion)} (${escapeMarkdown(x.categoria)})`).join('\n')
+    return `No identifiqué con seguridad la línea "${escapeMarkdown(subject)}". Las líneas más cercanas son:\n${options}`
   }
 
   const totalBudget = status.reduce((sum, x) => sum + x.budget, 0)
@@ -349,7 +307,7 @@ async function liquidity() {
   const accounts = snapshot.montos
     .filter(row => Number(row.monto) !== 0)
     .slice(0, 8)
-    .map(row => `• ${row.cuenta.nombre}: $${money(row.monto)}`)
+    .map(row => `• ${escapeMarkdown(row.cuenta.nombre)}: $${money(row.monto)}`)
 
   return [
     `💵 *Liquidez del último corte*`,
@@ -400,8 +358,8 @@ async function recentTransactions(user, scope) {
     '📋 *Últimos movimientos*',
     '',
     ...txs.map(tx => {
-      const owner = scope === 'household' && tx.user?.nombre ? ` · ${tx.user.nombre}` : ''
-      return `• ${tx.tipo === 'Ingreso' ? '📈' : tx.tipo === 'Ahorro' ? '🐷' : '📉'} $${money(tx.monto)} — ${tx.descripcion}${owner}`
+      const owner = scope === 'household' && tx.user?.nombre ? ` · ${escapeMarkdown(tx.user.nombre)}` : ''
+      return `• ${tx.tipo === 'Ingreso' ? '📈' : tx.tipo === 'Ahorro' ? '🐷' : '📉'} $${money(tx.monto)} — ${escapeMarkdown(tx.descripcion)}${owner}`
     }),
   ].join('\n')
 }
