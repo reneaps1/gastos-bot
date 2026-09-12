@@ -81,8 +81,13 @@ export async function GET(request: Request) {
     }
 
     const pagosCredito = Number(pagosCreditoAgg._sum.montoTotal ?? 0)
-    const ingresosCaja = ingresos + ahorroRetiros
-    const gastosCaja = gastos + ahorroAportes + pagosCredito
+    // Ahorro no entra en la caja esperada: un aporte/retiro mueve dinero
+    // entre cuentas que YA estan dentro del total del snapshot, asi que no
+    // cambia el total y no debe sumarse ni restarse -- mismo razonamiento
+    // que financial-position.ts y el comentario de la UI que llama a este
+    // endpoint ("el corte ya refleja el saldo real de las cuentas").
+    const ingresosCaja = ingresos
+    const gastosCaja = gastos + pagosCredito
 
     const conciliacion = calcularDescuadre({
       saldoAnterior: totalSnapshot(anterior),

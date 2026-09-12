@@ -70,7 +70,11 @@ async function movimientosCajaEntre(desdeExclusivo: Date, hastaInclusivo: Date):
   }
 
   const pagosCredito = Number(pagosCreditoAgg._sum.montoTotal ?? 0)
-  const neto = ingresos + ahorroRetiros - gastos - ahorroAportes - pagosCredito
+  // Ahorro no entra en neto: un aporte/retiro mueve dinero entre cuentas que
+  // YA estan dentro del total del snapshot (ver Cuenta.tipo 'Inversion' /
+  // LiquidezSnapshotCuenta), asi que no cambia el total y no debe sumarse ni
+  // restarse -- mismo razonamiento que financial-position.ts.
+  const neto = ingresos - gastos - pagosCredito
 
   return { ingresos, gastos, ahorroAportes, ahorroRetiros, pagosCredito, neto }
 }
