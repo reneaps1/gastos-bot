@@ -179,7 +179,11 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 
 ### Dos servicios, un solo webhook de Telegram
 
-`gastos-bot` y `milo-telegram-bot` despliegan **el mismo repo** y corren **el mismo `src/index.js`**; solo cambia el start command (`npm start` vs `npm run start:telegram`, que existe justo para eso). `milo-telegram-bot` NO esta en `render.yaml`: se administra solo desde el dashboard.
+`gastos-bot` sirve WhatsApp y `milo-telegram-bot` sirve Telegram. `milo-telegram-bot` NO esta en `render.yaml`: se administra solo desde el dashboard, asi que su repo, rama, build command y start command **no son visibles desde este repo**. Esa invisibilidad es la causa raiz del incidente del 2026-09-12 y de que tardara 7 horas en diagnosticarse.
+
+Estado verificado el 2026-09-12: `milo-telegram-bot` NO estaba desplegando `reneaps1/gastos-bot@main` (el commit `54c5cb0` agrego `start:telegram` y una hora despues el servicio seguia fallando con `Missing script`). Antes de tocar ese servicio, confirma en su Settings a que repo y rama apunta.
+
+Los dos servicios deben correr el mismo `src/index.js` de `main`; el start command es lo unico que cambia (`npm start` vs `npm run start:telegram`, que existe justo para eso).
 
 Reglas para que no se peleen:
 
@@ -187,6 +191,26 @@ Reglas para que no se peleen:
 - El servicio que **no** deba quedarse con Telegram va con `TELEGRAM_REGISTER_WEBHOOK=false` (o directamente sin `TELEGRAM_BOT_TOKEN`). Al arrancar, cada instancia loguea su rol: `Telegram role: DUENO del webhook` o `solo responde`.
 - `milo-telegram-bot` necesita `DATABASE_URL` (la URL **interna** de gastos-db, el mismo valor que `gastos-bot`). Sin eso arranca y contesta, pero cada consulta a presupuesto, liquidez o movimientos truena: `telegramBrain`, `miloTools` y `financeAgent` pegan a Postgres directo.
 - Si el start command de un servicio apunta a un script que no existe en `package.json`, Render entra en crash loop y **deja viva la version anterior** hasta el siguiente deploy — se ve "Failed deploy" mientras el bot sigue respondiendo, y el silencio real llega con el deploy siguiente. Fue exactamente el incidente del 2026-09-12: `npm run start:telegram` sin ese script en el repo.
+- `npm start` existe en **todas** las versiones del `package.json` de este repo; `start:telegram` solo desde el 2026-09-12. Si hay que revivir un servicio sin saber que commit despliega, `npm start` arranca en cualquiera.
+
+### Watchdog del bot de Telegram
+
+`.github/workflows/telegram-watchdog.yml` corre cada 30 minutos (repo publico: minutos de Actions gratis) y ejecuta `scripts/watchdog-telegram.js`.
+
+Que hace:
+
+- Consulta `getMe` y `getWebhookInfo` en Telegram, y `GET /health` + `GET /telegram/status` en el servicio (timeout de 90s, porque el plan free tarda hasta 50s en despertar).
+- Si el webhook apunta al lugar equivocado o no existe, **lo re-registra solo** y lo reporta.
+- Si hay algo que no puede reparar (servicio caido, lista blanca vacia, token revocado), **escribe al chat de Telegram** y sale con codigo 1, para que GitHub ademas mande su correo de workflow fallido.
+- Si todo esta bien, no manda nada.
+
+Secrets que necesita (Settings -> Secrets and variables -> Actions): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALERT_CHAT_ID`, `TELEGRAM_EXPECTED_WEBHOOK_URL`, `TELEGRAM_SERVICE_URL`.
+
+Probarlo a mano: pestaña Actions -> Telegram watchdog -> Run workflow. En local, `node scripts/watchdog-telegram.js --dry-run` no re-registra ni avisa.
+
+La logica de "que cuenta como roto" vive en `src/telegramHealth.js` (sin dependencias, funciones puras) y la comparten el watchdog y `scripts/diagnose-telegram.js`, para que el diagnostico automatico y el manual no puedan contradecirse. Sus pruebas estan en `scripts/test-watchdog.js` y corren con `npm test`.
+
+**Limitacion conocida**: cada ping despierta el servicio y Render lo mantiene arriba ~15 min, asi que con corridas cada 30 min el servicio queda despierto aproximadamente la mitad del tiempo (~360 h/mes). Sumado a los otros servicios free puede acercarse al limite de 750 h/mes del workspace. Si eso pasa, baja el cron a cada hora.
 
 ### Configuración crítica de Render
 
