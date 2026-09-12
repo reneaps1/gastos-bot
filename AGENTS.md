@@ -170,9 +170,23 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 
 | Servicio | Plataforma | Estado | URL |
 |----------|------------|--------|-----|
-| gastos-bot | Render Web Service (Node) | Live | gastos-bot.onrender.com |
+| gastos-bot | Render Web Service (Node) | Live | ver dashboard (ver nota) |
+| milo-telegram-bot | Render Web Service (Node) | Live | ver dashboard |
 | gastos-dashboard | Render Web Service (Node) | Live | gastos-dashboard.onrender.com |
 | gastos-db | Render PostgreSQL (Free) | Live | interno: dpg-d8nburernols73dj06j0-a |
+
+> Nota sobre la URL de `gastos-bot`: esta tabla decia `gastos-bot.onrender.com`, pero ese host responde un 404 de Flask/Werkzeug — no es esta app (Express contesta `Cannot GET /ruta`). Los subdominios de `onrender.com` son globales y unicos, asi que lo mas probable es que el nombre estuviera tomado y Render le asignara otro. Saca la URL real del dashboard o de `getWebhookInfo` (el bot la registra desde `RENDER_EXTERNAL_URL`, que siempre es la verdadera).
+
+### Dos servicios, un solo webhook de Telegram
+
+`gastos-bot` y `milo-telegram-bot` despliegan **el mismo repo** y corren **el mismo `src/index.js`**; solo cambia el start command (`npm start` vs `npm run start:telegram`, que existe justo para eso). `milo-telegram-bot` NO esta en `render.yaml`: se administra solo desde el dashboard.
+
+Reglas para que no se peleen:
+
+- **Un token de Telegram admite UNA sola URL de webhook.** Cada instancia con `TELEGRAM_BOT_TOKEN` llama `setWebhook` al arrancar, asi que la ultima en reiniciar se queda con TODOS los mensajes. El sintoma es el peor de todos: "el bot funciona a veces".
+- El servicio que **no** deba quedarse con Telegram va con `TELEGRAM_REGISTER_WEBHOOK=false` (o directamente sin `TELEGRAM_BOT_TOKEN`). Al arrancar, cada instancia loguea su rol: `Telegram role: DUENO del webhook` o `solo responde`.
+- `milo-telegram-bot` necesita `DATABASE_URL` (la URL **interna** de gastos-db, el mismo valor que `gastos-bot`). Sin eso arranca y contesta, pero cada consulta a presupuesto, liquidez o movimientos truena: `telegramBrain`, `miloTools` y `financeAgent` pegan a Postgres directo.
+- Si el start command de un servicio apunta a un script que no existe en `package.json`, Render entra en crash loop y **deja viva la version anterior** hasta el siguiente deploy — se ve "Failed deploy" mientras el bot sigue respondiendo, y el silencio real llega con el deploy siguiente. Fue exactamente el incidente del 2026-09-12: `npm run start:telegram` sin ese script en el repo.
 
 ### Configuración crítica de Render
 
@@ -180,6 +194,36 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 - El `render.yaml` define la infraestructura pero **el dashboard de Render sobreescribe** `buildCommand` y `startCommand` en servicios ya existentes. Cambios a esos campos en render.yaml no aplican a servicios ya creados — hay que actualizarlos en el dashboard o recrear el servicio.
 - `DATABASE_URL` debe configurarse **manualmente** en el Environment de cada servicio en el dashboard (el `fromDatabase` de render.yaml solo aplica en Blueprints nuevos).
 - Ambos servicios usan la URL **interna** de gastos-db (sin `.oregon-postgres.render.com`).
+
+### Runbook: el bot de Telegram no responde
+
+El handler de `/telegram/webhook` puede descartar un mensaje **sin contestar nada en el chat**. Estos son todos los caminos, en el orden en que ocurren:
+
+| Causa | Sintoma en el chat | Como se confirma |
+|-------|--------------------|------------------|
+| Servicio dormido o caido (plan free) | silencio total | `getWebhookInfo.last_error_message` trae 502/503/timeout |
+| `TELEGRAM_WEBHOOK_SECRET` desfasado del webhook registrado | silencio total | log `TELEGRAM_SECRET_MISMATCH`; `last_error_message` dice 403 |
+| Chat fuera de `TELEGRAM_ALLOWED_CHAT_IDS` (lista blanca fail-closed) | silencio total | log `TELEGRAM_UNAUTHORIZED_CHAT` con el id exacto |
+| El grupo se volvio supergrupo y cambio de id | dejo de responder de golpe | log `TELEGRAM_CHAT_MIGRATED` con el id nuevo |
+| Modo privacidad del bot en grupos | solo responde a comandos, menciones y respuestas a Milo | log `TELEGRAM_PRIVACY_MODE_ON` al arrancar; `getMe.can_read_all_group_messages=false` |
+| `TELEGRAM_BOT_TOKEN` revocado | silencio total | `getMe` responde 401/404 |
+
+Diagnostico en un comando (necesita salida a `api.telegram.org`):
+
+```bash
+node scripts/diagnose-telegram.js --chat <chat_id> --service https://gastos-bot.onrender.com
+node scripts/diagnose-telegram.js --fix-webhook   # vuelve a registrar el webhook con el secreto actual
+```
+
+Sin shell a mano, `GET /telegram/status` responde lo mismo en resumen: `urlMatchesExpected`, `allowedChatIdCount`, `secretConfigured`, `pendingUpdateCount`, `lastErrorMessage`.
+
+Para ubicar un mensaje concreto en los logs de Render, cada update deja `TELEGRAM_UPDATE_IN` **antes** de cualquier validacion:
+
+- no aparece `TELEGRAM_UPDATE_IN` → el update nunca llego (servicio dormido/caido, o modo privacidad filtrando el mensaje del grupo).
+- aparece y despues `TELEGRAM_UNAUTHORIZED_CHAT` o `TELEGRAM_SECRET_MISMATCH` → es configuracion, no codigo.
+- aparece y no hay respuesta en el chat → revisa `Telegram API error` (token o markdown).
+
+El modo privacidad se apaga en @BotFather: `/setprivacy` → Disable. Sin eso, en un grupo el bot **no recibe** un mensaje suelto como `30, suerox`; solo comandos, menciones y respuestas a sus propios mensajes.
 
 ### Prisma 7 en Render — Lecciones aprendidas
 

@@ -8,12 +8,19 @@ if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
   const { execSync } = require('child_process')
   const realDbUrl = process.env.DATABASE_URL
   process.env.DATABASE_URL = realDbUrl || 'postgresql://x:x@localhost:0/x'
-  try {
-    execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
-  } catch (e) {
-    console.error('prisma generate failed:', e.message)
-    process.exit(1)
+  // Un generate fallido mata el arranque, y en Render eso es un crash loop:
+  // el webhook deja de existir y el bot se queda mudo sin mandar nada al chat.
+  // Un reintento cubre el fallo transitorio (red, disco lento en cold start).
+  let generated = false
+  for (let attempt = 1; attempt <= 2 && !generated; attempt++) {
+    try {
+      execSync('node_modules/.bin/prisma generate', { stdio: 'inherit' })
+      generated = true
+    } catch (e) {
+      console.error(`prisma generate failed (attempt ${attempt}/2):`, e.message)
+    }
   }
+  if (!generated) process.exit(1)
   process.env.DATABASE_URL = realDbUrl
   if (realDbUrl) {
     try {
@@ -645,12 +652,37 @@ app.post('/webhook', async (req, res) => {
 })
 
 app.post('/telegram/webhook', async (req, res) => {
+  // Traza de entrada ANTES de cualquier puerta. Sin esto, un update rechazado
+  // por el secreto o por la lista blanca no deja ni una linea en los logs: el
+  // bot se ve "arriba y sano" mientras descarta todos los mensajes.
+  const inboundChat = req.body?.message?.chat || req.body?.edited_message?.chat
+  console.log(
+    `TELEGRAM_UPDATE_IN: update=${req.body?.update_id ?? 'n/a'} chat=${inboundChat?.id ?? 'n/a'} ` +
+      `type=${inboundChat?.type ?? 'n/a'} keys=${Object.keys(req.body || {}).join(',') || 'none'}`,
+  )
+
   const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET
   if (expectedSecret && req.get('X-Telegram-Bot-Api-Secret-Token') !== expectedSecret) {
+    // Telegram manda el secreto que se le dio en setWebhook. Si no coincide,
+    // el registro del webhook quedo desfasado del env (tipico: se cambio
+    // TELEGRAM_WEBHOOK_SECRET y el setWebhook del arranque fallo). Todos los
+    // mensajes mueren aqui, asi que tiene que ser ruidoso.
+    console.error(
+      `TELEGRAM_SECRET_MISMATCH: update rechazado con 403. Telegram ${req.get('X-Telegram-Bot-Api-Secret-Token') ? 'mando otro secreto' : 'no mando secreto'} ` +
+        'y el app espera TELEGRAM_WEBHOOK_SECRET. Vuelve a correr setWebhook (reinicia el servicio o corre scripts/diagnose-telegram.js --fix-webhook).',
+    )
     return res.sendStatus(403)
   }
 
   res.sendStatus(200)
+
+  const migration = telegram.extractChatMigration(req.body)
+  if (migration) {
+    console.error(
+      `TELEGRAM_CHAT_MIGRATED: el grupo ${migration.fromChatId} ahora es supergrupo ${migration.toChatId}. ` +
+        `Actualiza TELEGRAM_ALLOWED_CHAT_IDS con ${migration.toChatId} o el bot dejara de responder en ese chat.`,
+    )
+  }
 
   const message = telegram.extractTelegramMessage(req.body)
   if (!message?.text) return
@@ -659,7 +691,12 @@ app.post('/telegram/webhook', async (req, res) => {
   // (o si el chat no esta en ella), el mensaje se ignora en silencio. No se le
   // confirma a un desconocido que el bot existe o funciona.
   if (!telegram.isAllowedChat(message.chatId)) {
-    console.warn(`TELEGRAM_UNAUTHORIZED_CHAT: chat=${message.chatId} rejected`)
+    // El id va en el log porque es el dato exacto que hay que pegar en
+    // TELEGRAM_ALLOWED_CHAT_IDS; los grupos lo cambian al volverse supergrupo.
+    console.warn(
+      `TELEGRAM_UNAUTHORIZED_CHAT: chat=${message.chatId} type=${message.chatType} ` +
+        `title=${JSON.stringify(message.chatTitle)} rejected (allowedChatIds=${telegram.getAllowedChatIds().size})`,
+    )
     return
   }
 
@@ -862,12 +899,19 @@ app.get('/telegram/status', async (req, res) => {
 
   const result = info.data?.result || {}
   const ai = aiRouter.status()
+  const expectedUrl = telegram.getWebhookUrl()
   return res.json({
     ok: true,
     url: result.url || null,
+    expectedUrl,
+    // Con urlMatchesExpected=false Telegram esta entregando a otro lado.
+    urlMatchesExpected: !!result.url && result.url === expectedUrl,
     pendingUpdateCount: result.pending_update_count || 0,
-    lastErrorDate: result.last_error_date || null,
+    lastErrorDate: result.last_error_date ? new Date(result.last_error_date * 1000).toISOString() : null,
     lastErrorMessage: result.last_error_message || null,
+    // Las dos puertas que descartan mensajes en silencio. Solo banderas y
+    // cuentas: los ids de chat autorizados no se exponen por HTTP.
+    ...telegram.describeAccess(),
     financeAgentEnabled: ai.deepseekEnabled,
     ...ai,
   })
@@ -883,6 +927,11 @@ app.listen(PORT, async () => {
   console.log(`Telegram AI providers: primary=${ai.primary || 'none'}; deepseek=${ai.deepseekEnabled}; gemini=${ai.geminiEnabled}`)
 
   if (telegram.isEnabled()) {
+    // Deja claro en el arranque cual de los dos servicios (gastos-bot /
+    // milo-telegram-bot) es el dueno del webhook. Sin esta linea, dos
+    // instancias con el mismo token se lo roban en cada reinicio y el sintoma
+    // es "el bot funciona a veces".
+    console.log(`Telegram role: ${telegram.shouldRegisterWebhook() ? 'DUENO del webhook (lo reapunta a esta instancia)' : 'solo responde (TELEGRAM_REGISTER_WEBHOOK=false)'}`)
     console.log(`Telegram webhook URL: ${telegram.getWebhookUrl()}`)
     if (telegram.getAllowedChatIds().size === 0) {
       console.warn('TELEGRAM_ALLOWED_CHAT_IDS is empty — all incoming Telegram messages will be rejected until this is set.')
@@ -891,5 +940,10 @@ app.listen(PORT, async () => {
     if (!result.ok && !result.skipped) {
       console.error('Telegram webhook registration failed during startup')
     }
+
+    // Se revisa al final: si el modo privacidad esta prendido, los mensajes
+    // sueltos del grupo no llegan nunca y el bot se ve mudo aunque todo lo
+    // demas (token, webhook, lista blanca) este bien.
+    await telegram.checkGroupPrivacyMode()
   }
 })
