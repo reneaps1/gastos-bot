@@ -1,0 +1,42 @@
+# Vigila que el bot de Telegram siga vivo y avisa por Telegram cuando no.
+#
+# El 2026-09-12 Milo estuvo caido 7 horas sin que nadie se enterara: el servicio
+# estaba en crash loop y la unica señal vivia en el dashboard de Render. Este
+# workflow cierra ese hueco: revisa cada 30 min y, si algo falla, escribe al
+# chat. Si el webhook apunta al lugar equivocado, lo reapunta solo.
+#
+# El repo es publico, asi que los minutos de Actions son gratis.
+
+name: Telegram watchdog
+
+on:
+  schedule:
+    # Cada 30 minutos. Ojo: GitHub desactiva los workflows programados de un
+    # repo publico tras 60 dias sin actividad en el repo.
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+# Sin permisos sobre el repo: este workflow solo sale a la red.
+permissions: {}
+
+concurrency:
+  group: telegram-watchdog
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sin `npm install` a proposito: el watchdog usa fetch nativo y solo
+      # importa src/telegramHealth.js, que no tiene dependencias.
+      - name: Revisar el bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+          TELEGRAM_ALERT_CHAT_ID: ${{ secrets.TELEGRAM_ALERT_CHAT_ID }}
+          TELEGRAM_EXPECTED_WEBHOOK_URL: ${{ secrets.TELEGRAM_EXPECTED_WEBHOOK_URL }}
+          TELEGRAM_SERVICE_URL: ${{ secrets.TELEGRAM_SERVICE_URL }}
+        run: node scripts/watchdog-telegram.js

@@ -22,6 +22,7 @@
 
 require('dotenv').config()
 const axios = require('axios')
+const { describeDeliveryError } = require('../src/telegramHealth')
 
 const args = process.argv.slice(2)
 function flag(name) {
@@ -173,23 +174,17 @@ async function main() {
 
     const lastError = String(w.last_error_message || '')
 
-    // Este es el sintoma exacto del secreto desfasado: el app contesta 403 a
-    // Telegram porque el header no coincide con TELEGRAM_WEBHOOK_SECRET.
-    if (/403/.test(lastError)) {
+    // La interpretacion de last_error_message vive en src/telegramHealth.js,
+    // compartida con el watchdog. Si estuviera duplicada aqui, el diagnostico
+    // manual y el automatico podrian decir cosas distintas del mismo error.
+    if (lastError) {
+      const pista = describeDeliveryError(lastError)
       note(
         'ERROR',
-        `Telegram recibe 403 del webhook ("${lastError}"): el app esta rechazando los updates antes de procesarlos.`,
-        SECRET
-          ? 'Es TELEGRAM_WEBHOOK_SECRET desfasado: el secreto que Telegram guarda no es el que tiene el servicio. Corre --fix-webhook (o reinicia gastos-bot) para volver a mandarle el secreto actual a Telegram.'
-          : 'El servicio no tiene TELEGRAM_WEBHOOK_SECRET configurado, asi que el 403 viene de otra capa (proxy/WAF). Revisa los logs de Render.',
-      )
-    }
-
-    if (/502|503|504|timeout|Gateway|failed to resolve|connection/i.test(lastError)) {
-      note(
-        'ERROR',
-        `Telegram no pudo entregar los updates ("${lastError}"): el servicio estaba caido o dormido.`,
-        'gastos-bot esta en plan free: Render lo suspende a los 15 min sin trafico y el arranque en frio corre prisma generate + migrate deploy antes de escuchar. Los updates que llegan en esa ventana se pierden. Revisa en Render si el servicio esta Live o suspendido (limite de horas del plan free).',
+        `Telegram no pudo entregar los updates ("${lastError}").`,
+        /403/.test(lastError) && !SECRET
+          ? 'El servicio no tiene TELEGRAM_WEBHOOK_SECRET configurado, asi que el 403 viene de otra capa (proxy/WAF). Revisa los logs de Render.'
+          : `${pista} Con --fix-webhook se vuelve a registrar el webhook con el secreto actual.`,
       )
     }
 

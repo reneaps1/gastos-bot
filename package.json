@@ -7,10 +7,12 @@
     "start": "node src/index.js",
     "start:telegram": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node scripts/test-bot-flow.js && node scripts/test-telegram-flow.js",
+    "test": "node scripts/test-bot-flow.js && node scripts/test-telegram-flow.js && node scripts/test-watchdog.js",
     "test:whatsapp": "node scripts/test-bot-flow.js",
     "test:telegram": "node scripts/test-telegram-flow.js",
-    "diagnose:telegram": "node scripts/diagnose-telegram.js"
+    "diagnose:telegram": "node scripts/diagnose-telegram.js",
+    "test:watchdog": "node scripts/test-watchdog.js",
+    "watchdog:telegram": "node scripts/watchdog-telegram.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"
