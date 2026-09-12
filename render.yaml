@@ -26,6 +26,14 @@ services:
         sync: false
       - key: TODOIST_API_TOKEN
         sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: TELEGRAM_ALLOWED_CHAT_IDS
+        sync: false
     healthCheckPath: /health
     autoDeploy: true
 
