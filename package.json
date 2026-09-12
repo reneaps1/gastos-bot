@@ -6,7 +6,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node scripts/test-bot-flow.js"
+    "test": "node scripts/test-bot-flow.js && node scripts/test-telegram-flow.js",
+    "test:whatsapp": "node scripts/test-bot-flow.js",
+    "test:telegram": "node scripts/test-telegram-flow.js",
+    "diagnose:telegram": "node scripts/diagnose-telegram.js"
   },
   "prisma": {
     "seed": "node prisma/seed.js"

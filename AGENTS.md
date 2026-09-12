@@ -181,6 +181,36 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 - `DATABASE_URL` debe configurarse **manualmente** en el Environment de cada servicio en el dashboard (el `fromDatabase` de render.yaml solo aplica en Blueprints nuevos).
 - Ambos servicios usan la URL **interna** de gastos-db (sin `.oregon-postgres.render.com`).
 
+### Runbook: el bot de Telegram no responde
+
+El handler de `/telegram/webhook` puede descartar un mensaje **sin contestar nada en el chat**. Estos son todos los caminos, en el orden en que ocurren:
+
+| Causa | Sintoma en el chat | Como se confirma |
+|-------|--------------------|------------------|
+| Servicio dormido o caido (plan free) | silencio total | `getWebhookInfo.last_error_message` trae 502/503/timeout |
+| `TELEGRAM_WEBHOOK_SECRET` desfasado del webhook registrado | silencio total | log `TELEGRAM_SECRET_MISMATCH`; `last_error_message` dice 403 |
+| Chat fuera de `TELEGRAM_ALLOWED_CHAT_IDS` (lista blanca fail-closed) | silencio total | log `TELEGRAM_UNAUTHORIZED_CHAT` con el id exacto |
+| El grupo se volvio supergrupo y cambio de id | dejo de responder de golpe | log `TELEGRAM_CHAT_MIGRATED` con el id nuevo |
+| Modo privacidad del bot en grupos | solo responde a comandos, menciones y respuestas a Milo | log `TELEGRAM_PRIVACY_MODE_ON` al arrancar; `getMe.can_read_all_group_messages=false` |
+| `TELEGRAM_BOT_TOKEN` revocado | silencio total | `getMe` responde 401/404 |
+
+Diagnostico en un comando (necesita salida a `api.telegram.org`):
+
+```bash
+node scripts/diagnose-telegram.js --chat <chat_id> --service https://gastos-bot.onrender.com
+node scripts/diagnose-telegram.js --fix-webhook   # vuelve a registrar el webhook con el secreto actual
+```
+
+Sin shell a mano, `GET /telegram/status` responde lo mismo en resumen: `urlMatchesExpected`, `allowedChatIdCount`, `secretConfigured`, `pendingUpdateCount`, `lastErrorMessage`.
+
+Para ubicar un mensaje concreto en los logs de Render, cada update deja `TELEGRAM_UPDATE_IN` **antes** de cualquier validacion:
+
+- no aparece `TELEGRAM_UPDATE_IN` → el update nunca llego (servicio dormido/caido, o modo privacidad filtrando el mensaje del grupo).
+- aparece y despues `TELEGRAM_UNAUTHORIZED_CHAT` o `TELEGRAM_SECRET_MISMATCH` → es configuracion, no codigo.
+- aparece y no hay respuesta en el chat → revisa `Telegram API error` (token o markdown).
+
+El modo privacidad se apaga en @BotFather: `/setprivacy` → Disable. Sin eso, en un grupo el bot **no recibe** un mensaje suelto como `30, suerox`; solo comandos, menciones y respuestas a sus propios mensajes.
+
 ### Prisma 7 en Render — Lecciones aprendidas
 
 - Prisma 7 valida `env("DATABASE_URL")` incluso durante `prisma generate` si está en el schema o en `prisma.config.ts`. Sin la variable, el build/runtime explota.
