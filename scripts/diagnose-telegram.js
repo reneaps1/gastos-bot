@@ -74,6 +74,7 @@ async function main() {
   console.log(`TELEGRAM_BOT_TOKEN        : ${mask(TOKEN)}`)
   console.log(`TELEGRAM_WEBHOOK_SECRET   : ${mask(SECRET)}`)
   console.log(`TELEGRAM_ALLOWED_CHAT_IDS : ${ALLOWED || 'no configurado'}`)
+  console.log(`TELEGRAM_REGISTER_WEBHOOK : ${process.env.TELEGRAM_REGISTER_WEBHOOK ?? '(default: true)'}`)
   console.log(`DEEPSEEK_API_KEY          : ${mask(process.env.DEEPSEEK_API_KEY)}`)
   console.log(`GEMINI_API_KEY            : ${mask(process.env.GEMINI_API_KEY)}`)
   console.log(`DATABASE_URL              : ${process.env.DATABASE_URL ? 'configurado' : 'no configurado'}`)
@@ -83,6 +84,14 @@ async function main() {
     note('ERROR', 'TELEGRAM_BOT_TOKEN no esta configurado.', 'Sin token el bot no arranca la integracion: telegram.isEnabled() es false y nunca registra el webhook.')
     report()
     process.exit(1)
+  }
+
+  if (!process.env.DATABASE_URL) {
+    note(
+      'WARN',
+      'DATABASE_URL no esta configurada: el bot arranca y contesta, pero toda consulta a presupuesto, liquidez o movimientos truena.',
+      'Ponle la URL interna de gastos-db (el mismo valor que usa gastos-bot). telegramBrain, miloTools y financeAgent pegan a Postgres directo.',
+    )
   }
 
   const allowedIds = ALLOWED.split(',').map(x => x.trim()).filter(Boolean)

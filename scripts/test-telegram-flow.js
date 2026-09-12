@@ -219,6 +219,18 @@ async function main() {
   check('reporta secretConfigured', status.secretConfigured === true, JSON.stringify(status))
   check('reporta allowedChatIdCount', status.allowedChatIdCount === 1, JSON.stringify(status))
 
+  console.log('\n=== H: TELEGRAM_REGISTER_WEBHOOK=false no reclama el webhook ===')
+  // Se prueba contra el modulo REAL (no el doble): con el flag en false la
+  // funcion sale antes de tocar la red, asi que el test no sale a internet.
+  process.env.TELEGRAM_REGISTER_WEBHOOK = 'false'
+  check('shouldRegisterWebhook() es false', realTelegram.shouldRegisterWebhook() === false)
+  const optOut = await realTelegram.registerWebhook()
+  check('registerWebhook no registra', optOut.skipped === true && optOut.optedOut === true, JSON.stringify(optOut))
+  check('describeAccess lo reporta', realTelegram.describeAccess().registersWebhook === false, JSON.stringify(realTelegram.describeAccess()))
+
+  delete process.env.TELEGRAM_REGISTER_WEBHOOK
+  check('por default SI reclama el webhook', realTelegram.shouldRegisterWebhook() === true)
+
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
 }

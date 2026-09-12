@@ -170,9 +170,23 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 
 | Servicio | Plataforma | Estado | URL |
 |----------|------------|--------|-----|
-| gastos-bot | Render Web Service (Node) | Live | gastos-bot.onrender.com |
+| gastos-bot | Render Web Service (Node) | Live | ver dashboard (ver nota) |
+| milo-telegram-bot | Render Web Service (Node) | Live | ver dashboard |
 | gastos-dashboard | Render Web Service (Node) | Live | gastos-dashboard.onrender.com |
 | gastos-db | Render PostgreSQL (Free) | Live | interno: dpg-d8nburernols73dj06j0-a |
+
+> Nota sobre la URL de `gastos-bot`: esta tabla decia `gastos-bot.onrender.com`, pero ese host responde un 404 de Flask/Werkzeug — no es esta app (Express contesta `Cannot GET /ruta`). Los subdominios de `onrender.com` son globales y unicos, asi que lo mas probable es que el nombre estuviera tomado y Render le asignara otro. Saca la URL real del dashboard o de `getWebhookInfo` (el bot la registra desde `RENDER_EXTERNAL_URL`, que siempre es la verdadera).
+
+### Dos servicios, un solo webhook de Telegram
+
+`gastos-bot` y `milo-telegram-bot` despliegan **el mismo repo** y corren **el mismo `src/index.js`**; solo cambia el start command (`npm start` vs `npm run start:telegram`, que existe justo para eso). `milo-telegram-bot` NO esta en `render.yaml`: se administra solo desde el dashboard.
+
+Reglas para que no se peleen:
+
+- **Un token de Telegram admite UNA sola URL de webhook.** Cada instancia con `TELEGRAM_BOT_TOKEN` llama `setWebhook` al arrancar, asi que la ultima en reiniciar se queda con TODOS los mensajes. El sintoma es el peor de todos: "el bot funciona a veces".
+- El servicio que **no** deba quedarse con Telegram va con `TELEGRAM_REGISTER_WEBHOOK=false` (o directamente sin `TELEGRAM_BOT_TOKEN`). Al arrancar, cada instancia loguea su rol: `Telegram role: DUENO del webhook` o `solo responde`.
+- `milo-telegram-bot` necesita `DATABASE_URL` (la URL **interna** de gastos-db, el mismo valor que `gastos-bot`). Sin eso arranca y contesta, pero cada consulta a presupuesto, liquidez o movimientos truena: `telegramBrain`, `miloTools` y `financeAgent` pegan a Postgres directo.
+- Si el start command de un servicio apunta a un script que no existe en `package.json`, Render entra en crash loop y **deja viva la version anterior** hasta el siguiente deploy — se ve "Failed deploy" mientras el bot sigue respondiendo, y el silencio real llega con el deploy siguiente. Fue exactamente el incidente del 2026-09-12: `npm run start:telegram` sin ese script en el repo.
 
 ### Configuración crítica de Render
 

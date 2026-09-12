@@ -57,10 +57,26 @@ async function getMe() {
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+// Un token de Telegram admite UNA sola URL de webhook. Con dos servicios
+// corriendo el mismo src/index.js (gastos-bot para WhatsApp, milo-telegram-bot
+// para Telegram), los dos llamarian setWebhook al arrancar y cada reinicio le
+// robaria los mensajes al otro: Milo se caeria solo, de forma aleatoria, segun
+// quien haya reiniciado al ultimo. TELEGRAM_REGISTER_WEBHOOK=false marca a la
+// instancia que NO debe reclamar el webhook (sigue pudiendo responder, solo no
+// lo reapunta a si misma).
+function shouldRegisterWebhook() {
+  return String(process.env.TELEGRAM_REGISTER_WEBHOOK ?? 'true').trim().toLowerCase() !== 'false'
+}
+
 async function registerWebhook({ attempts = 3 } = {}) {
   if (!isEnabled()) {
     console.warn('Telegram webhook not registered: TELEGRAM_BOT_TOKEN not configured')
     return { ok: false, skipped: true }
+  }
+
+  if (!shouldRegisterWebhook()) {
+    console.log('Telegram webhook not registered: TELEGRAM_REGISTER_WEBHOOK=false (esta instancia no reclama el webhook)')
+    return { ok: false, skipped: true, optedOut: true }
   }
 
   const url = getWebhookUrl()
@@ -253,6 +269,7 @@ function describeAccess() {
     tokenConfigured: isEnabled(),
     secretConfigured: !!process.env.TELEGRAM_WEBHOOK_SECRET,
     allowedChatIdCount: getAllowedChatIds().size,
+    registersWebhook: shouldRegisterWebhook(),
   }
 }
 
@@ -260,6 +277,7 @@ module.exports = {
   isEnabled,
   getWebhookUrl,
   registerWebhook,
+  shouldRegisterWebhook,
   verifyWebhook,
   getWebhookInfo,
   getMe,

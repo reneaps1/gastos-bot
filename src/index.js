@@ -927,6 +927,11 @@ app.listen(PORT, async () => {
   console.log(`Telegram AI providers: primary=${ai.primary || 'none'}; deepseek=${ai.deepseekEnabled}; gemini=${ai.geminiEnabled}`)
 
   if (telegram.isEnabled()) {
+    // Deja claro en el arranque cual de los dos servicios (gastos-bot /
+    // milo-telegram-bot) es el dueno del webhook. Sin esta linea, dos
+    // instancias con el mismo token se lo roban en cada reinicio y el sintoma
+    // es "el bot funciona a veces".
+    console.log(`Telegram role: ${telegram.shouldRegisterWebhook() ? 'DUENO del webhook (lo reapunta a esta instancia)' : 'solo responde (TELEGRAM_REGISTER_WEBHOOK=false)'}`)
     console.log(`Telegram webhook URL: ${telegram.getWebhookUrl()}`)
     if (telegram.getAllowedChatIds().size === 0) {
       console.warn('TELEGRAM_ALLOWED_CHAT_IDS is empty — all incoming Telegram messages will be rejected until this is set.')
