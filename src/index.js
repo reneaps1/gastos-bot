@@ -55,6 +55,11 @@ const {
   getBudgetLineStatus,
   formatBudgetStatus,
 } = require('./budgetTracker')
+const { linkTransactionToBudget, unlinkTransaction, describeRechazo } = require('./budgetActions')
+
+// A donde mandar a la gente cuando hay que cubrir un excedido: el traspaso entre
+// lineas es una operacion auditada que vive en el dashboard, no en el bot.
+const DASHBOARD_URL = (process.env.DASHBOARD_URL || 'https://gastos-dashboard.onrender.com').replace(/\/$/, '')
 
 const app = express()
 app.use(express.json())
@@ -219,6 +224,37 @@ function formatTelegramConfirmation(parsed) {
     `📊 ${parsed.quincena} - ${parsed.clasificacion || ''}`,
     `✅ ${parsed.estatus}`,
   ].join('\n')
+}
+
+// callback_data tiene un limite de 64 bytes, de ahi los prefijos de dos letras.
+// `pl` = presupuesto link, `pn` = presupuesto none.
+function budgetButtons(transaccionId, candidates) {
+  const rows = candidates.slice(0, 4).map(c => [{
+    text: `${c.descripcion} — $${c.presupuesto.toFixed(2)}`,
+    callback_data: `pl:${transaccionId}:${c.id}`,
+  }])
+  rows.push([{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }])
+  return rows
+}
+
+// Boton que lleva al dashboard a cubrir el excedido. Es un boton `url`, no un
+// callback: no ejecuta nada en el bot.
+function dashboardButton(texto = 'Abrir presupuesto en el dashboard') {
+  return [[{ text: texto, url: `${DASHBOARD_URL}/presupuesto` }]]
+}
+
+// Un gasto que rebasa su linea se avisa en el momento, no en el cierre de
+// quincena. formatBudgetStatus ya redacta el "Excedido: $X"; aqui solo se decide
+// si ademas hay que ofrecer el camino para resolverlo.
+function budgetStatusBlock(status) {
+  const texto = formatBudgetStatus(status)
+  if (!texto) return { texto: null, buttons: null }
+  if (!status?.excedido) return { texto, buttons: null }
+
+  return {
+    texto: `${texto}\n\n⚠️ Este gasto rebasó la línea. Puedes cubrirlo con un traspaso desde otra línea.`,
+    buttons: dashboardButton('Cubrir el excedido en el dashboard'),
+  }
 }
 
 function telegramUserMap() {
@@ -651,6 +687,65 @@ app.post('/webhook', async (req, res) => {
   }
 })
 
+// Resuelve el toque de un boton de presupuesto.
+//
+// `callback.data` es entrada NO CONFIABLE: viajo por el cliente del usuario y un
+// cliente modificado puede mandar cualquier par de ids. Por eso aqui solo se
+// parsea la forma, y quien valida contra la base es budgetActions.
+async function handleBudgetCallback(callback) {
+  // Acusar recibo primero: Telegram deja el boton en "cargando" ~10s si no se
+  // contesta, aunque la accion ya haya corrido.
+  await telegram.answerCallbackQuery(callback.callbackId)
+
+  const [accion, txId, lineaId] = callback.data.split(':')
+  console.log(`TELEGRAM_CALLBACK: accion=${accion} tx=${txId} linea=${lineaId ?? '-'} chat=${callback.chatId}`)
+
+  try {
+    if (accion === 'pn') {
+      const result = await unlinkTransaction({ transaccionId: txId })
+      if (!result.ok) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo(result.reason))
+        return
+      }
+      await telegram.editMessageText(
+        callback.chatId,
+        callback.messageId,
+        '✅ Gasto registrado, sin línea de presupuesto.\n\nPuedes asignarlo después desde el dashboard.',
+        { buttons: dashboardButton('Abrir el dashboard') },
+      )
+      return
+    }
+
+    if (accion !== 'pl') return
+
+    const result = await linkTransactionToBudget({ transaccionId: txId, presupuestoId: lineaId })
+    if (!result.ok) {
+      // Se edita el mensaje (y con eso se quitan los botones) para que no quede
+      // invitando a repetir algo que no va a funcionar.
+      await telegram.editMessageText(callback.chatId, callback.messageId, `⚠️ ${describeRechazo(result.reason)}`)
+      return
+    }
+
+    const bloque = budgetStatusBlock(result.status)
+    const encabezado = result.yaEstaba
+      ? `✅ Ya estaba asignado a *${telegram.escapeMarkdown(result.linea.descripcion)}*`
+      : `✅ Asignado a *${telegram.escapeMarkdown(result.linea.descripcion)}*`
+
+    await telegram.editMessageText(
+      callback.chatId,
+      callback.messageId,
+      bloque.texto ? `${encabezado}\n\n${bloque.texto}` : encabezado,
+      { buttons: bloque.buttons },
+    )
+    console.log(`TELEGRAM_BUDGET_LINKED: tx=${txId}; linea=${lineaId}; excedido=${result.status?.excedido || 0}`)
+  } catch (error) {
+    console.error('TELEGRAM_CALLBACK_ERROR:', error)
+    try {
+      await telegram.editMessageText(callback.chatId, callback.messageId, '❌ Ocurrió un error al asignar el gasto.')
+    } catch {}
+  }
+}
+
 app.post('/telegram/webhook', async (req, res) => {
   // Traza de entrada ANTES de cualquier puerta. Sin esto, un update rechazado
   // por el secreto o por la lista blanca no deja ni una linea en los logs: el
@@ -675,6 +770,22 @@ app.post('/telegram/webhook', async (req, res) => {
   }
 
   res.sendStatus(200)
+
+  // Tocar un boton NO puede ser una puerta trasera a la lista blanca: el
+  // callback pasa por las mismas puertas que un mensaje (el secreto del webhook
+  // ya se valido arriba, y aqui se valida el chat).
+  const callback = telegram.extractCallbackQuery(req.body)
+  if (callback) {
+    if (!telegram.isAllowedChat(callback.chatId)) {
+      console.warn(
+        `TELEGRAM_UNAUTHORIZED_CHAT: chat=${callback.chatId} type=${callback.chatType} ` +
+          `title=${JSON.stringify(callback.chatTitle)} rejected (callback) (allowedChatIds=${telegram.getAllowedChatIds().size})`,
+      )
+      return
+    }
+    await handleBudgetCallback(callback)
+    return
+  }
 
   const migration = telegram.extractChatMigration(req.body)
   if (migration) {
@@ -836,24 +947,27 @@ app.post('/telegram/webhook', async (req, res) => {
     const tx = await saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena, presupuesto)
 
     let confirmation = formatTelegramConfirmation(parsed)
+    let buttons = null
+
     if (presupuesto) {
       const status = await getBudgetLineStatus(presupuesto.id)
-      const budgetText = formatBudgetStatus(status)
-      if (budgetText) confirmation += `\n\n${budgetText}`
+      const bloque = budgetStatusBlock(status)
+      if (bloque.texto) confirmation += `\n\n${bloque.texto}`
+      buttons = bloque.buttons
     } else if (parsed.tipo === 'Gasto') {
       const candidates = await getBudgetCandidates(budgetLookup)
       confirmation += '\n\n⚠️ El gasto quedó registrado, pero no lo vinculé a una línea porque hay ambigüedad.'
 
       if (candidates.length > 0) {
-        confirmation += '\n\nLíneas posibles en esta categoría:'
-        for (const candidate of candidates) {
-          confirmation += `\n• ${telegram.escapeMarkdown(candidate.descripcion)} — $${candidate.presupuesto.toFixed(2)}`
-        }
-        confirmation += '\n\nLa próxima vez especifica el concepto, por ejemplo: “100 gasolina Corolla”.'
+        // Antes esto era una lista de texto y un "la proxima vez especifica el
+        // concepto": el gasto se quedaba huerfano hasta que alguien abriera el
+        // dashboard. Ahora se resuelve con un toque.
+        confirmation += '\n\n¿A cuál línea lo mando?'
+        buttons = budgetButtons(tx.id, candidates)
       }
     }
 
-    await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId)
+    await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId, { buttons })
     console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=${presupuesto?.id || 'none'}`)
   } catch (error) {
     console.error('Telegram webhook error:', error)
