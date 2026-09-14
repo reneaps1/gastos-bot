@@ -170,12 +170,12 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 
 | Servicio | Plataforma | Estado | URL |
 |----------|------------|--------|-----|
-| gastos-bot | Render Web Service (Node) | Live | ver dashboard (ver nota) |
-| milo-telegram-bot | Render Web Service (Node) | Live | ver dashboard |
+| gastos-bot | Render Web Service (Node) | Live | gastos-bot-csca.onrender.com |
+| milo-telegram-bot | Render Web Service (Node) | Live | milo-telegram-bot.onrender.com |
 | gastos-dashboard | Render Web Service (Node) | Live | gastos-dashboard.onrender.com |
 | gastos-db | Render PostgreSQL (Free) | Live | interno: dpg-d8nburernols73dj06j0-a |
 
-> Nota sobre la URL de `gastos-bot`: esta tabla decia `gastos-bot.onrender.com`, pero ese host responde un 404 de Flask/Werkzeug — no es esta app (Express contesta `Cannot GET /ruta`). Los subdominios de `onrender.com` son globales y unicos, asi que lo mas probable es que el nombre estuviera tomado y Render le asignara otro. Saca la URL real del dashboard o de `getWebhookInfo` (el bot la registra desde `RENDER_EXTERNAL_URL`, que siempre es la verdadera).
+> `gastos-bot` vive en **`gastos-bot-csca.onrender.com`**, con sufijo. `gastos-bot.onrender.com` a secas **no es nuestro**: responde un 404 de Flask/Werkzeug (Express contesta `Cannot GET /ruta`). Los subdominios de `onrender.com` son globales y unicos, asi que el nombre limpio lo tenia alguien mas y Render nos asigno otro. Si alguna vez dudas de la URL de un servicio, sale en su log de arranque (`Available at your primary URL ...`) o de `getWebhookInfo`, que refleja lo que el bot registro desde `RENDER_EXTERNAL_URL`.
 
 ### Dos servicios, un solo webhook de Telegram
 
@@ -220,6 +220,14 @@ Reglas para que no se peleen:
 - `npm start` existe en **todas** las versiones del `package.json` de este repo. Si hay que revivir un servicio sin saber que commit despliega, `npm start` arranca en cualquiera.
 - `TELEGRAM_ALLOWED_CHAT_IDS` es fail-closed: vacia, el bot recibe los mensajes y los descarta **en silencio**. Al arrancar avisa con `TELEGRAM_ALLOWED_CHAT_IDS is empty`, y cada mensaje descartado deja `TELEGRAM_UNAUTHORIZED_CHAT` con el chat id exacto que hay que agregar. Esa es la forma mas rapida de averiguar el id de un chat: mandarle un mensaje al bot y leer el log.
 - El modo privacidad de Telegram **no aplica en chats privados**. Si el bot no contesta en un chat privado autorizado, el servicio esta caido: no hay otra explicacion.
+
+### CI: los tests corren en cada PR
+
+`.github/workflows/ci.yml` corre `npm test` (las tres suites: WhatsApp, Telegram y watchdog) en cada pull request y en cada push a `main`.
+
+Existe porque **un merge a `main` es un despliegue a produccion inmediato**: los tres servicios tienen `autoDeploy`. Sin CI, la unica señal de que un cambio rompio algo es que el bot deje de contestar.
+
+El workflow replica el arranque real: `npm ci`, luego `prisma generate` con un `DATABASE_URL` falso (Prisma 7 lo exige aunque no conecte), luego `npm test`. Si agregas dependencias o cambias el bootstrap de Prisma en `src/index.js`, revisa que ese orden siga siendo valido.
 
 ### Watchdog del bot de Telegram
 
