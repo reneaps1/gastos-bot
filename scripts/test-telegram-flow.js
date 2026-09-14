@@ -60,11 +60,17 @@ const fakeDb = {
 }
 
 const creadas = []
+const escrituras = []   // cada update a transaccion, para detectar escrituras dobles
 let nextTxId = 1
 
 // Solo lo que toca el camino de Telegram. Cualquier consulta que no este aqui
 // truena el test a proposito: si el handler empieza a usar otra tabla, el doble
 // tiene que enterarse.
+// Lineas de presupuesto en memoria. Arranca VACIO a proposito: los casos A-H
+// dependen de que no haya lineas (sin candidatas no hay botones), y los casos
+// de asignacion las agregan justo antes de usarlas.
+const presupuestos = []
+
 const fakePrisma = {
   transaccion: {
     create: async ({ data }) => {
@@ -72,11 +78,33 @@ const fakePrisma = {
       creadas.push(row)
       return row
     },
+    findUnique: async ({ where }) => creadas.find(t => t.id === where.id) || null,
+    update: async ({ where, data }) => {
+      const row = creadas.find(t => t.id === where.id)
+      if (!row) throw new Error('transaccion no encontrada')
+      Object.assign(row, data)
+      escrituras.push({ id: where.id, ...data })
+      return row
+    },
     findMany: async () => [],
     groupBy: async () => [],
-    aggregate: async () => ({ _sum: { monto: 0 }, _count: 0 }),
+    // getBudgetLineStatus suma lo gastado de una linea.
+    aggregate: async ({ where } = {}) => {
+      if (where?.presupuestoId === undefined) return { _sum: { monto: 0 }, _count: 0 }
+      const total = creadas
+        .filter(t => t.presupuestoId === where.presupuestoId)
+        .reduce((sum, t) => sum + Number(t.monto), 0)
+      return { _sum: { monto: total }, _count: 0 }
+    },
   },
-  presupuesto: { findMany: async () => [] },
+  presupuesto: {
+    findMany: async ({ where } = {}) => presupuestos.filter(l =>
+      (where?.quincenaId === undefined || l.quincenaId === where.quincenaId) &&
+      (where?.categoriaId === undefined || l.categoriaId === where.categoriaId) &&
+      (where?.tipo === undefined || l.tipo === where.tipo) &&
+      l.estadoLinea !== 'Cancelada'),
+    findUnique: async ({ where }) => presupuestos.find(l => l.id === where.id) || null,
+  },
   quincena: { findFirst: async () => ({ id: 1, codigo: 'QTEST', fechaInicio: inicioRango, fechaFin: finRango }) },
   liquidezSnapshot: { findFirst: async () => null },
 }
@@ -85,10 +113,20 @@ const fakePrisma = {
 // extraccion del update, deteccion de migracion) y solo se corta la red.
 const realTelegram = require(path.join(SRC, 'telegram.js'))
 const enviados = []
+const editados = []
+const contestados = []
 const fakeTelegram = {
   ...realTelegram,
-  sendTelegramMessage: async (chatId, message, replyToMessageId) => {
-    enviados.push({ chatId, message, replyToMessageId })
+  sendTelegramMessage: async (chatId, message, replyToMessageId, opts = {}) => {
+    enviados.push({ chatId, message, replyToMessageId, buttons: opts.buttons || null })
+    return { ok: true, data: {} }
+  },
+  editMessageText: async (chatId, messageId, message, opts = {}) => {
+    editados.push({ chatId, messageId, message, buttons: opts.buttons || null })
+    return { ok: true, data: {} }
+  },
+  answerCallbackQuery: async callbackId => {
+    contestados.push(callbackId)
     return { ok: true, data: {} }
   },
   registerWebhook: async () => ({ ok: true, skipped: true }),
@@ -140,6 +178,22 @@ function textUpdate(text, chatId = CHAT_PERMITIDO) {
       chat: { id: Number(chatId), type: 'supergroup', title: 'Control de gastos' },
       from: { id: 42, first_name: 'Rene', username: 'rene' },
       text,
+    },
+  }
+}
+
+function callbackUpdate(data, chatId = CHAT_PERMITIDO) {
+  updateId++
+  return {
+    update_id: updateId,
+    callback_query: {
+      id: `cb${updateId}`,
+      data,
+      from: { id: 42, first_name: 'Rene', username: 'rene' },
+      message: {
+        message_id: updateId,
+        chat: { id: Number(chatId), type: 'supergroup', title: 'Control de gastos' },
+      },
     },
   }
 }
@@ -230,6 +284,75 @@ async function main() {
 
   delete process.env.TELEGRAM_REGISTER_WEBHOOK
   check('por default SI reclama el webhook', realTelegram.shouldRegisterWebhook() === true)
+
+  // --- A partir de aqui SI hay lineas de presupuesto ---
+  presupuestos.push(
+    { id: 10, quincenaId: 1, categoriaId: 7, descripcion: 'Gastos Personales', tipo: 'Gasto', montoPresupuestado: 1000, montoRevisado: null, estadoLinea: 'Abierta', categoria: categorias[1], quincena: quincenas[0] },
+    { id: 11, quincenaId: 1, categoriaId: 7, descripcion: 'Niñera', tipo: 'Gasto', montoPresupuestado: 750, montoRevisado: null, estadoLinea: 'Abierta', categoria: categorias[1], quincena: quincenas[0] },
+    { id: 99, quincenaId: 2, categoriaId: 7, descripcion: 'Linea de otra quincena', tipo: 'Gasto', montoPresupuestado: 500, montoRevisado: null, estadoLinea: 'Abierta', categoria: categorias[1], quincena: { id: 2, codigo: 'QOTRA' } },
+  )
+
+  console.log('\n=== I: gasto ambiguo ofrece botones en vez de una lista muerta ===')
+  await post(textUpdate('115, convivio'))
+  const txAmbiguo = creadas.at(-1)
+  const msgAmbiguo = enviados.at(-1)
+  check('registro el gasto', Number(txAmbiguo?.monto) === 115, txAmbiguo?.monto)
+  check('no lo vinculo solo (hay ambiguedad)', txAmbiguo?.presupuestoId == null, txAmbiguo?.presupuestoId)
+  check('la respuesta trae botones', Array.isArray(msgAmbiguo?.buttons), JSON.stringify(msgAmbiguo?.buttons))
+  check('un boton por linea candidata + "sin asignar"', msgAmbiguo?.buttons?.length === 3, msgAmbiguo?.buttons?.length)
+  check('el callback_data apunta a esta transaccion', msgAmbiguo?.buttons?.[0]?.[0]?.callback_data === `pl:${txAmbiguo.id}:10`, JSON.stringify(msgAmbiguo?.buttons?.[0]))
+  check('callback_data cabe en los 64 bytes de Telegram', msgAmbiguo.buttons.every(f => f.every(b => Buffer.byteLength(b.callback_data || '') <= 64)))
+
+  console.log('\n=== J: tocar el boton vincula y reescribe el mensaje sin botones ===')
+  const antesJ = editados.length
+  await post(callbackUpdate(`pl:${txAmbiguo.id}:10`))
+  check('acuso recibo del boton', contestados.length > 0, contestados.length)
+  check('vinculo la transaccion', txAmbiguo.presupuestoId === 10, txAmbiguo.presupuestoId)
+  check('edito el mensaje original', editados.length === antesJ + 1, editados.length)
+  check('el texto confirma la linea', /Gastos Personales/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  check('ya no quedan botones que tocar', !editados.at(-1)?.buttons, JSON.stringify(editados.at(-1)?.buttons))
+
+  console.log('\n=== K2: tocar dos veces no escribe dos veces ===')
+  const escrituasAntes = escrituras.length
+  await post(callbackUpdate(`pl:${txAmbiguo.id}:10`))
+  check('no hubo segunda escritura', escrituras.length === escrituasAntes, escrituras.length)
+  check('avisa que ya estaba asignado', /[Yy]a estaba/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== P: callback_data forjado con una linea de OTRA quincena se rechaza ===')
+  // callback_data viaja por el cliente: un cliente modificado puede mandar
+  // cualquier par de ids. Sin esta validacion el presupuesto dejaria de cuadrar.
+  await post(textUpdate('60, otro convivio'))
+  const txP = creadas.at(-1)
+  await post(callbackUpdate(`pl:${txP.id}:99`))
+  check('NO lo vinculo a la linea de otra quincena', txP.presupuestoId == null, txP.presupuestoId)
+  check('explica por que', /otra quincena/i.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== Q: callback sobre un gasto que ya no existe no truena ===')
+  await post(callbackUpdate('pl:999999:10'))
+  check('responde algo claro', /ya no existe/i.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== R: un callback de un chat ajeno se descarta igual que un mensaje ===')
+  const antesR = editados.length
+  await post(callbackUpdate(`pl:${txP.id}:10`, CHAT_AJENO))
+  check('no lo proceso', editados.length === antesR, editados.length)
+  check('no lo vinculo', txP.presupuestoId == null, txP.presupuestoId)
+  check('lo logueo', logsIncluyen('TELEGRAM_UNAUTHORIZED_CHAT'), 'sin log no hay rastro')
+
+  console.log('\n=== S: "Dejar sin asignar" cierra el mensaje con salida al dashboard ===')
+  await post(callbackUpdate(`pn:${txP.id}`))
+  check('sigue sin linea', txP.presupuestoId == null, txP.presupuestoId)
+  check('lo dice explicitamente', /sin línea de presupuesto/i.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  check('deja un boton al dashboard', editados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(editados.at(-1)?.buttons))
+
+  console.log('\n=== T: un gasto que rebasa la linea avisa y ofrece cubrirlo ===')
+  // La linea 11 tiene $750. Un gasto de 800 la rebasa por 50.
+  await post(textUpdate('800, niñera'))
+  const txT = creadas.at(-1)
+  check('se auto-vinculo a Niñera', txT?.presupuestoId === 11, txT?.presupuestoId)
+  const msgT = enviados.at(-1)?.message || ''
+  check('avisa del excedido', /[Ee]xcedido/.test(msgT), msgT)
+  check('dice que rebaso la linea', /rebasó la línea/i.test(msgT), msgT)
+  check('ofrece boton al dashboard', enviados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(enviados.at(-1)?.buttons))
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

@@ -285,6 +285,30 @@ Para ubicar un mensaje concreto en los logs de Render, cada update deja `TELEGRA
 
 El modo privacidad se apaga en @BotFather: `/setprivacy` → Disable. Sin eso, en un grupo el bot **no recibe** un mensaje suelto como `30, suerox`; solo comandos, menciones y respuestas a sus propios mensajes.
 
+### Asignar gastos a lineas desde Telegram
+
+Cuando Milo registra un gasto y `resolveBudgetLine()` no puede vincularlo con seguridad, la confirmacion trae **botones** con las lineas candidatas. Al tocar uno, el gasto queda vinculado y el mensaje original se reescribe con el estado de la linea, ya sin botones.
+
+Piezas:
+
+- `src/budgetActions.js` — la escritura y su validacion, aparte del handler para poder probarla sola.
+- `handleBudgetCallback()` en `src/index.js` — resuelve el toque del boton.
+- `extractCallbackQuery()`, `answerCallbackQuery()` y `editMessageText()` en `src/telegram.js`.
+- `callback_data` con formato `pl:<txId>:<lineaId>` y `pn:<txId>`. Corto a proposito: Telegram lo limita a 64 bytes.
+
+Reglas que no se pueden relajar:
+
+- **`callback_data` es entrada NO CONFIABLE.** Viaja por el cliente del usuario, asi que un cliente modificado puede mandar cualquier par de ids. `linkTransactionToBudget()` verifica TODO contra la base: que la transaccion exista y sea gasto, que la linea exista, sea de gasto y no este cancelada, y sobre todo **que la linea sea de la misma quincena que la transaccion**. Sin eso, un gasto podria colgarse de una linea de otro periodo y el presupuesto dejaria de cuadrar sin que nadie lo note hasta el cierre.
+- **Un callback pasa por las mismas puertas que un mensaje**: el secreto del webhook y la lista blanca de chats. Un boton no puede ser una puerta trasera.
+- **Tocar dos veces no escribe dos veces.** El segundo toque es no-op y responde "ya estaba asignado".
+- `registerWebhook()` no manda `allowed_updates`, y el default de Telegram si incluye `callback_query`. No hay que tocar el registro del webhook para que esto funcione.
+
+**Alcance de lo que el bot escribe**: solo `transaccion.presupuestoId`, el mismo alcance que el `PUT /api/transacciones/[id]` del dashboard. No mueve montos ni escribe en `presupuesto_cambios`.
+
+Los **traspasos** entre lineas (cubrir un excedente moviendo `montoRevisado`) NO estan en el bot y no deben estarlo: esa operacion valida que la linea donante no quede por debajo de lo ya gastado y escribe su bitacora en la misma transaccion de base de datos. Cuando un gasto rebasa su linea, el bot avisa y ofrece un boton `url` al dashboard (`DASHBOARD_URL`, default `https://gastos-dashboard.onrender.com`), que es donde vive `POST /api/presupuestos/[id]/transferir`. Dos implementaciones de una operacion financiera auditada es como terminan desincronizandose.
+
+El canal de WhatsApp **no cambia**: ahi la regla sigue siendo que el bot nunca pregunta ni fija `presupuestoId` (ver `scripts/test-bot-flow.js`). Que esas 18 pruebas sigan verdes es la señal de que no se filtro comportamiento de un canal al otro.
+
 ### TELEGRAM_WEBHOOK_SECRET
 
 Sin esta variable, `POST /telegram/webhook` acepta peticiones de cualquiera. El repo es publico, asi que la ruta esta a la vista en el codigo y el hostname es el nombre del servicio.

@@ -170,7 +170,7 @@ function isMarkdownParseError(error) {
   return error.response?.status === 400 && /can't parse entities/i.test(error.response?.data?.description || '')
 }
 
-async function sendTelegramMessage(chatId, message, replyToMessageId = null) {
+async function sendTelegramMessage(chatId, message, replyToMessageId = null, { buttons = null } = {}) {
   if (!isEnabled()) {
     return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
   }
@@ -180,6 +180,10 @@ async function sendTelegramMessage(chatId, message, replyToMessageId = null) {
     text: message,
     parse_mode: 'Markdown',
   }
+
+  // El reintento en texto plano de abajo hace `const { parse_mode, ...resto }`,
+  // asi que reply_markup sobrevive al fallback sin tratamiento especial.
+  if (buttons?.length) payload.reply_markup = { inline_keyboard: buttons }
 
   if (replyToMessageId) payload.reply_parameters = { message_id: replyToMessageId }
 
@@ -207,6 +211,93 @@ async function sendTelegramMessage(chatId, message, replyToMessageId = null) {
     const details = error.response?.data || error.message
     console.error('Telegram API error:', JSON.stringify(details))
     return { ok: false, error: details }
+  }
+}
+
+// Telegram deja el boton con un relojito hasta que se acusa recibo del
+// callback. Sin esto el usuario ve el boton "cargando" ~10 segundos aunque la
+// accion ya se haya ejecutado.
+async function answerCallbackQuery(callbackQueryId, text = null) {
+  if (!isEnabled()) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
+
+  try {
+    const response = await axios.post(
+      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/answerCallbackQuery`,
+      { callback_query_id: callbackQueryId, ...(text ? { text } : {}) },
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+    return { ok: true, data: response.data }
+  } catch (error) {
+    const details = error.response?.data || error.message
+    console.error('Telegram answerCallbackQuery error:', JSON.stringify(details))
+    return { ok: false, error: details }
+  }
+}
+
+// Reescribe el mensaje original en vez de mandar uno nuevo: el historial del
+// chat queda con una sola confirmacion, ya resuelta. Quitar los botones
+// (buttons vacio) es lo que impide que alguien vuelva a tocarlos.
+async function editMessageText(chatId, messageId, text, { buttons = null } = {}) {
+  if (!isEnabled()) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
+
+  const payload = {
+    chat_id: chatId,
+    message_id: messageId,
+    text,
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: buttons || [] },
+  }
+
+  try {
+    const response = await axios.post(
+      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/editMessageText`,
+      payload,
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+    return { ok: true, data: response.data }
+  } catch (error) {
+    if (isMarkdownParseError(error)) {
+      try {
+        const { parse_mode, ...plainPayload } = payload
+        const response = await axios.post(
+          `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/editMessageText`,
+          plainPayload,
+          { headers: { 'Content-Type': 'application/json' } },
+        )
+        return { ok: true, data: response.data, markdownFallback: true }
+      } catch (retryError) {
+        const details = retryError.response?.data || retryError.message
+        console.error('Telegram editMessageText error (plain text retry):', JSON.stringify(details))
+        return { ok: false, error: details }
+      }
+    }
+    const details = error.response?.data || error.message
+    console.error('Telegram editMessageText error:', JSON.stringify(details))
+    return { ok: false, error: details }
+  }
+}
+
+// Lo que Telegram manda al tocar un boton. Ojo: `data` viajo por el cliente del
+// usuario, asi que es entrada NO CONFIABLE -- quien lo consuma tiene que validar
+// contra la base, no creerle a los ids.
+function extractCallbackQuery(update) {
+  const query = update?.callback_query
+  if (!query?.data) return null
+
+  const chat = query.message?.chat
+  if (!chat) return null
+
+  return {
+    updateId: update.update_id,
+    callbackId: query.id,
+    data: String(query.data),
+    chatId: String(chat.id),
+    chatType: chat.type,
+    chatTitle: chat.title || null,
+    messageId: query.message.message_id,
+    telegramUserId: String(query.from?.id || ''),
+    username: query.from?.username || null,
+    senderName: [query.from?.first_name, query.from?.last_name].filter(Boolean).join(' ').trim() || query.from?.username || 'Telegram user',
   }
 }
 
@@ -283,6 +374,9 @@ module.exports = {
   getMe,
   checkGroupPrivacyMode,
   extractChatMigration,
+  extractCallbackQuery,
+  answerCallbackQuery,
+  editMessageText,
   describeAccess,
   sendTelegramMessage,
   extractTelegramMessage,
