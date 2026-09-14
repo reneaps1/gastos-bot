@@ -1,0 +1,48 @@
+# Corre los 73 checks en cada PR y en cada push a main.
+#
+# POR QUE EXISTE: un merge a main es un despliegue a produccion inmediato
+# (autoDeploy en los tres servicios de Render). Sin esto, la unica forma de
+# saber que un cambio rompe el bot es que Milo deje de contestar. Los tests ya
+# existian desde hace tiempo, pero solo corrian si alguien se acordaba de
+# correrlos a mano.
+#
+# El repo es publico, asi que los minutos de Actions son gratis.
+
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# El job solo lee el codigo y corre pruebas: no necesita permisos sobre el repo.
+permissions: {}
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      # Prisma 7 valida env("DATABASE_URL") incluso durante `generate`
+      # (prisma.config.ts), aunque no conecte a ninguna base. Los tests corren
+      # con SKIP_PRISMA_BOOTSTRAP=1, asi que el cliente tiene que generarse
+      # aqui: sin esto truenan con "Cannot find module '.prisma/client/default'".
+      - name: Generar Prisma Client
+        run: DATABASE_URL="postgresql://x:x@localhost:0/x" npx prisma generate
+
+      # Las tres suites: WhatsApp, Telegram y watchdog. Ninguna toca la red ni
+      # Postgres -- usan dobles en memoria.
+      - run: npm test
