@@ -121,6 +121,10 @@ async function main() {
     health,
     status,
     me,
+    // Si el servicio exige secreto y aqui no lo tenemos, evaluate() anula la
+    // reparacion: un setWebhook sin secret_token lo borraria y dejaria al bot
+    // contestando 403 a todo.
+    watchdogHasSecret: !!SECRET,
   })
 
   if (verdict.ok) {

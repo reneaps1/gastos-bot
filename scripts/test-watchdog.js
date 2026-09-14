@@ -126,6 +126,42 @@ const k = evaluate({
 check('sigue detectando el problema', codigos(k).includes('WEBHOOK_DELIVERY_ERROR'), JSON.stringify(codigos(k)))
 check('no truena con health/status en null', k.problems.length >= 1)
 
+console.log('\n=== M: con el secreto en ambos lados, repara normal ===')
+const m = evaluate({
+  ...SANO,
+  webhookInfo: { url: 'https://otro.onrender.com/telegram/webhook', pending_update_count: 0 },
+  status: { ...SANO.status, secretConfigured: true },
+  watchdogHasSecret: true,
+})
+check('detecta el webhook mal apuntado', codigos(m).includes('WEBHOOK_URL_MISMATCH'), JSON.stringify(codigos(m)))
+check('SI propone repararlo', m.heal?.url === URL_OK, JSON.stringify(m.heal))
+check('sin aviso de secreto faltante', !codigos(m).includes('WATCHDOG_SECRET_MISSING'), JSON.stringify(codigos(m)))
+
+console.log('\n=== N: el servicio exige secreto y el watchdog no lo tiene -> NO repara ===')
+// Un setWebhook sin secret_token borraria el secreto en Telegram y el app
+// contestaria 403 a todo. Reparar no debe poder dejar al bot peor.
+const n = evaluate({
+  ...SANO,
+  webhookInfo: { url: 'https://otro.onrender.com/telegram/webhook', pending_update_count: 0 },
+  status: { ...SANO.status, secretConfigured: true },
+  watchdogHasSecret: false,
+})
+check('sigue detectando el webhook mal apuntado', codigos(n).includes('WEBHOOK_URL_MISMATCH'), JSON.stringify(codigos(n)))
+check('avisa WATCHDOG_SECRET_MISSING', codigos(n).includes('WATCHDOG_SECRET_MISSING'), JSON.stringify(codigos(n)))
+check('NO repara: heal anulado', n.heal === null, JSON.stringify(n.heal))
+const pistaN = n.problems.find(p => p.code === 'WATCHDOG_SECRET_MISSING')?.hint || ''
+check('la pista dice que se agregue a los secrets de GitHub', /GitHub/.test(pistaN), pistaN)
+
+console.log('\n=== O: sin secreto en el servicio, el watchdog repara aunque no tenga secreto ===')
+const o = evaluate({
+  ...SANO,
+  webhookInfo: { url: 'https://otro.onrender.com/telegram/webhook', pending_update_count: 0 },
+  status: { ...SANO.status, secretConfigured: false },
+  watchdogHasSecret: false,
+})
+check('repara normal', o.heal?.url === URL_OK, JSON.stringify(o.heal))
+check('sin aviso de secreto', !codigos(o).includes('WATCHDOG_SECRET_MISSING'), JSON.stringify(codigos(o)))
+
 console.log('\n=== L: el mensaje de alerta es legible y accionable ===')
 const alerta = formatAlert({ problems: d.problems, healed: null, serviceName: 'milo-telegram-bot' })
 check('nombra el servicio', alerta.includes('milo-telegram-bot'), alerta)

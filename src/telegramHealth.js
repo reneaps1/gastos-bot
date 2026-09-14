@@ -47,10 +47,11 @@ function describeDeliveryError(message) {
  * @param {{ok: boolean, status?: number, error?: string}|null} input.health  resultado de GET /health
  * @param {object|null} input.status  payload de GET /telegram/status
  * @param {{ok: boolean, status?: number|string}|null} input.me  resultado de getMe
+ * @param {boolean} input.watchdogHasSecret  si quien llama tiene TELEGRAM_WEBHOOK_SECRET
  * @param {number} input.now  epoch ms (inyectable para pruebas)
  * @returns {{ok: boolean, problems: Array, heal: {url: string}|null}}
  */
-function evaluate({ webhookInfo = null, expectedUrl = null, health = null, status = null, me = null, now = Date.now() } = {}) {
+function evaluate({ webhookInfo = null, expectedUrl = null, health = null, status = null, me = null, watchdogHasSecret = true, now = Date.now() } = {}) {
   const problems = []
   let heal = null
 
@@ -155,6 +156,23 @@ function evaluate({ webhookInfo = null, expectedUrl = null, health = null, statu
         'El servicio tiene TELEGRAM_REGISTER_WEBHOOK=false: no reclama el webhook',
         'Correcto si este NO es el servicio de Telegram. Si si lo es, quita esa variable.',
       ))
+    }
+
+    // Reparar no debe poder dejar al bot PEOR de como estaba.
+    //
+    // El watchdog repara llamando setWebhook. Si el servicio exige un secreto y
+    // quien repara no lo tiene, ese setWebhook iria sin `secret_token`, lo que
+    // BORRA el secreto guardado en Telegram. El app lo seguiria exigiendo y
+    // contestaria 403 a todos los updates: el bot se queda mudo, y por una
+    // "reparacion". Mejor dejar el webhook mal apuntado y avisar.
+    if (status.secretConfigured === true && !watchdogHasSecret) {
+      problems.push(problem(
+        'WATCHDOG_SECRET_MISSING',
+        'WARN',
+        'El servicio exige TELEGRAM_WEBHOOK_SECRET pero quien vigila no lo tiene',
+        'Agrega TELEGRAM_WEBHOOK_SECRET (el mismo valor que tiene el servicio) a los secrets de Actions en GitHub. Mientras falte, el webhook no se repara solo: hacerlo borraria el secreto en Telegram y dejaria al bot mudo.',
+      ))
+      heal = null
     }
   }
 
