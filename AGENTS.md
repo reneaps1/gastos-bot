@@ -309,6 +309,28 @@ Los **traspasos** entre lineas (cubrir un excedente moviendo `montoRevisado`) NO
 
 El canal de WhatsApp **no cambia**: ahi la regla sigue siendo que el bot nunca pregunta ni fija `presupuestoId` (ver `scripts/test-bot-flow.js`). Que esas 18 pruebas sigan verdes es la señal de que no se filtro comportamiento de un canal al otro.
 
+### Mover un gasto ya registrado, en lenguaje natural
+
+"el gasto de suerox mandalo a diversion" encuentra el movimiento real y **propone** el cambio con un boton. No escribe: la escritura es la misma del flujo de botones, detras de un toque humano.
+
+Como se resuelve la frase:
+
+1. `detectReassign()` en `src/reassignIntent.js` — detector **local por regex**, sin red. Saca `{ referencia, destino }`. DeepSeek (tipo `reassign` en `classify`) es el respaldo para frases que la regex no cubre, mismo patron que `classifyQuestionLocally()`: lo comun no depende de que un proveedor externo este vivo.
+2. `findTransactionsByReference()` en `src/budgetActions.js` — busca el gasto. **Acotado a la quincena activa** y ordenado por fecha descendente: sin eso "super" podria traer un gasto de hace tres meses y nadie lo notaria al confirmar.
+3. `resolveBudgetLine()` resuelve el destino con el mismo criterio conservador de siempre.
+4. Se propone con boton. El `callback_data` es el **mismo `pl:<txId>:<lineaId>`** del flujo de botones, asi que la validacion y la escritura son exactamente las ya probadas.
+
+| Lo que encuentra | Que hace |
+|---|---|
+| 1 movimiento + linea clara | Un boton de confirmar |
+| 1 movimiento, destino ambiguo | Los botones de linea de siempre |
+| Varios movimientos | Botones `ps:<txId>` para elegir cual, y luego los de linea |
+| Ninguno | Lo dice, sin proponer nada |
+
+**La regla que no se puede relajar**: la IA propone, nunca escribe. Las 11 herramientas del agente siguen siendo de solo lectura, y este flujo tampoco escribe — solo arma botones. Hay una prueba dedicada a eso (`escrituras.length` no cambia hasta que se toca el boton); si algun dia falla, es que se filtro una escritura al camino de la IA.
+
+Fuera de alcance por decision: cambiar monto o categoria, borrar movimientos, y varias operaciones en un mismo mensaje.
+
 ### TELEGRAM_WEBHOOK_SECRET
 
 Sin esta variable, `POST /telegram/webhook` acepta peticiones de cualquiera. El repo es publico, asi que la ruta esta a la vista en el codigo y el hostname es el nombre del servicio.

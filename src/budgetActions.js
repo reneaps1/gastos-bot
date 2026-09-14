@@ -92,6 +92,30 @@ async function unlinkTransaction({ transaccionId }) {
   return { ok: true, yaEstaba: false }
 }
 
+// Busca los gastos a los que puede referirse una frase como "el de suerox".
+//
+// Acotado a la quincena activa y a `tipo: 'Gasto'`, y ordenado por fecha
+// descendente: sin eso "super" podria traer un gasto de hace tres meses y nadie
+// lo notaria al confirmar el boton.
+//
+// Es LECTURA. Vive aqui porque es el mismo dominio que la escritura que la
+// acompaña, y asi las dos se prueban juntas.
+async function findTransactionsByReference({ referencia, quincenaId, limit = 4 }) {
+  const texto = String(referencia || '').trim()
+  if (texto.length < 3 || !quincenaId) return []
+
+  return prisma.transaccion.findMany({
+    where: {
+      quincenaId,
+      tipo: 'Gasto',
+      descripcion: { contains: texto, mode: 'insensitive' },
+    },
+    include: { categoria: true, presupuesto: true },
+    orderBy: [{ fecha: 'desc' }, { id: 'desc' }],
+    take: limit,
+  })
+}
+
 // Mensajes para el usuario. Se mantienen aqui, junto a los motivos, para que
 // agregar un motivo sin su mensaje sea imposible de pasar por alto.
 function describeRechazo(reason) {
@@ -113,4 +137,4 @@ function describeRechazo(reason) {
   }
 }
 
-module.exports = { linkTransactionToBudget, unlinkTransaction, describeRechazo, RECHAZO }
+module.exports = { linkTransactionToBudget, unlinkTransaction, findTransactionsByReference, describeRechazo, RECHAZO }
