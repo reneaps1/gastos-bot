@@ -285,6 +285,27 @@ Para ubicar un mensaje concreto en los logs de Render, cada update deja `TELEGRA
 
 El modo privacidad se apaga en @BotFather: `/setprivacy` → Disable. Sin eso, en un grupo el bot **no recibe** un mensaje suelto como `30, suerox`; solo comandos, menciones y respuestas a sus propios mensajes.
 
+### TELEGRAM_WEBHOOK_SECRET
+
+Sin esta variable, `POST /telegram/webhook` acepta peticiones de cualquiera. El repo es publico, asi que la ruta esta a la vista en el codigo y el hostname es el nombre del servicio.
+
+Lo unico que hoy detiene a un atacante es la lista blanca: el update falso tendria que traer un `chat.id` que este en `TELEGRAM_ALLOWED_CHAT_IDS`. Eso protege por oscuridad, no por diseño. Ojo con el alcance real: como el bot responde al `chat_id` del update y ese id tiene que estar autorizado, **cualquier respuesta cae en los chats del dueño, no en los del atacante**. El riesgo es contaminacion de datos (gastos falsos), no fuga de informacion.
+
+**Formato**: Telegram solo acepta `A-Z a-z 0-9 _ -`, de 1 a 256 caracteres. Un secreto con otros caracteres hace que `setWebhook` lo rechace, y entonces el servicio arranca exigiendo un secreto que Telegram nunca acepto: 403 a todos los updates. `openssl rand -hex 32` sirve.
+
+**Como se pone**, los dos pasos en la misma sentada:
+
+1. `TELEGRAM_WEBHOOK_SECRET` en el Environment del servicio en Render. Al guardar reinicia, y el arranque le manda el secreto a Telegram via `setWebhook`.
+2. El **mismo valor** como secret de Actions en GitHub, para el watchdog.
+
+Confirmacion en el log de arranque: `Telegram webhook registered: ... (secret=yes)`.
+
+Si algo sale mal, la salida de emergencia es borrar la variable en Render y reiniciar: el handler solo exige el header cuando la variable existe (`if (expectedSecret && ...)`), asi que sin ella todo vuelve a funcionar.
+
+**Por que los dos pasos van juntos**: el watchdog repara el webhook llamando `setWebhook`, y solo incluye `secret_token` si el tiene el secreto. Un `setWebhook` sin ese campo **borra** el secreto guardado en Telegram, y entonces el app lo seguiria exigiendo y contestaria 403 a todo. Con el servicio configurado y GitHub sin configurar, una "reparacion" dejaria al bot mudo.
+
+Eso ya no puede pasar: `evaluate()` en `src/telegramHealth.js` anula la reparacion y emite `WATCHDOG_SECRET_MISSING` cuando `/telegram/status` reporta `secretConfigured: true` y el watchdog no tiene el secreto. La regla general que vale la pena conservar: **una reparacion automatica nunca debe poder dejar el sistema peor de como estaba**; ante la duda, avisa y no toques.
+
 ### Prisma 7 en Render — Lecciones aprendidas
 
 - Prisma 7 valida `env("DATABASE_URL")` incluso durante `prisma generate` si está en el schema o en `prisma.config.ts`. Sin la variable, el build/runtime explota.
