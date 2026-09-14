@@ -181,17 +181,45 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 
 `gastos-bot` sirve WhatsApp y `milo-telegram-bot` sirve Telegram. `milo-telegram-bot` NO esta en `render.yaml`: se administra solo desde el dashboard, asi que su repo, rama, build command y start command **no son visibles desde este repo**. Esa invisibilidad es la causa raiz del incidente del 2026-09-12 y de que tardara 7 horas en diagnosticarse.
 
-Estado verificado el 2026-09-12: `milo-telegram-bot` NO estaba desplegando `reneaps1/gastos-bot@main` (el commit `54c5cb0` agrego `start:telegram` y una hora despues el servicio seguia fallando con `Missing script`). Antes de tocar ese servicio, confirma en su Settings a que repo y rama apunta.
+Los dos servicios corren el mismo `src/index.js` de `main`; el start command es lo unico que cambia (`npm start` vs `npm run start:telegram`, que existe justo para eso).
 
-Los dos servicios deben correr el mismo `src/index.js` de `main`; el start command es lo unico que cambia (`npm start` vs `npm run start:telegram`, que existe justo para eso).
+#### Post-mortem del 2026-09-12 (resuelto el 2026-09-14)
+
+`milo-telegram-bot` desplegaba la rama **`feature/telegram-budget-bot`**, no `main`. Esa rama tenia su propio entrypoint:
+
+```json
+"start:telegram": "node src/telegram-index.js"
+```
+
+El commit `c433178` ("Fusionar el bot de Telegram en gastos-bot", cabeza de esa rama y origen del PR #103) **borro** `start:telegram` y `dev:telegram` del `package.json`, porque `src/telegram-index.js` se fusiono dentro de `src/index.js`. El Start Command en Render siguio diciendo `npm run start:telegram`.
+
+Cadena completa:
+
+| Hora (2026-09-12) | Que paso |
+|---|---|
+| 07:26 | Se despliega `c433178` -> `npm error Missing script: "start:telegram"` -> crash loop |
+| — | Render **deja viva la instancia anterior** (`a7631c3`, del 11 de septiembre, el ultimo commit que si tenia el script) |
+| 08:24 | Milo contesta normal: es esa instancia vieja |
+| ~10:25 | El deploy de #104 se lleva la instancia viva |
+| 10:31 | Primer mensaje sin respuesta. Silencio total durante 2 dias |
+
+Ni el token, ni `TELEGRAM_WEBHOOK_SECRET`, ni el modo privacidad, ni `TELEGRAM_ALLOWED_CHAT_IDS` tuvieron que ver con la caida original. Se arreglo cambiando el Branch del servicio a `main`.
+
+**La regla que se deriva, y que es la unica que evita que se repita:**
+
+> Si un cambio en el repo mueve, renombra o elimina el entrypoint de un servicio (o el script de npm que lo arranca), **actualiza el Start Command de ese servicio en Render en el mismo cambio**. El repo no puede detectarlo solo: esa configuracion vive en el dashboard.
+
+Antes de diagnosticar cualquier cosa en `milo-telegram-bot`, confirma en su Settings a que repo y **rama** apunta. Que el repo sea el correcto no significa que la rama lo sea.
 
 Reglas para que no se peleen:
 
 - **Un token de Telegram admite UNA sola URL de webhook.** Cada instancia con `TELEGRAM_BOT_TOKEN` llama `setWebhook` al arrancar, asi que la ultima en reiniciar se queda con TODOS los mensajes. El sintoma es el peor de todos: "el bot funciona a veces".
 - El servicio que **no** deba quedarse con Telegram va con `TELEGRAM_REGISTER_WEBHOOK=false` (o directamente sin `TELEGRAM_BOT_TOKEN`). Al arrancar, cada instancia loguea su rol: `Telegram role: DUENO del webhook` o `solo responde`.
 - `milo-telegram-bot` necesita `DATABASE_URL` (la URL **interna** de gastos-db, el mismo valor que `gastos-bot`). Sin eso arranca y contesta, pero cada consulta a presupuesto, liquidez o movimientos truena: `telegramBrain`, `miloTools` y `financeAgent` pegan a Postgres directo.
-- Si el start command de un servicio apunta a un script que no existe en `package.json`, Render entra en crash loop y **deja viva la version anterior** hasta el siguiente deploy — se ve "Failed deploy" mientras el bot sigue respondiendo, y el silencio real llega con el deploy siguiente. Fue exactamente el incidente del 2026-09-12: `npm run start:telegram` sin ese script en el repo.
-- `npm start` existe en **todas** las versiones del `package.json` de este repo; `start:telegram` solo desde el 2026-09-12. Si hay que revivir un servicio sin saber que commit despliega, `npm start` arranca en cualquiera.
+- Si el start command de un servicio apunta a un script que no existe en `package.json`, Render entra en crash loop y **deja viva la version anterior** hasta el siguiente deploy — se ve "Failed deploy" mientras el bot sigue respondiendo, y el silencio real llega con el deploy siguiente. Ver el post-mortem de arriba.
+- `npm start` existe en **todas** las versiones del `package.json` de este repo. Si hay que revivir un servicio sin saber que commit despliega, `npm start` arranca en cualquiera.
+- `TELEGRAM_ALLOWED_CHAT_IDS` es fail-closed: vacia, el bot recibe los mensajes y los descarta **en silencio**. Al arrancar avisa con `TELEGRAM_ALLOWED_CHAT_IDS is empty`, y cada mensaje descartado deja `TELEGRAM_UNAUTHORIZED_CHAT` con el chat id exacto que hay que agregar. Esa es la forma mas rapida de averiguar el id de un chat: mandarle un mensaje al bot y leer el log.
+- El modo privacidad de Telegram **no aplica en chats privados**. Si el bot no contesta en un chat privado autorizado, el servicio esta caido: no hay otra explicacion.
 
 ### Watchdog del bot de Telegram
 
