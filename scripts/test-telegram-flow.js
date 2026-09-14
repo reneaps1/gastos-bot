@@ -86,7 +86,19 @@ const fakePrisma = {
       escrituras.push({ id: where.id, ...data })
       return row
     },
-    findMany: async () => [],
+    // Solo responde a la firma de findTransactionsByReference (la unica que
+    // filtra por descripcion). Los demas llamadores siguen viendo [] para no
+    // cambiar el comportamiento de los casos A-H.
+    findMany: async ({ where } = {}) => {
+      const texto = where?.descripcion?.contains
+      if (!texto) return []
+      return creadas.filter(t =>
+        (where.quincenaId === undefined || t.quincenaId === where.quincenaId) &&
+        (where.tipo === undefined || t.tipo === where.tipo) &&
+        String(t.descripcion).toLowerCase().includes(String(texto).toLowerCase()))
+        .sort((a, b) => b.id - a.id)
+        .slice(0, 4)
+    },
     groupBy: async () => [],
     // getBudgetLineStatus suma lo gastado de una linea.
     aggregate: async ({ where } = {}) => {
@@ -353,6 +365,56 @@ async function main() {
   check('avisa del excedido', /[Ee]xcedido/.test(msgT), msgT)
   check('dice que rebaso la linea', /rebasó la línea/i.test(msgT), msgT)
   check('ofrece boton al dashboard', enviados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(enviados.at(-1)?.buttons))
+
+  console.log('\n=== U: "el gasto de X mandalo a Y" encuentra el movimiento y PROPONE ===')
+  // Las descripciones de estos casos caen en Personal a proposito: ahi viven
+  // las lineas 10 y 11 del doble. Con otra categoria no habria candidatas y el
+  // caso no probaria lo que dice probar.
+  await post(textUpdate('45, boliche'))
+  const txU = creadas.at(-1)
+  const escriturasAntesU = escrituras.length
+  await post(textUpdate('el gasto de boliche mandalo a gastos personales'))
+  const propuesta = enviados.at(-1)
+  check('encontro el movimiento y lo muestra', /boliche/i.test(propuesta?.message || ''), propuesta?.message)
+  check('menciona la linea destino', /Gastos Personales/i.test(propuesta?.message || ''), propuesta?.message)
+  check('ofrece un boton de confirmar', propuesta?.buttons?.[0]?.[0]?.callback_data === `pl:${txU.id}:10`, JSON.stringify(propuesta?.buttons))
+  check('NO escribio nada todavia: solo propuso', escrituras.length === escriturasAntesU, escrituras.length)
+  check('el movimiento sigue sin linea', txU.presupuestoId == null, txU.presupuestoId)
+
+  console.log('\n=== V: al confirmar SI escribe, por el mismo camino ya probado ===')
+  await post(callbackUpdate(`pl:${txU.id}:10`))
+  check('ahora si lo vinculo', txU.presupuestoId === 10, txU.presupuestoId)
+
+  console.log('\n=== W: referencia que no empata con nada ===')
+  const antesW = escrituras.length
+  await post(textUpdate('el gasto de tlalpan mandalo a diversion'))
+  check('lo dice claro', /no encontré ningún gasto/i.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+  check('sin escrituras', escrituras.length === antesW, escrituras.length)
+
+  console.log('\n=== X: varios movimientos empatan -> pregunta cual, sin escribir ===')
+  await post(textUpdate('20, chelas centro'))
+  await post(textUpdate('35, chelas norte'))
+  const antesX = escrituras.length
+  await post(textUpdate('el gasto de chelas mandalo a gastos personales'))
+  const multi = enviados.at(-1)
+  check('pregunta cual de los dos', /¿Cuál quieres mover\?/i.test(multi?.message || ''), multi?.message)
+  check('un boton por movimiento', multi?.buttons?.length === 2, multi?.buttons?.length)
+  check('los botones eligen movimiento, no escriben', multi?.buttons?.every(f => f[0].callback_data.startsWith('ps:')), JSON.stringify(multi?.buttons))
+  check('sin escrituras', escrituras.length === antesX, escrituras.length)
+
+  console.log('\n=== Y: elegir el movimiento muestra las lineas, todavia sin escribir ===')
+  const txChelas = creadas.at(-1)
+  const antesY = escrituras.length
+  await post(callbackUpdate(`ps:${txChelas.id}`))
+  check('ahora ofrece las lineas', editados.at(-1)?.buttons?.some(f => f[0].callback_data?.startsWith('pl:')), JSON.stringify(editados.at(-1)?.buttons))
+  check('sigue sin escribir', escrituras.length === antesY, escrituras.length)
+
+  console.log('\n=== Z: destino que no empata con ninguna linea ===')
+  await post(textUpdate('70, mariscos'))
+  await post(textUpdate('el gasto de mariscos mandalo a vacaciones en europa'))
+  const sinDestino = enviados.at(-1)?.message || ''
+  check('no inventa una linea', !/Sí, mandarlo/i.test(sinDestino), sinDestino)
+  check('ofrece las candidatas o lo dice', /¿A cuál línea lo mando\?|No encontré una línea/i.test(sinDestino), sinDestino)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

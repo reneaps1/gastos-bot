@@ -55,7 +55,8 @@ const {
   getBudgetLineStatus,
   formatBudgetStatus,
 } = require('./budgetTracker')
-const { linkTransactionToBudget, unlinkTransaction, describeRechazo } = require('./budgetActions')
+const { linkTransactionToBudget, unlinkTransaction, findTransactionsByReference, describeRechazo } = require('./budgetActions')
+const { detectReassign } = require('./reassignIntent')
 
 // A donde mandar a la gente cuando hay que cubrir un excedido: el traspaso entre
 // lineas es una operacion auditada que vive en el dashboard, no en el bot.
@@ -687,6 +688,82 @@ app.post('/webhook', async (req, res) => {
   }
 })
 
+// "el gasto de suerox mandalo a diversion": encuentra el movimiento real y
+// PROPONE el cambio con un boton. Nunca escribe: la escritura vive en el
+// callback, detras de un toque humano.
+//
+// Devuelve true si atendio el mensaje, false si no era una reasignacion y el
+// flujo normal debe seguir.
+async function handleReassign(message, { referencia, destino }) {
+  const quincena = await db.findQuincenaByCodigo(getCurrentQuincena())
+  if (!quincena) return false
+
+  const candidatos = await findTransactionsByReference({ referencia, quincenaId: quincena.id })
+  console.log(`TELEGRAM_REASSIGN: ref=${JSON.stringify(referencia)} destino=${JSON.stringify(destino)} encontrados=${candidatos.length}`)
+
+  if (candidatos.length === 0) {
+    await telegram.sendTelegramMessage(
+      message.chatId,
+      `No encontré ningún gasto de esta quincena que diga “${telegram.escapeMarkdown(referencia)}”.`,
+      message.messageId,
+    )
+    return true
+  }
+
+  // Con varios candidatos no se adivina: primero se elige cual.
+  if (candidatos.length > 1) {
+    const buttons = candidatos.map(tx => [{
+      text: `$${Number(tx.monto).toFixed(2)} — ${tx.descripcion}`,
+      callback_data: `ps:${tx.id}`,
+    }])
+    await telegram.sendTelegramMessage(
+      message.chatId,
+      `Encontré ${candidatos.length} gastos que dicen “${telegram.escapeMarkdown(referencia)}”. ¿Cuál quieres mover?`,
+      message.messageId,
+      { buttons },
+    )
+    return true
+  }
+
+  const tx = candidatos[0]
+  const lookup = { quincenaId: quincena.id, categoriaId: tx.categoriaId, descripcion: destino, tipo: 'Gasto' }
+  const linea = await resolveBudgetLine(lookup)
+
+  const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
+
+  if (linea) {
+    // El boton usa el MISMO callback_data del flujo de botones: la validacion y
+    // la escritura son exactamente las mismas, ya probadas.
+    await telegram.sendTelegramMessage(
+      message.chatId,
+      `${resumen}\n\n¿Lo mando a *${telegram.escapeMarkdown(linea.descripcion)}*?`,
+      message.messageId,
+      { buttons: [[{ text: `Sí, mandarlo a ${linea.descripcion}`, callback_data: `pl:${tx.id}:${linea.id}` }]] },
+    )
+    return true
+  }
+
+  // No se pudo resolver el destino con seguridad: se cae en los mismos botones
+  // de linea del flujo normal en vez de adivinar.
+  const candidatasLinea = await getBudgetCandidates(lookup)
+  if (candidatasLinea.length === 0) {
+    await telegram.sendTelegramMessage(
+      message.chatId,
+      `${resumen}\n\nNo encontré una línea que se parezca a “${telegram.escapeMarkdown(destino)}” en su categoría.`,
+      message.messageId,
+    )
+    return true
+  }
+
+  await telegram.sendTelegramMessage(
+    message.chatId,
+    `${resumen}\n\nNo identifiqué “${telegram.escapeMarkdown(destino)}” con seguridad. ¿A cuál línea lo mando?`,
+    message.messageId,
+    { buttons: budgetButtons(tx.id, candidatasLinea) },
+  )
+  return true
+}
+
 // Resuelve el toque de un boton de presupuesto.
 //
 // `callback.data` es entrada NO CONFIABLE: viajo por el cliente del usuario y un
@@ -712,6 +789,34 @@ async function handleBudgetCallback(callback) {
         callback.messageId,
         '✅ Gasto registrado, sin línea de presupuesto.\n\nPuedes asignarlo después desde el dashboard.',
         { buttons: dashboardButton('Abrir el dashboard') },
+      )
+      return
+    }
+
+    // 'ps' = elegir cual movimiento, cuando la frase empataba varios. Solo
+    // cambia que botones se muestran; no escribe nada.
+    if (accion === 'ps') {
+      const tx = await prisma.transaccion.findUnique({ where: { id: Number(txId) } })
+      if (!tx) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
+        return
+      }
+      const candidatas = await getBudgetCandidates({
+        quincenaId: tx.quincenaId,
+        categoriaId: tx.categoriaId,
+        descripcion: tx.descripcion,
+        tipo: 'Gasto',
+      })
+      const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
+      if (candidatas.length === 0) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, `${resumen}\n\nNo hay líneas de presupuesto en su categoría.`)
+        return
+      }
+      await telegram.editMessageText(
+        callback.chatId,
+        callback.messageId,
+        `${resumen}\n\n¿A cuál línea lo mando?`,
+        { buttons: budgetButtons(tx.id, candidatas) },
       )
       return
     }
@@ -827,6 +932,13 @@ app.post('/telegram/webhook', async (req, res) => {
     const senderName = user?.nombre || message.senderName
     const expandedText = expandFinanceShorthand(message.text)
 
+    // Antes de intentar leer el mensaje como un gasto NUEVO: puede estar
+    // hablando de uno que ya existe. Sin esto, "el gasto de suerox mandalo a
+    // diversion" no tiene monto y termina en el fallback de "no pude
+    // identificar una operacion".
+    const reasignacion = detectReassign(message.text)
+    if (reasignacion && await handleReassign(message, reasignacion)) return
+
     // Primero resolvemos localmente las preguntas conocidas. Esto cubre lenguaje
     // cotidiano como "x asignar" sin depender de ningún proveedor externo.
     if (looksLikeFinanceQuestion(expandedText)) {
@@ -886,6 +998,12 @@ app.post('/telegram/webhook', async (req, res) => {
             console.log(`Telegram ${result.provider} question answered; chat=${message.chatId}`)
             return
           }
+        }
+
+        // Respaldo del detector local de src/reassignIntent.js, para frases que
+        // la regex no cubre. Igual que el local: solo PROPONE con un boton.
+        if (aiData?.type === 'reassign' && aiData.referencia && aiData.destino) {
+          if (await handleReassign(message, { referencia: aiData.referencia, destino: aiData.destino })) return
         }
 
         if (aiData?.type === 'chat') {

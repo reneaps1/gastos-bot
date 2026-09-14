@@ -65,6 +65,7 @@ Interpreta lenguaje coloquial, abreviaturas y errores de dedo. Ejemplos: "x" pue
 
 Tipos permitidos:
 - expense: registrar gasto, ingreso o ahorro. Debe existir un monto claro.
+- reassign: mover un gasto YA REGISTRADO a otra línea de presupuesto. No trae monto nuevo.
 - question: pregunta financiera.
 - task: recordatorio/tarea.
 - chat: conversación no financiera.
@@ -79,6 +80,9 @@ Para question usa una intención:
 - generic_finance
 
 IMPORTANTE:
+- "el gasto de suerox mándalo a diversión" = reassign, referencia "suerox", destino "diversión".
+- reassign NUNCA trae monto: si el mensaje trae un monto nuevo es expense, no reassign.
+- referencia es el texto para encontrar el gasto existente; destino es la línea a la que va.
 - "faltan gastos x asignar?" = question/unassigned_expenses.
 - "tengo gastos pendientes x registrar?" = question/generic_finance, porque Milo no puede saber qué gastos nunca fueron registrados.
 - No inventes montos.
@@ -89,6 +93,7 @@ Mensaje: ${JSON.stringify(text)}
 
 Responde SOLO JSON válido.
 Para expense: {"type":"expense","monto":123,"descripcion":"...","categoria":"Hogar|Salud|Familia|Transporte|Suscripciones|Deudas|Personal|Ingresos|Ahorro","formaPago":"Efectivo|Debito|Credito|Spei|Vales","tipo":"Gasto|Ingreso|Ahorro","estatus":"Pagado|Pendiente"}
+Para reassign: {"type":"reassign","referencia":"...","destino":"..."}
 Para question: {"type":"question","intent":"...","subject":null,"scope":"me|household"}
 Para task: {"type":"task","content":"...","due_string":null}
 Para chat: {"type":"chat"}`
@@ -105,7 +110,7 @@ Para chat: {"type":"chat"}`
 
   try {
     const data = JSON.parse(raw)
-    if (!['expense', 'question', 'task', 'chat'].includes(data.type)) return null
+    if (!['expense', 'reassign', 'question', 'task', 'chat'].includes(data.type)) return null
 
     if (data.type === 'expense') {
       const categories = ['Hogar', 'Salud', 'Familia', 'Transporte', 'Suscripciones', 'Deudas', 'Personal', 'Ingresos', 'Ahorro']
@@ -115,6 +120,16 @@ Para chat: {"type":"chat"}`
       if (!['Gasto', 'Ingreso', 'Ahorro'].includes(data.tipo)) data.tipo = 'Gasto'
       if (typeof data.monto !== 'number' || data.monto <= 0) data.monto = null
       data.estatus = data.estatus === 'Pendiente' ? 'Pendiente' : 'Pagado'
+    }
+
+    // Una reasignacion sin las dos referencias no sirve para nada: mejor que
+    // caiga al flujo normal que proponer con datos a medias.
+    if (data.type === 'reassign') {
+      const referencia = typeof data.referencia === 'string' ? data.referencia.trim() : ''
+      const destino = typeof data.destino === 'string' ? data.destino.trim() : ''
+      if (referencia.length < 3 || destino.length < 3) return null
+      data.referencia = referencia
+      data.destino = destino
     }
 
     if (data.type === 'question') {
