@@ -99,8 +99,21 @@ const fakePrisma = {
         .sort((a, b) => b.id - a.id)
         .slice(0, 4)
     },
-    groupBy: async () => [],
-    // getBudgetLineStatus suma lo gastado de una linea.
+    // getBudgetLineStatus suma lo gastado de una linea agrupando por direccion,
+    // porque en una linea de Ahorro un Retiro resta (ver src/tipoAhorro.js).
+    // El mock agrupa de verdad: si devolviera [] siempre, el bot reportaria
+    // cero gastado en cada linea y ningun caso de "excedido" se probaria.
+    groupBy: async ({ by, where } = {}) => {
+      if (!Array.isArray(by) || by.length !== 1 || by[0] !== 'direccion') return []
+      if (where?.presupuestoId === undefined) return []
+      const porDireccion = new Map()
+      for (const t of creadas) {
+        if (t.presupuestoId !== where.presupuestoId) continue
+        const dir = t.direccion ?? null
+        porDireccion.set(dir, (porDireccion.get(dir) ?? 0) + Number(t.monto))
+      }
+      return [...porDireccion].map(([direccion, monto]) => ({ direccion, _sum: { monto } }))
+    },
     aggregate: async ({ where } = {}) => {
       if (where?.presupuestoId === undefined) return { _sum: { monto: 0 }, _count: 0 }
       const total = creadas

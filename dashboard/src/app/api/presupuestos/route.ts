@@ -5,6 +5,7 @@ import { computeQuincenasTarget } from '@/lib/recurrencia'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { getSession } from '@/lib/auth'
 import { registrarCreacionPresupuesto } from '@/lib/presupuesto-cambios'
+import { calcularRealPorLinea, realDeLinea } from '@/lib/real-transacciones'
 
 export async function GET(request: Request) {
   try {
@@ -41,30 +42,14 @@ export async function GET(request: Request) {
     }
 
     // Monto real por línea específica (presupuestoId) — una sola query agrupada en vez de N aggregates.
-    // Se agrupa también por estatus para poder separar cuánto de ese real sigue Pendiente.
     // Sin filtro de tipo: una línea de Ingreso/Ahorro tiene sus propias transacciones
-    // (tipo Ingreso/Ahorro) asignadas por presupuestoId, igual que una de Gasto.
+    // (tipo Ingreso/Ahorro) asignadas por presupuestoId, igual que una de Gasto. Por eso
+    // el neteo de Retiro que hace calcularRealPorLinea es imprescindible aquí.
     const presupuestoIds = presupuestos.map(p => p.id)
-    const gastosRows = presupuestoIds.length > 0
-      ? await prisma.transaccion.groupBy({
-          by: ['presupuestoId', 'estatus'],
-          where: { presupuestoId: { in: presupuestoIds } },
-          _sum: { monto: true },
-        })
-      : []
-
-    const gastoMap = new Map<number, number>()
-    const pendienteMap = new Map<number, number>()
-    for (const g of gastosRows) {
-      const id = g.presupuestoId as number
-      const monto = Number(g._sum.monto ?? 0)
-      gastoMap.set(id, (gastoMap.get(id) ?? 0) + monto)
-      if (g.estatus === 'Pendiente') pendienteMap.set(id, (pendienteMap.get(id) ?? 0) + monto)
-    }
+    const realMap = await calcularRealPorLinea(presupuestoIds)
 
     const presupuestosConGasto = presupuestos.map(p => {
-      const real = gastoMap.get(p.id) ?? 0
-      const pendiente = pendienteMap.get(p.id) ?? 0
+      const { real, pendiente } = realDeLinea(realMap, p.id)
       const efectivo = montoEfectivo(p)
       const pct = efectivo > 0 ? (real / efectivo) * 100 : 0
       const key = `${p.quincenaId}-${p.categoriaId}`
@@ -85,7 +70,7 @@ export async function POST(request: Request) {
     const body = await request.json()
     const {
       quincenaId, descripcion, categoriaId, montoPresupuestado,
-      clasificacion, tipo, notas, fechaVencimiento,
+      clasificacion, notas, fechaVencimiento,
       recurrente, frecuencia, numOcurrencias, diaCobro,
     } = body
 
@@ -97,12 +82,24 @@ export async function POST(request: Request) {
     const actor = session?.username ?? null
     const diaCobro_ = diaCobro ? parseInt(diaCobro) : null
 
+    // `tipo` es una copia del tipo de la categoria. Dejar que se guarde otro
+    // valor es lo que producia lineas que una pantalla contaba como Ingreso y
+    // otra como Gasto (ver tipoDeLinea en @/lib/presupuesto-totales): se
+    // resuelve contra la categoria en vez de creerle al cliente.
+    const categoriaDeLinea = await prisma.categoria.findUnique({
+      where: { id: parseInt(categoriaId) },
+      select: { tipo: true },
+    })
+    if (!categoriaDeLinea) {
+      return NextResponse.json({ error: 'Categoria not found' }, { status: 400 })
+    }
+
     const baseData = {
       descripcion,
       categoriaId: parseInt(categoriaId),
       montoPresupuestado: parseFloat(montoPresupuestado),
       clasificacion: clasificacion ?? null,
-      tipo: tipo ?? 'Gasto',
+      tipo: categoriaDeLinea.tipo,
       notas: notas ?? null,
       recurrente: recurrente ?? false,
       frecuencia: recurrente ? (frecuencia ?? 'CADA_QUINCENA') : null,

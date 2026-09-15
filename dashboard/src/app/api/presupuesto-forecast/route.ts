@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
+import { tipoDeLinea } from '@/lib/presupuesto-totales'
 
 function dateKey(value: Date) {
   return value.toISOString().slice(0, 10)
@@ -131,15 +132,19 @@ export async function GET(request: Request) {
 
       for (const p of filas) {
         const monto = efectivo(p)
-        if (p.tipo === 'Ingreso' || p.categoria.tipo === 'Ingreso') {
+        // Un solo criterio para todo el sistema (ver tipoDeLinea): manda la
+        // categoria. El OR que habia aqui contaba una linea con tipo y
+        // categoria desalineados en dos cubetas distintas segun la pantalla.
+        const tipoLinea = tipoDeLinea(p)
+        if (tipoLinea === 'Ingreso') {
           ingresoPlaneado += monto
           continue
         }
-        if (p.tipo === 'Ahorro' || p.categoria.tipo === 'Ahorro') {
+        if (tipoLinea === 'Ahorro') {
           ahorroPlaneado += monto
           continue
         }
-        if (p.tipo !== 'Gasto' && p.categoria.tipo !== 'Gasto') continue
+        if (tipoLinea !== 'Gasto') continue
 
         const clasificacion = p.clasificacion ?? p.categoria.clasificacion
         if (clasificacion === 'Fijo') gastoFijo += monto

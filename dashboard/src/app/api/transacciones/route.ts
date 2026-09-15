@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { shiftMonth } from '@/lib/periodo'
 import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
+import { validarEnlacePresupuesto } from '@/lib/validar-enlace-presupuesto'
 
 function addMonths(dateString: string, months: number) {
   return new Date(`${shiftMonth(dateString, months)}T00:00:00.000Z`)
@@ -129,6 +130,14 @@ export async function POST(request: Request) {
     // Toda transaccion de categoria "Ahorro" siempre queda tipo:'Ahorro' sin
     // importar lo que haya elegido el cliente — ver @/lib/transaccion-ahorro.
     const { tipo: tipoResuelto, direccion: direccionResuelta } = resolverTipoYDireccion(categoria.tipo, tipo, direccion)
+
+    const enlaceInvalido = await validarEnlacePresupuesto(
+      presupuestoId ? parseInt(presupuestoId) : null,
+      parseInt(quincenaId),
+    )
+    if (enlaceInvalido) {
+      return NextResponse.json({ error: enlaceInvalido.error }, { status: 400 })
+    }
 
     const parsedMonto = parseFloat(monto)
     const parsedCreditoId = creditoId ? parseInt(creditoId) : null

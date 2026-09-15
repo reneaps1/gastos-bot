@@ -77,6 +77,26 @@ function detectType(text) {
   return 'Gasto'
 }
 
+// Palabras que indican que se SACA dinero del ahorro en vez de meterlo.
+const RETIRO_KEYWORDS = [
+  'saque', 'saqué', 'sacamos', 'retire', 'retiré', 'retiro', 'retiramos',
+  'saco del ahorro', 'sacar del ahorro', 'dispuse',
+]
+
+// Direccion de un movimiento de ahorro. Solo se usa cuando la categoria es
+// "Ahorro" (ver src/tipoAhorro.js): monto siempre se guarda positivo y esta es
+// la unica marca que distingue un aporte de un retiro. Sin esto el bot guardaba
+// TODO como Aporte, asi que cada "saque 500 del ahorro" inflaba el saldo en vez
+// de bajarlo. Devuelve null cuando no hay senal de retiro, y entonces
+// resolverTipoYDireccion aplica el default 'Aporte'.
+function detectDireccionAhorro(text) {
+  const lower = String(text || '').toLowerCase()
+  for (const kw of RETIRO_KEYWORDS) {
+    if (includesKeyword(lower, kw)) return 'Retiro'
+  }
+  return null
+}
+
 function extractAmount(text) {
   const patterns = [
     /\$?\s*(\d+(?:,\d{3})*(?:\.\d{1,2})?)/,
@@ -132,6 +152,7 @@ function isShorthandExpense(text) {
 
 function parseMessage(text, senderName, senderPhone, messageId, geminiData = null) {
   const tipo = geminiData?.tipo || detectType(text)
+  const direccion = geminiData?.direccion || detectDireccionAhorro(text)
   const monto = (geminiData?.monto > 0 ? geminiData.monto : null) ?? extractAmount(text)
   const descripcion = cleanDescription(geminiData?.descripcion || extractDescription(text, monto))
   const categoria = detectCategory(text) || geminiData?.categoria
@@ -153,6 +174,9 @@ function parseMessage(text, senderName, senderPhone, messageId, geminiData = nul
     categoria: categoria || 'Personal',
     formaPago: formaPago || 'Efectivo',
     tipo,
+    // Solo se aplica si la categoria resulta ser "Ahorro"; para el resto
+    // resolverTipoYDireccion la descarta.
+    direccion,
     clasificacion,
     quincena,
     estatus: 'Pagado',

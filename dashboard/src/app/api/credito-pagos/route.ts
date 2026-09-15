@@ -35,8 +35,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
 
+    // El total de un abono es capital + interes por definicion. Sin esta
+    // validacion las dos cifras se guardan sin relacion entre si y el desglose
+    // del credito deja de cuadrar con lo que de verdad sale del banco.
+    const capital = montoCapital ? parseFloat(montoCapital) : 0
+    const interes = montoInteres ? parseFloat(montoInteres) : 0
+    const total = parseFloat(montoTotal)
+    if ((capital > 0 || interes > 0) && Math.abs(capital + interes - total) > 0.005) {
+      return NextResponse.json(
+        { error: `montoTotal (${total}) debe ser montoCapital + montoInteres (${capital + interes})` },
+        { status: 400 },
+      )
+    }
+
+    // Igual que en el PUT: un pago que nace Pagado necesita su fecha real o
+    // nunca entra en el neto de caja de la conciliacion.
+    const fechaRealNueva = body.fechaPagoReal
+      ? new Date(body.fechaPagoReal)
+      : (estatus === 'Pagado' ? new Date(fechaPagoProgramada) : null)
+
     const pago = await prisma.creditoPago.create({
       data: {
+        fechaPagoReal: fechaRealNueva,
         creditoId: parseInt(creditoId),
         transaccionId: transaccionId ? parseInt(transaccionId) : null,
         quincenaId: parseInt(quincenaId),
@@ -45,9 +65,9 @@ export async function POST(request: Request) {
         numeroPago: numeroPago ? parseInt(numeroPago) : null,
         totalPagos: totalPagos ? parseInt(totalPagos) : null,
         fechaPagoProgramada: new Date(fechaPagoProgramada),
-        montoCapital: montoCapital ? parseFloat(montoCapital) : 0,
-        montoInteres: montoInteres ? parseFloat(montoInteres) : 0,
-        montoTotal: parseFloat(montoTotal),
+        montoCapital: capital,
+        montoInteres: interes,
+        montoTotal: total,
         estatus: estatus || 'Pendiente',
         notas: notas || null,
       },

@@ -1,4 +1,4 @@
-# Corre los 73 checks en cada PR y en cada push a main.
+# Corre todos los checks en cada PR y en cada push a main.
 #
 # POR QUE EXISTE: un merge a main es un despliegue a produccion inmediato
 # (autoDeploy en los tres servicios de Render). Sin esto, la unica forma de
@@ -43,6 +43,8 @@ jobs:
       - name: Generar Prisma Client
         run: DATABASE_URL="postgresql://x:x@localhost:0/x" npx prisma generate
 
-      # Las tres suites: WhatsApp, Telegram y watchdog. Ninguna toca la red ni
-      # Postgres -- usan dobles en memoria.
+      # Las cuatro suites: WhatsApp, Telegram, watchdog y reglas de calculo
+      # (test-calculos.js, que vigila el neteo de retiros de ahorro y el
+      # Vigente vs Original). Ninguna toca la red ni Postgres -- usan dobles
+      # en memoria que imitan al motor real.
       - run: npm test

@@ -56,7 +56,8 @@ export async function PUT(
 
     const body = await request.json()
     const {
-      quincenaId, descripcion, categoriaId, montoPresupuestado, montoRevisado, clasificacion, tipo, notas,
+      // `tipo` no se lee del body a proposito: lo manda la categoria (ver finalTipo).
+      quincenaId, descripcion, categoriaId, montoPresupuestado, montoRevisado, clasificacion, notas,
       diaCobro, fechaVencimiento, recurrente, frecuencia, numOcurrencias, scope,
     } = body
 
@@ -116,7 +117,8 @@ export async function PUT(
       ...(categoriaId && { categoriaId: parseInt(categoriaId) }),
       ...(montoEnBody && { montoRevisado: revisadoParaOriginal(current.montoPresupuestado, montoDeseado) }),
       ...(clasificacion !== undefined && { clasificacion }),
-      ...(tipo && { tipo }),
+      // `tipo` no se toma del body: se resuelve mas abajo contra la categoria
+      // (finalTipo) y se asigna ahi.
       ...(notas !== undefined && { notas }),
       ...(diaCobro !== undefined && { diaCobro: diaCobro_ }),
       ...(fechaVencimiento !== undefined && { fechaVencimiento: fechaVencimiento ? new Date(fechaVencimiento) : null }),
@@ -130,7 +132,20 @@ export async function PUT(
     const finalCategoriaId = categoriaId ? parseInt(categoriaId) : current.categoriaId
     const finalMonto = montoEnBody ? montoDeseado : montoActual
     const finalClasificacion = clasificacion !== undefined ? clasificacion : current.clasificacion
-    const finalTipo = tipo || current.tipo
+    // El tipo lo manda la categoria, no el cliente: ver tipoDeLinea en
+    // @/lib/presupuesto-totales. Si la linea cambia de categoria, el tipo la
+    // sigue, en vez de quedarse con el viejo y descuadrar los agregados.
+    const categoriaDeLinea = await prisma.categoria.findUnique({
+      where: { id: finalCategoriaId },
+      select: { tipo: true },
+    })
+    if (!categoriaDeLinea) {
+      return NextResponse.json({ error: 'Categoria not found' }, { status: 400 })
+    }
+    const finalTipo = categoriaDeLinea.tipo
+    // Se escribe siempre: asi una linea que ya estaba desalineada se corrige
+    // sola la proxima vez que alguien la edita.
+    ownData.tipo = finalTipo
     const finalNotas = notas !== undefined ? notas : current.notas
     const finalFrecuencia = recurrente ? (frecuencia || current.frecuencia || 'CADA_QUINCENA') : null
     const finalNumOcurrencias = numOcurrencias !== undefined ? numOcurrencias : current.numOcurrencias

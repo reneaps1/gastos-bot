@@ -127,6 +127,7 @@ async function registerAndConfirm(parsed, senderPhone, messageId, senderName, us
     categoriaId: categoria.id,
     clasificacion: parsed.clasificacion,
     tipo: parsed.tipo,
+    direccion: parsed.direccion,
     monto: parsed.monto,
     metodoPagoId: metodoPago?.id || null,
     estatus: parsed.estatus,
@@ -284,7 +285,7 @@ async function resolveMiloUser(message) {
 }
 
 async function saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena, presupuesto) {
-  const { tipo, direccion } = resolverTipoYDireccion(categoria.tipo, parsed.tipo, null)
+  const { tipo, direccion } = resolverTipoYDireccion(categoria.tipo, parsed.tipo, parsed.direccion ?? null)
 
   return prisma.transaccion.create({
     data: {
@@ -617,6 +618,7 @@ app.post('/webhook', async (req, res) => {
             categoriaId: categoria.id,
             clasificacion: parsed.clasificacion,
             tipo: parsed.tipo,
+            direccion: parsed.direccion,
             monto: parsed.monto,
             metodoPagoId: metodoPago?.id || null,
             estatus: parsed.estatus,

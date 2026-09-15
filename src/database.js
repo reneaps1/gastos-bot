@@ -53,13 +53,13 @@ async function saveMessage({ waMessageId, fromNumber, fromName, userId, body, ti
   })
 }
 
-async function saveTransaccion({ fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, clasificacion, tipo, monto, metodoPagoId, creditoId, fechaPagoProgramada, estatus, notas, source }) {
+async function saveTransaccion({ fecha, quincenaId, quincenaConsumoId, userId, descripcion, categoriaId, clasificacion, tipo, direccion, monto, metodoPagoId, creditoId, fechaPagoProgramada, estatus, notas, source }) {
   // Red de seguridad: sin importar que tipo haya decidido el parser/Gemini,
   // toda transaccion de una categoria "Ahorro" debe quedar con tipo:'Ahorro'
   // (ver tipoAhorro.js) para que el resumen de quincena y las cards del
   // dashboard, que agregan por tipo, siempre la vean.
   const categoria = await prisma.categoria.findUnique({ where: { id: categoriaId } })
-  const { tipo: tipoResuelto, direccion } = resolverTipoYDireccion(categoria?.tipo, tipo, null)
+  const { tipo: tipoResuelto, direccion: direccionResuelta } = resolverTipoYDireccion(categoria?.tipo, tipo, direccion)
 
   return prisma.transaccion.create({
     data: {
@@ -71,7 +71,7 @@ async function saveTransaccion({ fecha, quincenaId, quincenaConsumoId, userId, d
       categoriaId,
       clasificacion,
       tipo: tipoResuelto,
-      direccion,
+      direccion: direccionResuelta,
       monto,
       metodoPagoId,
       creditoId,

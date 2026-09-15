@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { montoEfectivoDePrisma } from '@/lib/cierre-quincena-server'
 import { calcularPagosQuincena } from '@/lib/pagos-quincena'
+import { calcularRealPorLinea, realDeLinea } from '@/lib/real-transacciones'
 import { calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
 import { getMexicoDateString } from '@/lib/quincena-selection'
 
@@ -44,6 +45,13 @@ async function movimientosCajaEntre(desdeExclusivo: Date, hastaInclusivo: Date):
         fecha: { gt: desdeExclusivo, lte: hastaInclusivo },
         estatus: 'Pagado',
         tipo: { in: ['Ingreso', 'Gasto', 'Ahorro'] },
+        // Una compra con tarjeta NO saca dinero del banco el dia que se
+        // registra: sale cuando se paga la tarjeta, y esa cronologia vive en
+        // CreditoPago (que se resta aparte, abajo). Contarla aqui ademas
+        // restaria el mismo dinero dos veces. Mismo criterio que
+        // calcularPagosQuincena en `@/lib/pagos-quincena`, que ya excluye
+        // creditoId por esta misma razon.
+        creditoId: null,
       },
       _sum: { monto: true },
     }),
@@ -160,24 +168,11 @@ export async function calcularReconciliacionPlanCaja(quincenaId: number) {
     calcularPagosQuincena(quincenaId),
   ])
 
-  const presupuestoIds = presupuestos.map(p => p.id)
-  const rowsPresupuesto = presupuestoIds.length > 0
-    ? await prisma.transaccion.groupBy({
-        by: ['presupuestoId'],
-        where: { presupuestoId: { in: presupuestoIds } },
-        _sum: { monto: true },
-      })
-    : []
-
-  const realMap = new Map<number, number>()
-  for (const row of rowsPresupuesto) {
-    if (row.presupuestoId == null) continue
-    realMap.set(row.presupuestoId, Number(row._sum.monto ?? 0))
-  }
+  const realMap = await calcularRealPorLinea(presupuestos.map(p => p.id))
 
   const presupuestosParaLibre = presupuestos.map(p => {
     const montoEfectivo = montoEfectivoDePrisma(p)
-    const real = realMap.get(p.id) ?? 0
+    const real = realDeLinea(realMap, p.id).real
     return {
       montoEfectivo,
       excedido: Math.max(real - montoEfectivo, 0),
@@ -196,7 +191,7 @@ export async function calcularReconciliacionPlanCaja(quincenaId: number) {
   const ahorroPendiente = presupuestos
     .filter(p => p.categoria.tipo === 'Ahorro' && cuentaParaAgregados(p))
     .reduce((s, p) => {
-      const real = realMap.get(p.id) ?? 0
+      const real = realDeLinea(realMap, p.id).real
       return s + Math.max(montoEfectivoDePrisma(p) - real, 0)
     }, 0)
 
@@ -300,7 +295,7 @@ export async function calcularReconciliacionPlanCaja(quincenaId: number) {
     if (p.transaccionId == null) continue
     pagosPorTransaccion.set(p.transaccionId, (pagosPorTransaccion.get(p.transaccionId) ?? 0) + Number(p.montoTotal))
   }
-  const idsPresupuestoQ = new Set(presupuestoIds)
+  const idsPresupuestoQ = new Set(presupuestos.map(p => p.id))
   const creditoDiferidoActual = comprasCreditoQ.reduce((s, tx) => {
     if (tx.presupuestoId == null || !idsPresupuestoQ.has(tx.presupuestoId)) return s
     const pagosEnQ = pagosPorTransaccion.get(tx.id) ?? 0

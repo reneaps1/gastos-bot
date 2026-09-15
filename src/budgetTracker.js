@@ -13,7 +13,9 @@ async function getActiveBudgetLines({ quincenaId, categoriaId, tipo = 'Gasto' })
     where: {
       quincenaId,
       categoriaId,
-      tipo: 'Gasto',
+      // Por categoria, no por el `tipo` copiado en la fila: misma regla que
+      // tipoDeLinea en dashboard/src/lib/presupuesto-totales.ts.
+      categoria: { tipo: 'Gasto' },
       estadoLinea: { not: 'Cancelada' },
     },
     orderBy: { id: 'asc' },
@@ -64,13 +66,21 @@ async function getBudgetLineStatus(presupuestoId) {
   })
   if (!line) return null
 
-  const realAgg = await prisma.transaccion.aggregate({
+  // Agrupado por direccion, no un SUM en bruto: en una linea de categoria
+  // Ahorro un Retiro tiene monto positivo y debe restar (ver src/tipoAhorro.js).
+  // Espejo de dashboard/src/lib/real-transacciones.ts -- si cambia la regla
+  // alla, cambiarla aqui tambien o el bot y el dashboard reportan distinto.
+  const realRows = await prisma.transaccion.groupBy({
+    by: ['direccion'],
     where: { presupuestoId },
     _sum: { monto: true },
   })
 
   const presupuesto = effectiveBudgetAmount(line)
-  const gastado = Number(realAgg._sum.monto ?? 0)
+  const gastado = realRows.reduce((total, row) => {
+    const monto = Number(row._sum.monto ?? 0)
+    return total + (row.direccion === 'Retiro' ? -monto : monto)
+  }, 0)
   const restante = Number((presupuesto - gastado).toFixed(2))
 
   return {

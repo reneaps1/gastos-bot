@@ -48,9 +48,16 @@ async function linkTransactionToBudget({ transaccionId, presupuestoId }) {
   if (!tx) return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
   if (tx.tipo !== 'Gasto') return { ok: false, reason: RECHAZO.TX_NO_ES_GASTO }
 
-  const linea = await prisma.presupuesto.findUnique({ where: { id: lineaId } })
+  const linea = await prisma.presupuesto.findUnique({
+    where: { id: lineaId },
+    include: { categoria: true },
+  })
   if (!linea) return { ok: false, reason: RECHAZO.LINEA_NO_EXISTE }
-  if (linea.tipo !== 'Gasto') return { ok: false, reason: RECHAZO.LINEA_NO_ES_GASTO }
+  // Manda la categoria, no el `tipo` copiado en la fila: son dos campos que
+  // pueden quedar desalineados y cada pantalla decidia distinto. Misma regla
+  // que tipoDeLinea en dashboard/src/lib/presupuesto-totales.ts.
+  const tipoLinea = linea.categoria?.tipo ?? linea.tipo
+  if (tipoLinea !== 'Gasto') return { ok: false, reason: RECHAZO.LINEA_NO_ES_GASTO }
   if (linea.estadoLinea === 'Cancelada') return { ok: false, reason: RECHAZO.LINEA_CANCELADA }
 
   // Un gasto de esta quincena no puede colgarse de una linea de otra: el
