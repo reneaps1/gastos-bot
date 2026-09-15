@@ -232,7 +232,13 @@ async function budgetRemaining(subject) {
   const lines = await prisma.presupuesto.findMany({
     where: {
       quincenaId: q.id,
-      tipo: 'Gasto',
+      // Por categoria, no por el `tipo` copiado en la fila: son dos campos que
+      // pueden quedar desalineados, y cuando pasa, filtrar por el de la fila
+      // mete las lineas de Ingreso dentro del total de gasto. Asi Milo llego a
+      // reportar "hay que cubrir 40,881.65" cuando el gasto presupuestado eran
+      // 17,446.65 y el resto eran los sueldos. Misma regla que tipoDeLinea en
+      // dashboard/src/lib/presupuesto-totales.ts.
+      categoria: { tipo: 'Gasto' },
       estadoLinea: { not: 'Cancelada' },
     },
     include: { categoria: true },

@@ -54,13 +54,21 @@ async function listBudgetLines(args = {}) {
   if (!period) return { ok: false, error: `No encontré el periodo ${args.period || 'actual'}.` }
 
   const where = { quincenaId: period.id }
-  if (args.type && String(args.type).toLowerCase() !== 'all') where.tipo = args.type
-  else if (!args.type) where.tipo = 'Gasto'
+  // Tipo y nombre se filtran contra la categoria, no contra el `tipo` copiado
+  // en la fila: son dos campos que pueden quedar desalineados y entonces una
+  // linea de Ingreso aparece dentro del listado de gasto. Misma regla que
+  // tipoDeLinea en dashboard/src/lib/presupuesto-totales.ts. Van en el mismo
+  // objeto `categoria` para que pedir tipo y categoria a la vez no descarte
+  // uno de los dos filtros.
+  const categoriaWhere = {}
+  if (args.type && String(args.type).toLowerCase() !== 'all') categoriaWhere.tipo = args.type
+  else if (!args.type) categoriaWhere.tipo = 'Gasto'
 
   if (args.status) where.estadoLinea = args.status
   if (args.category) {
-    where.categoria = { nombre: { contains: String(args.category), mode: 'insensitive' } }
+    categoriaWhere.nombre = { contains: String(args.category), mode: 'insensitive' }
   }
+  if (Object.keys(categoriaWhere).length > 0) where.categoria = categoriaWhere
   if (args.search) {
     where.descripcion = { contains: String(args.search), mode: 'insensitive' }
   }

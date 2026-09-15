@@ -132,7 +132,15 @@ totales como Gasto: la misma fila sumando en dos lados opuestos.
 Corregido: `tipoDeLinea()` en `lib/presupuesto-totales.ts` como regla unica
 (manda la categoria), aplicada tambien en el bot. Y la causa: POST y PUT de
 `/api/presupuestos` ya no aceptan el `tipo` del cliente, lo resuelven contra la
-categoria; una linea desalineada se corrige sola al editarla.
+categoria.
+
+**Confirmado en produccion.** Milo contesto "Presupuestado: $40,881.65" para
+Q35 mientras el dashboard mostraba $17,446.65 de gasto presupuestado y
+$23,435.00 de ingreso: 17,446.65 + 23,435.00 = 40,881.65. Las lineas de sueldo
+tenian categoria de Ingreso con `tipo` en 'Gasto', y el bot filtraba por el
+campo de la fila. Faltaban dos sitios del bot por alinear
+(`telegramBrain.js` y `miloTools.js`), ya corregidos, y las filas existentes se
+realinean con la migracion `20260915180000_realinear_tipo_presupuesto`.
 
 ### A2. Dos definiciones de "gasto sin presupuesto"
 
