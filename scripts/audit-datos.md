@@ -102,7 +102,14 @@ criterio (`p.tipo` O `categoria.tipo`) y los totales usan otro
 (`categoria.tipo`). La misma fila puede sumar como ingreso en una vista y
 como gasto en otra.
 
-Reparacion: elegir el tipo correcto. La regla del sistema es que manda la
+Reparacion del check 8 (lineas de presupuesto): automatica. La migracion
+`20260915180000_realinear_tipo_presupuesto` realinea `presupuesto.tipo` con el
+tipo de su categoria, que es de donde se deriva. Despues de aplicarla este
+check debe dar 0.
+
+Reparacion del check 9 (transacciones): a mano. Aqui no hay un campo que sea
+claramente el correcto -- pudo equivocarse la categoria o el tipo -- asi que
+cada caso necesita que alguien decida. La regla del sistema es que manda la
 categoria, salvo en categoria Ahorro, donde `tipo` siempre es `Ahorro` y el
 signo lo da `direccion` (por eso el check 9 excluye Ahorro).
 
@@ -181,7 +188,8 @@ cancelarse. Si `suma_deltas` no es 0, el traspaso creo o destruyo presupuesto.
 ## Orden sugerido
 
 1. Correr la auditoria y guardar la salida.
-2. Reparar a mano lo que es dato malo: checks 1, 2, 5, 6, 8, 9, 10, 11, 14, 18.
+2. Reparar a mano lo que es dato malo: checks 1, 2, 5, 6, 9, 10, 11, 14, 18.
+   (El 8 lo arregla la migracion `20260915180000_realinear_tipo_presupuesto`.)
 3. Aplicar las correcciones de codigo (C1 a C4, A1 a A4).
 4. Volver a correr y comparar contra la primera salida.
 

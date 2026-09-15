@@ -54,13 +54,21 @@ async function listBudgetLines(args = {}) {
   if (!period) return { ok: false, error: `No encontré el periodo ${args.period || 'actual'}.` }
 
   const where = { quincenaId: period.id }
-  if (args.type && String(args.type).toLowerCase() !== 'all') where.tipo = args.type
-  else if (!args.type) where.tipo = 'Gasto'
+  // Tipo y nombre se filtran contra la categoria, no contra el `tipo` copiado
+  // en la fila: son dos campos que pueden quedar desalineados y entonces una
+  // linea de Ingreso aparece dentro del listado de gasto. Misma regla que
+  // tipoDeLinea en dashboard/src/lib/presupuesto-totales.ts. Van en el mismo
+  // objeto `categoria` para que pedir tipo y categoria a la vez no descarte
+  // uno de los dos filtros.
+  const categoriaWhere = {}
+  if (args.type && String(args.type).toLowerCase() !== 'all') categoriaWhere.tipo = args.type
+  else if (!args.type) categoriaWhere.tipo = 'Gasto'
 
   if (args.status) where.estadoLinea = args.status
   if (args.category) {
-    where.categoria = { nombre: { contains: String(args.category), mode: 'insensitive' } }
+    categoriaWhere.nombre = { contains: String(args.category), mode: 'insensitive' }
   }
+  if (Object.keys(categoriaWhere).length > 0) where.categoria = categoriaWhere
   if (args.search) {
     where.descripcion = { contains: String(args.search), mode: 'insensitive' }
   }
@@ -180,26 +188,81 @@ async function searchTransactions(args = {}) {
   }
 
   const limit = clampLimit(args.limit, 20, 50)
-  const txs = await prisma.transaccion.findMany({
-    where,
-    include: {
-      categoria: true,
-      user: true,
-      metodoPago: true,
-      presupuesto: true,
-      quincena: true,
-    },
-    orderBy: [{ fecha: 'desc' }, { id: 'desc' }],
-    take: limit,
-  })
 
-  const total = txs.reduce((sum, tx) => sum + Number(tx.monto), 0)
+  // Orden configurable. Sin esto la herramienta siempre devolvia los mas
+  // recientes, asi que para "cual es el gasto mas alto" el agente solo podia
+  // mirar los ultimos 20 movimientos -- y el mas alto podia no estar ahi.
+  const ORDENES = {
+    amount_desc: [{ monto: 'desc' }, { id: 'desc' }],
+    amount_asc: [{ monto: 'asc' }, { id: 'asc' }],
+    date_desc: [{ fecha: 'desc' }, { id: 'desc' }],
+    date_asc: [{ fecha: 'asc' }, { id: 'asc' }],
+  }
+  const orderBy = ORDENES[String(args.sort || 'date_desc')] || ORDENES.date_desc
+
+  // Los totales se sacan de un agregado sobre TODO el filtro, no de la pagina
+  // devuelta: si se calcularan sobre `txs`, un limit de 20 daria un "total"
+  // que solo suma esos 20 y el agente lo reportaria como si fuera el total real.
+  const [txs, agregado, porCategoria] = await Promise.all([
+    prisma.transaccion.findMany({
+      where,
+      include: {
+        categoria: true,
+        user: true,
+        metodoPago: true,
+        presupuesto: true,
+        quincena: true,
+      },
+      orderBy,
+      take: limit,
+    }),
+    prisma.transaccion.aggregate({
+      where,
+      _sum: { monto: true },
+      _count: { _all: true },
+      _max: { monto: true },
+      _min: { monto: true },
+      _avg: { monto: true },
+    }),
+    prisma.transaccion.groupBy({
+      by: ['categoriaId'],
+      where,
+      _sum: { monto: true },
+      _count: { _all: true },
+    }),
+  ])
+
+  const nombrePorCategoria = new Map(
+    (await prisma.categoria.findMany({ select: { id: true, nombre: true } }))
+      .map(c => [c.id, c.nombre]),
+  )
+
+  const totales = {
+    // Sobre todos los movimientos que cumplen el filtro, no solo los devueltos.
+    count: agregado._count._all,
+    sum: Number(agregado._sum.monto ?? 0),
+    max: agregado._max.monto == null ? null : Number(agregado._max.monto),
+    min: agregado._min.monto == null ? null : Number(agregado._min.monto),
+    avg: agregado._avg.monto == null ? null : Number(agregado._avg.monto),
+    byCategory: porCategoria
+      .map(row => ({
+        category: nombrePorCategoria.get(row.categoriaId) ?? `#${row.categoriaId}`,
+        total: Number(row._sum.monto ?? 0),
+        count: row._count._all,
+      }))
+      .sort((a, b) => b.total - a.total),
+  }
 
   return {
     ok: true,
     period: period?.codigo || null,
+    sort: args.sort || 'date_desc',
     count: txs.length,
-    total,
+    truncated: agregado._count._all > txs.length,
+    totals: totales,
+    // Se conserva `total` por compatibilidad, pero ahora es el del filtro
+    // completo (antes era la suma de la pagina, que confundia al agente).
+    total: totales.sum,
     transactions: txs.map(tx => ({
       id: tx.id,
       date: dateOnly(tx.fecha),
@@ -455,8 +518,8 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'search_transactions',
-    description: 'Busca movimientos reales por periodo, categoría, usuario, tipo, estatus, texto, fechas o si están sin línea de presupuesto.',
-    args: { period: 'opcional', category: 'opcional', user: 'opcional', type: 'Gasto|Ingreso|Ahorro opcional', status: 'Pagado|Pendiente opcional', unassigned: 'boolean opcional', search: 'texto opcional', dateFrom: 'YYYY-MM-DD opcional', dateTo: 'YYYY-MM-DD opcional', limit: '1-50 opcional' },
+    description: 'Busca movimientos reales por periodo, categoría, usuario, tipo, estatus, texto, fechas o si están sin línea de presupuesto. Devuelve además totals con count, sum, max, min, avg y byCategory calculados sobre TODOS los movimientos que cumplen el filtro (no solo los devueltos). Para "el gasto más alto" usa sort=amount_desc con limit=1; para "en qué gasté más" mira totals.byCategory; para "cuánto llevo en X" mira totals.sum.',
+    args: { period: 'opcional', category: 'opcional', user: 'opcional', type: 'Gasto|Ingreso|Ahorro opcional', status: 'Pagado|Pendiente opcional', unassigned: 'boolean opcional', search: 'texto opcional', dateFrom: 'YYYY-MM-DD opcional', dateTo: 'YYYY-MM-DD opcional', sort: 'amount_desc|amount_asc|date_desc|date_asc opcional (default date_desc)', limit: '1-50 opcional' },
   },
   {
     name: 'get_liquidity',

@@ -34,6 +34,7 @@ function check(label, cond, extra) {
 
 let transacciones = []
 let presupuestos = []
+let quincenaActiva = null
 
 const prismaDoble = {
   transaccion: {
@@ -57,6 +58,9 @@ const prismaDoble = {
           .reduce((s, t) => s + Number(t.monto), 0),
       },
     }),
+  },
+  quincena: {
+    findFirst: async () => quincenaActiva,
   },
   presupuesto: {
     findUnique: async ({ where }) => presupuestos.find(p => p.id === where.id) ?? null,
@@ -160,6 +164,36 @@ async function main() {
   const linea = await resolveBudgetLine({ quincenaId: 1, categoriaId: 1, descripcion: 'Bono' })
   check('una linea con categoria de Gasto sigue siendo candidata de Gasto',
     linea != null && linea.id === 5, JSON.stringify(linea))
+
+  console.log('\n=== H: Milo no mete los ingresos en el total de gasto a cubrir ===')
+  // Caso real de Q35: las lineas de sueldo tenian categoria de Ingreso pero
+  // `Presupuesto.tipo` habia quedado en 'Gasto'. Filtrando por el campo de la
+  // fila, Milo sumaba sueldos + gastos y contestaba "hay que cubrir 40,881.65"
+  // cuando el gasto presupuestado eran 17,446.65 (lo que ya mostraba el
+  // dashboard, que si clasifica por categoria).
+  quincenaActiva = { id: 35, codigo: 'Q35', fechaInicio: '2026-09-15', fechaFin: '2026-09-29' }
+  presupuestos = [
+    { id: 10, quincenaId: 35, categoriaId: 2, tipo: 'Gasto', estadoLinea: 'Abierta',
+      descripcion: 'Sueldo Rene', montoPresupuestado: 15000, montoRevisado: null,
+      categoria: { tipo: 'Ingreso', nombre: 'Sueldo' } },
+    { id: 11, quincenaId: 35, categoriaId: 2, tipo: 'Gasto', estadoLinea: 'Abierta',
+      descripcion: 'Sueldo Mariana', montoPresupuestado: 8435, montoRevisado: null,
+      categoria: { tipo: 'Ingreso', nombre: 'Sueldo' } },
+    { id: 12, quincenaId: 35, categoriaId: 1, tipo: 'Gasto', estadoLinea: 'Abierta',
+      descripcion: 'Renta', montoPresupuestado: 12000, montoRevisado: null,
+      categoria: { tipo: 'Gasto', nombre: 'Hogar' } },
+    { id: 13, quincenaId: 35, categoriaId: 1, tipo: 'Gasto', estadoLinea: 'Abierta',
+      descripcion: 'Despensa', montoPresupuestado: 5446.65, montoRevisado: null,
+      categoria: { tipo: 'Gasto', nombre: 'Familia' } },
+  ]
+  transacciones = []
+
+  const { answerQuestion } = require(path.join(SRC, 'telegramBrain'))
+  const respuesta = await answerQuestion('cuanto queda de presupuesto?', null)
+  check('suma solo el gasto (17,446.65), no los sueldos',
+    respuesta.includes('17,446.65'), respuesta)
+  check('ya no reporta la suma de todo (40,881.65)',
+    !respuesta.includes('40,881.65'), respuesta)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

@@ -1109,7 +1109,8 @@ app.get('/', (req, res) => {
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
     financeBrainEnabled: telegramBrain.isEnabled(),
-    financeAgentEnabled: ai.deepseekEnabled,
+    // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
+    financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
     telegramWebhookUrl: telegram.getWebhookUrl(),
     timestamp: new Date().toISOString(),
   })
@@ -1122,7 +1123,8 @@ app.get('/health', (req, res) => {
     telegramEnabled: telegram.isEnabled(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
-    financeAgentEnabled: ai.deepseekEnabled,
+    // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
+    financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
     timestamp: new Date().toISOString(),
   })
 })
@@ -1146,7 +1148,8 @@ app.get('/telegram/status', async (req, res) => {
     // Las dos puertas que descartan mensajes en silencio. Solo banderas y
     // cuentas: los ids de chat autorizados no se exponen por HTTP.
     ...telegram.describeAccess(),
-    financeAgentEnabled: ai.deepseekEnabled,
+    // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
+    financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
     ...ai,
   })
 })
