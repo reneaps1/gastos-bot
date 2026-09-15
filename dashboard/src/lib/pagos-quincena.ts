@@ -37,7 +37,16 @@ export async function calcularPagosQuincena(quincenaId: number): Promise<PagosQu
       _sum: { monto: true },
     }),
     prisma.creditoPago.aggregate({
-      where: { quincenaId, estatus: 'Pendiente' },
+      where: {
+        quincenaId,
+        estatus: 'Pendiente',
+        // Un abono enlazado a una linea de presupuesto ya esta representado por
+        // esa linea, que entra abajo en presupuestoNoEjecutado: contarlo aqui
+        // ademas sumaria el mismo dinero dos veces en "lo que va a salir esta
+        // quincena". Mismo filtro que /api/presupuesto-forecast, que hace esta
+        // misma pregunta para los periodos futuros.
+        presupuestoId: null,
+      },
       _sum: { montoTotal: true },
     }),
     prisma.presupuesto.findMany({

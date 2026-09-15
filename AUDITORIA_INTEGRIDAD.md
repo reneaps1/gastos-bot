@@ -16,10 +16,14 @@ reproducen cada defecto, para confirmar cada hallazgo y cada correccion.
 
 ## Resumen
 
-Se encontraron **4 defectos que producian cifras incorrectas** y **3
+Se encontraron **5 defectos que producian cifras incorrectas** y **3
 divergencias** donde dos pantallas mostraban numeros distintos para la misma
 cosa. Todos corregidos y verificados. Quedan **2 decisiones pendientes** que no
 son tecnicas (abajo).
+
+Dos de los cinco son el mismo patron: una regla de negocio implementada en dos
+sitios, con el filtro en uno y sin el en el otro (C1 y C1b). Es el riesgo que
+deja tener la logica de calculo repartida sin una fuente unica.
 
 Causa de fondo: la logica de calculo vive repartida en 31 archivos con
 `reduce`/`_sum`/`groupBy`, sin una fuente unica por metrica. Cuatro copias del
@@ -53,6 +57,21 @@ este sintoma, pero ambos arreglaron el lado del ahorro, no el del credito.
 Corregido: `movimientosCajaEntre` filtra `creditoId: null`.
 Verificado: con una compra a credito de 3000 y una a debito de 800 posteriores
 al corte, la caja ahora mueve 800 (antes 3800).
+
+### C1b. Un abono de credito enlazado a una linea se contaba dos veces
+
+`dashboard/src/lib/pagos-quincena.ts`
+
+Misma clase de defecto que C1, encontrado al revisar los pendientes: el calculo
+de "lo que va a salir esta quincena" sumaba todos los `CreditoPago` Pendientes
+sin mirar si estaban enlazados a una linea de presupuesto. Cuando lo estan, la
+linea sin ejercer ya aporta ese monto, asi que el mismo dinero se contaba dos
+veces. `/api/presupuesto-forecast` hace esta misma pregunta para los periodos
+futuros y si filtraba `presupuestoId: null`.
+
+Corregido: mismo filtro en los dos lados.
+Verificado: con una linea "Pago TDC" de 1500 y su abono enlazado, el total pasa
+de 10700 a 9200 — los 1500 duplicados.
 
 ### C2. Los retiros de ahorro sumaban en vez de restar
 

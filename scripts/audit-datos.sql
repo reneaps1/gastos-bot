@@ -93,6 +93,15 @@ SELECT * FROM (
    WHERE estatus = 'Pendiente' AND transaccion_id IS NOT NULL
 
   UNION ALL
+  -- 5b (C1b) Un abono Pendiente enlazado a una linea de presupuesto se contaba
+  -- en "pagos de la quincena" Y otra vez como linea sin ejercer.
+  SELECT 20, 'ALTO',
+         'Pagos de credito Pendientes enlazados a una linea de presupuesto',
+         count(*), COALESCE(SUM(monto_total), 0)
+    FROM credito_pagos
+   WHERE estatus = 'Pendiente' AND presupuesto_id IS NOT NULL
+
+  UNION ALL
   -- 6 (C1) Monto expuesto al doble conteo de credito: compras a credito ya
   -- marcadas Pagadas. La conciliacion las resta como gasto Y vuelve a restar
   -- el CreditoPago correspondiente.
@@ -260,6 +269,18 @@ SELECT cp.id, c.nombre AS credito, q.codigo AS quincena,
   JOIN quincenas q ON q.id = cp.quincena_id
  WHERE cp.estatus = 'Pagado' AND cp.fecha_pago_real IS NULL
  ORDER BY cp.fecha_pago_programada DESC;
+
+\echo ''
+\echo '=== 20. Pagos de credito Pendientes enlazados a una linea (C1b) ==='
+SELECT cp.id, c.nombre AS credito, q.codigo AS quincena, cp.monto_total,
+       p.descripcion AS linea_enlazada,
+       COALESCE(p.monto_revisado, p.monto_presupuestado) AS monto_de_la_linea
+  FROM credito_pagos cp
+  JOIN creditos c ON c.id = cp.credito_id
+  JOIN quincenas q ON q.id = cp.quincena_id
+  JOIN presupuesto p ON p.id = cp.presupuesto_id
+ WHERE cp.estatus = 'Pendiente'
+ ORDER BY q.codigo DESC;
 
 \echo ''
 \echo '=== 6. Compras a credito Pagadas, por quincena (C1) ==='

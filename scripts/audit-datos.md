@@ -66,6 +66,18 @@ esperado, asi que genera un descuadre que ningun ajuste cierra.
 Reparacion: poner la fecha real en la que salio el dinero. Si ya no se
 recuerda, `fecha_pago_programada` es la mejor aproximacion.
 
+### 20. Pagos de credito Pendientes enlazados a una linea de presupuesto — ALTO
+
+Si un `CreditoPago` apunta a una linea de presupuesto (por ejemplo una partida
+"Pago TDC"), ese abono ya esta representado por la linea. Contarlo tambien como
+abono de credito sumaba el mismo dinero dos veces en "lo que va a salir esta
+quincena".
+
+Ya corregido en el codigo (`lib/pagos-quincena.ts` filtra `presupuestoId: null`,
+igual que hacia `/api/presupuesto-forecast`). Este check queda para ver cuantos
+abonos usan ese enlace y revisar que el monto de la linea coincida con el del
+abono: si la linea dice 1500 y el abono 1800, la linea se quedo corta.
+
 ### 6. Pagos de credito Pendientes que ya tienen transaccion enlazada — ALTO
 
 Si la transaccion de pago ya existe, ese abono cuenta dos veces en "lo que
