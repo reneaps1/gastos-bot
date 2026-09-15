@@ -69,13 +69,15 @@ export async function PUT(
     // puede venir en el body: asignar una linea de otra quincena se rechaza, y
     // mover la transaccion a otra quincena suelta el enlace que acaba de dejar
     // de tener sentido (en vez de dejarlo sumando en la quincena equivocada).
+    // La categoria se trata aparte, mas abajo: ahi no hay rechazo, solo se
+    // suelta un enlace heredado que el cambio de categoria dejo descolocado.
     let presupuestoIdFinal: number | null | undefined =
       presupuestoId !== undefined ? (presupuestoId ? parseInt(presupuestoId) : null) : undefined
 
-    if (quincenaId || presupuestoIdFinal !== undefined) {
+    if (quincenaId || categoriaId || presupuestoIdFinal !== undefined) {
       const actual = await prisma.transaccion.findUnique({
         where: { id },
-        select: { quincenaId: true, presupuestoId: true },
+        select: { quincenaId: true, categoriaId: true, presupuestoId: true },
       })
       if (!actual) {
         return NextResponse.json({ error: 'Transacción not found' }, { status: 404 })
@@ -91,6 +93,30 @@ export async function PUT(
         }
         // Enlace heredado que dejo de cuadrar al mover de quincena: se suelta.
         presupuestoIdFinal = null
+      }
+
+      // Cambiar de categoria tambien puede dejar huerfano un enlace heredado:
+      // la linea sigue siendo de la quincena correcta, pero ya no es de la
+      // categoria de la transaccion, y calcularRealPorLinea tampoco filtra por
+      // categoria (ver @/lib/real-transacciones), asi que el gasto se quedaria
+      // inflando el `real` de una categoria que ya no es la suya.
+      //
+      // Solo se suelta cuando el enlace SI cuadraba con la categoria anterior,
+      // o sea cuando era un enlace alineado que este cambio rompe. Un enlace
+      // deliberadamente cruzado (una linea comodin de otra categoria del mismo
+      // tipo, que es justo lo que ofrece el panel "Movimientos sin presupuesto"
+      // de /presupuesto) lo eligio una persona a proposito y se respeta.
+      if (categoriaId && presupuestoIdFinal === undefined && actual.presupuestoId != null) {
+        const categoriaFinal = parseInt(categoriaId)
+        if (categoriaFinal !== actual.categoriaId) {
+          const linea = await prisma.presupuesto.findUnique({
+            where: { id: actual.presupuestoId },
+            select: { categoriaId: true },
+          })
+          if (linea?.categoriaId === actual.categoriaId) {
+            presupuestoIdFinal = null
+          }
+        }
       }
     }
 
