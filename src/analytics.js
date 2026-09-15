@@ -65,6 +65,9 @@ async function getData() {
     categoria: tx.categoria.nombre,
     formaPago: tx.metodoPago?.nombre || 'Efectivo',
     tipo: tx.tipo,
+    // Necesaria para netear el ahorro: monto siempre es positivo y el signo de
+    // un movimiento de ahorro vive aqui (ver src/tipoAhorro.js).
+    direccion: tx.direccion || null,
     clasificacion: tx.clasificacion || '',
     quincena: tx.quincena.codigo,
     estatus: tx.estatus,
@@ -176,14 +179,28 @@ function gastoEspecifico(data, text, name) {
   return msg
 }
 
+// Ahorro neto de un conjunto de movimientos: Aporte suma, Retiro resta.
+//
+// Desde la migracion 20260902120000 toda transaccion de categoria "Ahorro"
+// guarda tipo:'Ahorro' (antes unas quedaban como Gasto y otras como Ingreso),
+// asi que los filtros por tipo 'Gasto'/'Ingreso' de este archivo dejaron de
+// verlas: el "Disponible" del bot ya no descontaba lo apartado. Mismo neteo que
+// getResumenQuincena en src/database.js, que si lo hacia.
+function sumaAhorro(movimientos) {
+  return movimientos
+    .filter(d => d.tipo === 'Ahorro')
+    .reduce((s, d) => s + (d.direccion === 'Retiro' ? -d.monto : d.monto), 0)
+}
+
 function balance(data, name) {
   const month = getCurrentMonth()
   const ingresos = data.filter(d => d.fechaFormat.startsWith(month) && d.tipo === 'Ingreso')
   const gastos = data.filter(d => d.fechaFormat.startsWith(month) && d.tipo === 'Gasto')
   const totalIngresos = ingresos.reduce((s, d) => s + d.monto, 0)
   const totalGastos = gastos.reduce((s, d) => s + d.monto, 0)
-  const disponible = totalIngresos - totalGastos
-  let msg = `💰 *Balance del mes*\n\n📈 Ingresos: *$${formatMoney(totalIngresos)}*\n📉 Gastos: *$${formatMoney(totalGastos)}*\n💵 Disponible: *$${formatMoney(disponible)}*\n\n`
+  const totalAhorro = sumaAhorro(data.filter(d => d.fechaFormat.startsWith(month)))
+  const disponible = totalIngresos - totalGastos - totalAhorro
+  let msg = `💰 *Balance del mes*\n\n📈 Ingresos: *$${formatMoney(totalIngresos)}*\n📉 Gastos: *$${formatMoney(totalGastos)}*\n🏦 Ahorro: *$${formatMoney(totalAhorro)}*\n💵 Disponible: *$${formatMoney(disponible)}*\n\n`
   if (disponible > 0) msg += `✅ vas bien, te quedan $${formatMoney(disponible)}`
   else if (disponible === 0) msg += `⚠️ estás al cero`
   else msg += `🔴 vas en negativo por $${formatMoney(Math.abs(disponible))}`
@@ -223,11 +240,13 @@ function resumen(data, name) {
   const monthData = data.filter(d => d.fechaFormat.startsWith(month))
   const gastosQ = quincenaData.filter(d => d.tipo === 'Gasto').reduce((s, d) => s + d.monto, 0)
   const ingresosQ = quincenaData.filter(d => d.tipo === 'Ingreso').reduce((s, d) => s + d.monto, 0)
+  const ahorroQ = sumaAhorro(quincenaData)
   const gastosM = monthData.filter(d => d.tipo === 'Gasto').reduce((s, d) => s + d.monto, 0)
   const ingresosM = monthData.filter(d => d.tipo === 'Ingreso').reduce((s, d) => s + d.monto, 0)
+  const ahorroM = sumaAhorro(monthData)
   const porCategoria = {}
   quincenaData.filter(d => d.tipo === 'Gasto').forEach(g => { porCategoria[g.categoria] = (porCategoria[g.categoria] || 0) + g.monto })
-  let msg = `📊 *Resumen ${q}*\n\n💵 *Quincena:*\n  📈 Ingresos: $${formatMoney(ingresosQ)}\n  📉 Gastos: $${formatMoney(gastosQ)}\n  💰 Disponible: *$${formatMoney(ingresosQ - gastosQ)}*\n\n📅 *Mes (${month}):*\n  📈 Ingresos: $${formatMoney(ingresosM)}\n  📉 Gastos: $${formatMoney(gastosM)}\n  💰 Disponible: *$${formatMoney(ingresosM - gastosM)}*\n\n`
+  let msg = `📊 *Resumen ${q}*\n\n💵 *Quincena:*\n  📈 Ingresos: $${formatMoney(ingresosQ)}\n  📉 Gastos: $${formatMoney(gastosQ)}\n  🏦 Ahorro: $${formatMoney(ahorroQ)}\n  💰 Disponible: *$${formatMoney(ingresosQ - gastosQ - ahorroQ)}*\n\n📅 *Mes (${month}):*\n  📈 Ingresos: $${formatMoney(ingresosM)}\n  📉 Gastos: $${formatMoney(gastosM)}\n  🏦 Ahorro: $${formatMoney(ahorroM)}\n  💰 Disponible: *$${formatMoney(ingresosM - gastosM - ahorroM)}*\n\n`
   if (Object.keys(porCategoria).length > 0) {
     msg += `Por categoría (${q}):\n`
     Object.entries(porCategoria).sort((a, b) => b[1] - a[1]).forEach(([cat, monto]) => { msg += `• ${cat}: $${formatMoney(monto)}\n` })

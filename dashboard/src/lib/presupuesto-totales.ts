@@ -1,5 +1,17 @@
 import { cuentaParaAgregados } from '@/lib/cierre-quincena'
 
+// Regla unica de que tipo de movimiento es una linea de presupuesto. Manda la
+// categoria: `Presupuesto.tipo` es una copia que puede quedar desalineada (la
+// API no impedia guardar una linea tipo:'Ingreso' con categoria de tipo
+// 'Gasto'), y cuando eso pasa cada pantalla decidia distinto -- el forecast
+// usaba un OR laxo (`p.tipo === X || categoria.tipo === X`) que contaba esa
+// misma fila como Ingreso, mientras estos totales la contaban como Gasto.
+// `p.tipo` solo se usa como respaldo cuando la categoria no viene incluida en
+// la consulta.
+export function tipoDeLinea(p: { tipo?: string; categoria?: { tipo?: string } | null }): string {
+  return p.categoria?.tipo ?? p.tipo ?? 'Gasto'
+}
+
 export interface PresupuestoParaTotales {
   montoEfectivo: number
   real: number

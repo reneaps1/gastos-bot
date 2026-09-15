@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
+import { validarEnlacePresupuesto } from '@/lib/validar-enlace-presupuesto'
 
 export async function GET(
   request: Request,
@@ -63,6 +64,36 @@ export async function PUT(
       direccionResuelta = resuelto.direccion
     }
 
+    // La linea de presupuesto tiene que ser de la misma quincena que la
+    // transaccion. Hay que mirar las dos juntas porque cualquiera de las dos
+    // puede venir en el body: asignar una linea de otra quincena se rechaza, y
+    // mover la transaccion a otra quincena suelta el enlace que acaba de dejar
+    // de tener sentido (en vez de dejarlo sumando en la quincena equivocada).
+    let presupuestoIdFinal: number | null | undefined =
+      presupuestoId !== undefined ? (presupuestoId ? parseInt(presupuestoId) : null) : undefined
+
+    if (quincenaId || presupuestoIdFinal !== undefined) {
+      const actual = await prisma.transaccion.findUnique({
+        where: { id },
+        select: { quincenaId: true, presupuestoId: true },
+      })
+      if (!actual) {
+        return NextResponse.json({ error: 'Transacción not found' }, { status: 404 })
+      }
+      const quincenaFinal = quincenaId ? parseInt(quincenaId) : actual.quincenaId
+      const enlaceAValidar = presupuestoIdFinal !== undefined ? presupuestoIdFinal : actual.presupuestoId
+      const enlaceInvalido = await validarEnlacePresupuesto(enlaceAValidar, quincenaFinal)
+
+      if (enlaceInvalido) {
+        // Enlace explicito en el body: es un error del que llama.
+        if (presupuestoIdFinal !== undefined) {
+          return NextResponse.json({ error: enlaceInvalido.error }, { status: 400 })
+        }
+        // Enlace heredado que dejo de cuadrar al mover de quincena: se suelta.
+        presupuestoIdFinal = null
+      }
+    }
+
     const transaccion = await prisma.transaccion.update({
       where: { id },
       data: {
@@ -77,7 +108,7 @@ export async function PUT(
         ...(metodoPagoId !== undefined && { metodoPagoId: metodoPagoId ? parseInt(metodoPagoId) : null }),
         ...(estatus && { estatus }),
         ...(notas !== undefined && { notas }),
-        ...(presupuestoId !== undefined && { presupuestoId: presupuestoId ? parseInt(presupuestoId) : null }),
+        ...(presupuestoIdFinal !== undefined && { presupuestoId: presupuestoIdFinal }),
       },
       include: { categoria: true, user: true, quincena: true, presupuesto: true },
     })

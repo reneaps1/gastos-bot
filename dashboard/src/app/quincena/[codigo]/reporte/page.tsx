@@ -75,6 +75,7 @@ export default function ReporteQuincenaPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [exporting, setExporting] = useState(false)
   const [pagosQuincenaVivo, setPagosQuincenaVivo] = useState(0)
+  const [gastoSinPresupuesto, setGastoSinPresupuesto] = useState(0)
 
   useEffect(() => {
     async function load() {
@@ -85,16 +86,22 @@ export default function ReporteQuincenaPage() {
         setTarget(found)
         if (!found) return
 
-        const [presupRes, txRes, liqRes, pagosRes] = await Promise.all([
+        const [presupRes, txRes, liqRes, pagosRes, sinPresupRes] = await Promise.all([
           fetch(`/api/presupuestos?quincenaId=${found.id}`),
           fetch(`/api/transacciones?quincenaId=${found.id}&limit=1000`),
           fetch(`/api/liquidez?quincenaId=${found.id}`),
           fetch(`/api/liquidez/pagos-quincena?quincenaId=${found.id}`),
+          // Gasto sin presupuesto medido igual que en el resto del sistema:
+          // por presupuestoId nulo. Antes se restaba "total de gastos menos la
+          // suma de los reales", que da otro numero en cuanto hay una linea
+          // Cancelada con movimientos o un gasto colgado de otra quincena.
+          fetch(`/api/transacciones?quincenaId=${found.id}&tipo=Gasto&asignado=no&limit=1`),
         ])
         const presupData: PresupuestoRow[] = await presupRes.json()
         const txJson = await txRes.json()
         const liqData = await liqRes.json()
         const pagosJson = await pagosRes.json()
+        const sinPresupJson = await sinPresupRes.json()
 
         setPresupuestos(presupData)
         setTransacciones(txJson.data ?? [])
@@ -106,6 +113,7 @@ export default function ReporteQuincenaPage() {
         const raw = Array.isArray(liqData) && liqData.length > 0 ? liqData[0] : null
         setSnapshot(raw ? { ...raw, ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0, pagosQuincena: Number(raw.pagosQuincena) || 0 } : null)
         setPagosQuincenaVivo(typeof pagosJson?.pagosQuincena === 'number' ? pagosJson.pagosQuincena : 0)
+        setGastoSinPresupuesto(Number(sinPresupJson?.totales?.Gasto ?? 0))
       } finally {
         setLoading(false)
       }
@@ -175,8 +183,7 @@ export default function ReporteQuincenaPage() {
   // Mismo calculo que la card "Libre / sin asignar" de Presupuesto -> Tabla y
   // "según presupuesto" del dashboard (ver calcularLibreSinAsignar) -- cuanto
   // del ingreso real de la quincena sigue sin comprometerse en ningun lado.
-  const gastosNoCubiertos = Math.max(totales.Gasto - gastoRows.reduce((s, p) => s + p.real, 0), 0)
-  const libreSinAsignar = calcularLibreSinAsignar(totales.Ingreso, presupuestos, gastosNoCubiertos)
+  const libreSinAsignar = calcularLibreSinAsignar(totales.Ingreso, presupuestos, gastoSinPresupuesto)
 
   async function handleExportExcel() {
     if (!target) return

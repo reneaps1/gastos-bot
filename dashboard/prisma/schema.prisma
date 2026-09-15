@@ -294,6 +294,11 @@ model Presupuesto {
   cambios             PresupuestoCambio[]   @relation("PresupuestoCambioPrincipal")
   cambiosRelacionados PresupuestoCambio[]   @relation("PresupuestoCambioRelacionado")
 
+  // Una serie recurrente no puede tener dos lineas en la misma quincena: sin
+  // este UNIQUE, el skipDuplicates del editor de recurrencias no previene nada.
+  // Las lineas no recurrentes (grupo NULL) si pueden repetirse -- en PostgreSQL
+  // los NULL cuentan como distintos entre si.
+  @@unique([quincenaId, recurrenciaGrupoId], name: "presupuesto_quincena_recurrencia_grupo_key")
   @@index([quincenaId], name: "idx_presupuesto_quincena")
   @@index([recurrenciaGrupoId], name: "idx_presupuesto_grupo")
   @@map("presupuesto")
