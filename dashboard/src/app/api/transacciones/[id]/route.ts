@@ -136,7 +136,10 @@ export async function PUT(
         ...(notas !== undefined && { notas }),
         ...(presupuestoIdFinal !== undefined && { presupuestoId: presupuestoIdFinal }),
       },
-      include: { categoria: true, user: true, quincena: true, presupuesto: true },
+      // metodoPago va incluido igual que en el GET de la lista: quien parchea
+      // su copia local con esta respuesta (la edicion inline de la tabla)
+      // necesita el nombre, no solo el metodoPagoId.
+      include: { categoria: true, user: true, quincena: true, metodoPago: true, presupuesto: true },
     })
 
     return NextResponse.json(transaccion)

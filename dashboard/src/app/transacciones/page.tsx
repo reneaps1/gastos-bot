@@ -1,6 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle, Download } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle, Download, Unlink } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -13,6 +13,15 @@ import { FilterChip } from '@/components/ui/FilterChip'
 import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
 import { useColumnVisibility } from '@/lib/use-column-visibility'
 import { useSearchShortcut } from '@/lib/use-search-shortcut'
+import { InlineSelectCell, type InlineOption } from '@/components/ui/InlineSelectCell'
+import { usePresupuestoLineas, etiquetaLinea } from './usePresupuestoLineas'
+import {
+  runBulk, planMoverQuincena, agruparPorQuincenaYCategoria, leerClaveGrupo, resumenBulk,
+  type PlanMoverQuincena,
+} from '@/lib/transacciones-bulk'
+import { BulkActionsBar } from './BulkActionsBar'
+import { MoverQuincenaDialog } from './MoverQuincenaDialog'
+import { AsignarLineaDialog } from './AsignarLineaDialog'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -29,7 +38,10 @@ const DEFAULT_CAT_COLOR = { bg: 'bg-slate-50', text: 'text-slate-700 dark:text-s
 
 interface Categoria { id: number; nombre: string; tipo: string }
 interface User { id: number; nombre: string }
-interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string }
+// fechaCierre ya viene en la respuesta de /api/quincenas (devuelve la fila
+// completa); solo faltaba declararlo para poder avisar al mover algo a una
+// quincena ya cerrada.
+interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; fechaCierre?: string | null }
 interface MetodoPago { id: number; nombre: string }
 interface Credito { id: number; nombre: string; tipoCredito: string; acreedor: string; activo: boolean; diaPago: number | null }
 interface PresupuestoOption { id: number; descripcion: string; montoEfectivo: number }
@@ -43,6 +55,37 @@ interface Transaccion {
   presupuestoId: number | null
 }
 
+// Campos que se pueden editar desde la tabla. Se usan para decidir si una
+// escritura necesita refetch (ver requiereRefetch).
+type CampoEditable = 'quincena' | 'categoria' | 'usuario' | 'metodoPago' | 'presupuesto' | 'estatus'
+
+// Estado de los dialogos que confirman antes de escribir. Todos llevan las
+// filas completas y no solo ids: describir la consecuencia (que enlace se
+// suelta, que tipo cambia) no debe costar otra ida al servidor.
+interface MoverPlanState {
+  plan: PlanMoverQuincena<Transaccion>
+  destino: Quincena
+  /** categoriaId -> presupuestoId elegido en la quincena destino ('' = dejar
+   *  sin asignar). Por categoria y no por fila porque es la unica agrupacion
+   *  en la que una sola linea es legal para todas las filas que abarca. */
+  reasignar: Record<number, string>
+}
+
+interface CategoriaPlanState {
+  filas: Transaccion[]
+  categoria: Categoria
+  pierdenEnlace: Transaccion[]
+  cambianTipo: Transaccion[]
+  /** Solo se usa cuando la categoria destino es de tipo Ahorro. */
+  direccion: 'Aporte' | 'Retiro'
+}
+
+interface AsignarPlanState {
+  grupos: Array<{ clave: string; quincenaId: number; categoriaId: number; filas: Transaccion[] }>
+  /** clave de grupo -> presupuestoId ('' = ese grupo no se toca). */
+  elegidas: Record<string, string>
+}
+
 const EMPTY_FORM = {
   fecha: getMexicoDateString(), descripcion: '', categoriaId: '',
   tipo: 'Gasto', direccion: 'Aporte', monto: '', quincenaId: '', userId: '', metodoPagoId: '',
@@ -51,6 +94,10 @@ const EMPTY_FORM = {
 }
 
 const LIMIT = 25
+// Tope de quincenas distintas en pantalla para las que se precargan lineas.
+const MAX_QUINCENAS_PRECARGA = 8
+// El value vacio lo ocupa la opcion-placeholder del select de accion.
+const SIN_USUARIO = '__sin_usuario__'
 
 // Descripción y Monto son las columnas núcleo (no se pueden ocultar) --
 // el resto es opcional, elegible desde el menú "Columnas". Método de pago
@@ -88,6 +135,22 @@ export default function TransaccionesPage() {
   const [togglingId, setTogglingId] = useState<number | null>(null)
   const [exporting, setExporting] = useState(false)
 
+  // Seleccion multiple. Alcance: la pagina visible (LIMIT filas) -- lo que el
+  // usuario alcanza a ver antes de actuar sobre ello.
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  // Filas con una escritura en vuelo. Generaliza el togglingId de siempre, que
+  // solo sabia de una fila y de un solo campo.
+  const [busyIds, setBusyIds] = useState<Set<number>>(new Set())
+  const [bulkProgress, setBulkProgress] = useState<{ hechas: number; total: number } | null>(null)
+
+  const [moverPlan, setMoverPlan] = useState<MoverPlanState | null>(null)
+  const [categoriaPlan, setCategoriaPlan] = useState<CategoriaPlanState | null>(null)
+  const [asignarPlan, setAsignarPlan] = useState<AsignarPlanState | null>(null)
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
+  // Unico punto de edicion inline en movil: el chip de asignacion de la
+  // tarjeta. La tabla y sus dropdowns son solo de escritorio (ver mas abajo).
+  const [lineaMovilTx, setLineaMovilTx] = useState<Transaccion | null>(null)
+
   const [quincenaId, setQuincenaId] = useState('')
   // Quincenas extra combinadas via Ctrl/Cmd+clic (mismo patron que en
   // Presupuesto). Sin efecto si quincenaId === ALL_QUINCENAS.
@@ -119,6 +182,7 @@ export default function TransaccionesPage() {
   const [formErrors, setFormErrors] = useState<Record<string, string>>({})
 
   const { visible: colVisible, toggle: toggleCol } = useColumnVisibility('milo:columns:transacciones', TX_COLUMNS_DEFAULT)
+  const { ensure: ensureLineas, estadoDe: estadoLineas, lineasDe, invalidar: invalidarLineas } = usePresupuestoLineas()
 
   useEffect(() => {
     const t = setTimeout(() => { setDebouncedSearch(busqueda); setPage(1) }, 300)
@@ -194,6 +258,37 @@ export default function TransaccionesPage() {
     const timer = window.setTimeout(() => { void fetchTxs() }, 0)
     return () => window.clearTimeout(timer)
   }, [fetchTxs])
+
+  // La seleccion solo alcanza a la pagina visible, asi que al cambiar de pagina
+  // o de filtro hay que soltarla: arrastrar ids de una vista anterior dejaria al
+  // usuario actuando sobre filas que ya no ve.
+  //
+  // Se ajusta durante el render -- el patron que documenta react.dev para
+  // resetear estado cuando cambia una entrada -- y no en un efecto, que
+  // dispararia un render en cascada. La identidad de fetchTxs sirve de llave de
+  // la vista porque sus deps son exactamente los filtros mas la pagina, asi que
+  // agregar un filtro nuevo manana no requiere acordarse de nada.
+  const [vistaDeLaSeleccion, setVistaDeLaSeleccion] = useState(() => fetchTxs)
+  if (vistaDeLaSeleccion !== fetchTxs) {
+    setVistaDeLaSeleccion(() => fetchTxs)
+    setSelected(new Set())
+  }
+
+  // Precarga de las lineas de presupuesto de las quincenas que aparecen en la
+  // pagina, para que el dropdown de "Presup." abra sin espera. Un <select>
+  // nativo no avisa cuando lo abren, asi que las opciones tienen que estar
+  // listas de antemano. El tope existe por si alguien ve "Todas": mas alla de
+  // eso la celda se deshabilita y lo dice, en vez de disparar 25 peticiones.
+  const quincenasEnPagina = useMemo(
+    () => Array.from(new Set(txs.map(t => t.quincenaId))),
+    [txs],
+  )
+  const demasiadasQuincenas = quincenasEnPagina.length > MAX_QUINCENAS_PRECARGA
+
+  useEffect(() => {
+    if (quincenasEnPagina.length === 0 || quincenasEnPagina.length > MAX_QUINCENAS_PRECARGA) return
+    ensureLineas(quincenasEnPagina)
+  }, [quincenasEnPagina, ensureLineas])
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -310,17 +405,329 @@ export default function TransaccionesPage() {
   }
 
   async function toggleEstatus(tx: Transaccion) {
-    setTogglingId(tx.id)
     const next = tx.estatus === 'Pagado' ? 'Pendiente' : 'Pagado'
+    setTogglingId(tx.id)
     try {
-      const res = await fetch(`/api/transacciones/${tx.id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ estatus: next }),
+      // Pasa por updateTx para que el filtro de Estatus mande el refetch: antes
+      // se parcheaba siempre en local y una fila marcada como Pagada seguia
+      // visible bajo el filtro "Pendiente", con el contador sin corregir.
+      await updateTx(tx.id, { estatus: next }, { campos: ['estatus'] })
+    } finally { setTogglingId(null) }
+  }
+
+  // --- Seleccion -----------------------------------------------------------
+
+  const allSelected = txs.length > 0 && txs.every(t => selected.has(t.id))
+  const someSelected = selected.size > 0
+  const selectedTxs = useMemo(() => txs.filter(t => selected.has(t.id)), [txs, selected])
+
+  function toggleSelect(id: number) {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function toggleSelectAll() {
+    setSelected(prev =>
+      txs.length > 0 && txs.every(t => prev.has(t.id)) ? new Set() : new Set(txs.map(t => t.id)),
+    )
+  }
+
+  // --- Escritura de una fila -----------------------------------------------
+
+  function putTx(id: number, body: Record<string, unknown>) {
+    return fetch(`/api/transacciones/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
+  }
+
+  function patchTx(id: number, cambios: Partial<Transaccion>) {
+    setTxs(prev => prev.map(t => (t.id === id ? { ...t, ...cambios } : t)))
+    setDetailTx(prev => (prev?.id === id ? { ...prev, ...cambios } : prev))
+  }
+
+  function marcarOcupada(id: number, ocupada: boolean) {
+    setBusyIds(prev => {
+      const next = new Set(prev)
+      if (ocupada) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  // Los totales de las tarjetas los calcula el servidor sobre TODAS las filas
+  // filtradas, no sobre la pagina, asi que una escritura que cambie el tipo o
+  // saque a la fila del filtro activo los descuadra si solo se parchea local.
+  // Una sola regla en un solo lugar, en vez de decidirlo en cada handler.
+  const filtroActivo: Record<CampoEditable, boolean> = {
+    quincena: quincenaId !== ALL_QUINCENAS,
+    categoria: !!categoriaId,
+    usuario: !!userId,
+    metodoPago: false, // no hay filtro de metodo de pago en esta vista
+    presupuesto: !!asignacion,
+    estatus: !!estatus,
+  }
+
+  function requiereRefetch(campos: CampoEditable[]) {
+    if (campos.includes('categoria')) return true // puede voltear el tipo -> mueve los totales
+    return campos.some(c => filtroActivo[c])
+  }
+
+  async function updateTx(
+    id: number,
+    body: Record<string, unknown>,
+    opts: { campos: CampoEditable[]; okMsg?: string; invalidarQ?: Array<number | null | undefined> },
+  ) {
+    marcarOcupada(id, true)
+    try {
+      const res = await putTx(id, body)
+      if (!res.ok) {
+        const json = await res.json().catch(() => null)
+        throw new Error(json?.error || 'Error al guardar')
+      }
+      const actualizada: Transaccion = await res.json()
+      invalidarLineas(...(opts.invalidarQ ?? []))
+      if (requiereRefetch(opts.campos)) await fetchTxs()
+      else patchTx(id, actualizada)
+      if (opts.okMsg) toast(opts.okMsg)
+      return actualizada
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Error al guardar', 'error')
+      return null
+    } finally {
+      marcarOcupada(id, false)
+    }
+  }
+
+  // --- Acciones masivas ----------------------------------------------------
+
+  async function ejecutarBulk(
+    filas: Transaccion[],
+    cuerpo: (tx: Transaccion) => Record<string, unknown> | null,
+    opts: {
+      uno: string; varias: string; extra?: string[]
+      omitidas?: number; invalidarQ?: Array<number | null | undefined>
+      metodo?: 'PUT' | 'DELETE'
+    },
+  ) {
+    if (filas.length === 0) {
+      toast('No hay nada que cambiar en la selección')
+      return
+    }
+    const porId = new Map(filas.map(t => [t.id, t]))
+    setBulkProgress({ hechas: 0, total: filas.length })
+    try {
+      const report = await runBulk(
+        filas.map(t => t.id),
+        id => {
+          if (opts.metodo === 'DELETE') {
+            return fetch(`/api/transacciones/${id}`, { method: 'DELETE' })
+          }
+          return putTx(id, cuerpo(porId.get(id)!) ?? {})
+        },
+        { onProgress: (hechas, total) => setBulkProgress({ hechas, total }) },
+      )
+      invalidarLineas(...(opts.invalidarQ ?? []))
+      // Las que fallaron se quedan seleccionadas para poder reintentarlas de un
+      // clic; las que salieron bien se desmarcan.
+      const fallidas = new Set(report.failed.map(r => r.id))
+      setSelected(prev => new Set([...prev].filter(id => fallidas.has(id))))
+      await fetchTxs()
+      toast(
+        resumenBulk(report, { uno: opts.uno, varias: opts.varias, extra: opts.extra }, opts.omitidas ?? 0),
+        report.failed.length > 0 ? 'error' : 'success',
+      )
+    } finally {
+      setBulkProgress(null)
+    }
+  }
+
+  function bulkEstatus(nuevo: 'Pagado' | 'Pendiente') {
+    const filas = selectedTxs.filter(t => t.estatus !== nuevo)
+    void ejecutarBulk(filas, () => ({ estatus: nuevo }), {
+      uno: nuevo === 'Pagado' ? 'marcada como pagada' : 'marcada como pendiente',
+      varias: nuevo === 'Pagado' ? 'marcadas como pagadas' : 'marcadas como pendientes',
+      omitidas: selectedTxs.length - filas.length,
+    })
+  }
+
+  function bulkUsuario(valor: string) {
+    const nuevo = valor === '' ? null : parseInt(valor)
+    const filas = selectedTxs.filter(t => (t.userId ?? null) !== nuevo)
+    void ejecutarBulk(filas, () => ({ userId: nuevo }), {
+      uno: 'reasignada', varias: 'reasignadas',
+      omitidas: selectedTxs.length - filas.length,
+    })
+  }
+
+  // Quitar la asignacion es legal para cualquier fila sin importar quincena ni
+  // categoria, asi que no necesita agrupar nada -- y es el deshacer mas rapido
+  // de una asignacion masiva equivocada.
+  function bulkQuitarAsignacion() {
+    const filas = selectedTxs.filter(t => t.presupuestoId != null)
+    void ejecutarBulk(filas, () => ({ presupuestoId: null }), {
+      uno: 'sin asignar', varias: 'sin asignar',
+      omitidas: selectedTxs.length - filas.length,
+      invalidarQ: Array.from(new Set(filas.map(t => t.quincenaId))),
+    })
+  }
+
+  // --- Mover de quincena ---------------------------------------------------
+
+  function abrirMoverQuincena(filas: Transaccion[], destinoId: number) {
+    const destino = quincenas.find(q => q.id === destinoId)
+    if (!destino) return
+    const plan = planMoverQuincena(filas, destino.id)
+    if (plan.aEscribir.length === 0) {
+      toast(`Ya ${filas.length === 1 ? 'está' : 'están'} en ${destino.codigo}`)
+      return
+    }
+    ensureLineas([destino.id])
+    setMoverPlan({ plan, destino, reasignar: {} })
+  }
+
+  function cambiarQuincenaFila(tx: Transaccion, valor: string) {
+    const destino = quincenas.find(q => q.id.toString() === valor)
+    if (!destino || destino.id === tx.quincenaId) return
+    // Camino directo solo cuando no hay nada que advertir: sin enlace que
+    // soltar, sin credito cuyos pagos programados se queden atras, y con la
+    // quincena destino abierta.
+    if (tx.presupuestoId == null && tx.creditoId == null && !destino.fechaCierre) {
+      void updateTx(tx.id, { quincenaId: destino.id }, {
+        campos: ['quincena'],
+        okMsg: `Movida a ${destino.codigo}`,
+        invalidarQ: [tx.quincenaId, destino.id],
       })
-      if (!res.ok) throw new Error()
-      setTxs(prev => prev.map(t => t.id === tx.id ? { ...t, estatus: next } : t))
-      if (detailTx?.id === tx.id) setDetailTx(prev => prev ? { ...prev, estatus: next } : prev)
-    } catch { toast('Error al actualizar estatus', 'error') } finally { setTogglingId(null) }
+      return
+    }
+    abrirMoverQuincena([tx], destino.id)
+  }
+
+  async function confirmarMover() {
+    if (!moverPlan) return
+    const { plan, destino, reasignar } = moverPlan
+    const origenes = Array.from(new Set(plan.aEscribir.map(t => t.quincenaId)))
+    const reasignadas = plan.aEscribir.filter(t => !!reasignar[t.categoriaId]).length
+    setMoverPlan(null)
+    await ejecutarBulk(
+      plan.aEscribir,
+      tx => {
+        const linea = reasignar[tx.categoriaId]
+        // Un solo PUT con los dos campos: el handler resuelve la quincena final
+        // mirando el body antes de validar el enlace, asi que nunca existe un
+        // instante con la fila ya en la quincena nueva y el enlace viejo.
+        return linea
+          ? { quincenaId: destino.id, presupuestoId: linea }
+          : { quincenaId: destino.id }
+      },
+      {
+        uno: `movida a ${destino.codigo}`, varias: `movidas a ${destino.codigo}`,
+        extra: reasignadas > 0 ? [`${reasignadas} reasignada${reasignadas > 1 ? 's' : ''}`] : undefined,
+        omitidas: plan.omitidas.length,
+        invalidarQ: [...origenes, destino.id],
+      },
+    )
+  }
+
+  // --- Cambiar de categoria ------------------------------------------------
+
+  // El servidor solo suelta el enlace heredado cuando cuadraba con la categoria
+  // anterior (una linea comodin elegida a proposito se respeta). Si el cache ya
+  // tiene las lineas de esa quincena se sabe exactamente; si no, se asume que
+  // si, que es el caso normal.
+  function perderaEnlace(tx: Transaccion, categoriaDestinoId: number) {
+    if (tx.presupuestoId == null || tx.categoriaId === categoriaDestinoId) return false
+    if (estadoLineas(tx.quincenaId) !== 'ready') return true
+    const linea = lineasDe(tx.quincenaId).find(l => l.id === tx.presupuestoId)
+    return !linea || linea.categoriaId === tx.categoriaId
+  }
+
+  function abrirCambiarCategoria(filas: Transaccion[], valor: string) {
+    const categoria = categorias.find(c => c.id.toString() === valor)
+    if (!categoria) return
+    const aCambiar = filas.filter(t => t.categoriaId !== categoria.id)
+    if (aCambiar.length === 0) return
+    // Toda categoria de tipo Ahorro fuerza tipo:'Ahorro'; el resto hereda el
+    // tipo de la categoria (ver @/lib/transaccion-ahorro).
+    const tipoDestino = categoria.tipo
+    setCategoriaPlan({
+      filas: aCambiar,
+      categoria,
+      pierdenEnlace: aCambiar.filter(t => perderaEnlace(t, categoria.id)),
+      cambianTipo: aCambiar.filter(t => t.tipo !== tipoDestino),
+      direccion: 'Aporte',
+    })
+  }
+
+  async function confirmarCategoria() {
+    if (!categoriaPlan) return
+    const { filas, categoria, direccion } = categoriaPlan
+    const esAhorroDestino = categoria.tipo === 'Ahorro'
+    setCategoriaPlan(null)
+    await ejecutarBulk(
+      filas,
+      // La direccion viaja solo hacia Ahorro: sin ella toda fila convertida
+      // caeria en 'Aporte' y un retiro quedaria mal firmado en el neteo de
+      // calcularRealPorLinea.
+      () => (esAhorroDestino ? { categoriaId: categoria.id, direccion } : { categoriaId: categoria.id }),
+      {
+        uno: `movida a ${categoria.nombre}`, varias: `movidas a ${categoria.nombre}`,
+        invalidarQ: Array.from(new Set(filas.map(t => t.quincenaId))),
+      },
+    )
+  }
+
+  // --- Asignar linea en lote -----------------------------------------------
+
+  function abrirAsignarLinea() {
+    const grupos = Array.from(agruparPorQuincenaYCategoria(selectedTxs).entries()).map(([clave, filas]) => ({
+      clave, ...leerClaveGrupo(clave), filas,
+    }))
+    ensureLineas(grupos.map(g => g.quincenaId))
+    setAsignarPlan({ grupos, elegidas: {} })
+  }
+
+  async function confirmarAsignar() {
+    if (!asignarPlan) return
+    const { grupos, elegidas } = asignarPlan
+    const porFila = new Map<number, string>()
+    for (const g of grupos) {
+      const elegida = elegidas[g.clave]
+      if (!elegida) continue // grupo sin linea elegida: no se toca
+      for (const f of g.filas) porFila.set(f.id, elegida)
+    }
+    const filas = selectedTxs.filter(
+      t => porFila.has(t.id) && (t.presupuestoId?.toString() ?? '') !== porFila.get(t.id),
+    )
+    setAsignarPlan(null)
+    await ejecutarBulk(filas, tx => ({ presupuestoId: porFila.get(tx.id) }), {
+      uno: 'asignada', varias: 'asignadas',
+      omitidas: selectedTxs.length - filas.length,
+      invalidarQ: Array.from(new Set(filas.map(t => t.quincenaId))),
+    })
+  }
+
+  // --- Borrado masivo ------------------------------------------------------
+
+  // Las compras a credito se excluyen: CreditoPago.transaccionId es
+  // onDelete:SetNull, asi que borrar la compra deja sus pagos programados
+  // colgando sin transaccion detras, visibles en /creditos y sin rastro de
+  // donde salieron. Borrar una desde ahi tiene contexto; borrar veinte de
+  // golpe desde aca, no.
+  const bulkDeleteExcluidas = useMemo(() => selectedTxs.filter(t => t.creditoId != null), [selectedTxs])
+  const bulkDeleteFilas = useMemo(() => selectedTxs.filter(t => t.creditoId == null), [selectedTxs])
+
+  async function confirmarBulkDelete() {
+    setConfirmBulkDelete(false)
+    await ejecutarBulk(bulkDeleteFilas, () => ({}), {
+      uno: 'eliminada', varias: 'eliminadas',
+      omitidas: bulkDeleteExcluidas.length,
+      invalidarQ: Array.from(new Set(bulkDeleteFilas.map(t => t.quincenaId))),
+      metodo: 'DELETE',
+    })
   }
 
   async function handleExportCsv() {
@@ -374,6 +781,59 @@ export default function TransaccionesPage() {
   // (aporte/retiro) sustituye al select de Tipo. Ver @/lib/transaccion-ahorro.
   const categoriaSeleccionada = categorias.find(c => c.id.toString() === form.categoriaId)
   const esAhorro = categoriaSeleccionada?.tipo === 'Ahorro'
+  const bulkRunning = bulkProgress !== null
+
+  // --- Opciones de los dropdowns de la tabla -------------------------------
+
+  const opcionesQuincena: InlineOption[] = useMemo(
+    () => quincenas.map(q => ({
+      value: q.id.toString(),
+      // Nada impide escribir en una quincena cerrada (cerrarSiCorresponde solo
+      // corre desde /resolver y /transferir), pero que se vea antes de elegir.
+      label: q.fechaCierre ? `${q.codigo} · cerrada` : q.codigo,
+    })),
+    [quincenas],
+  )
+
+  const opcionesCategoria: InlineOption[] = useMemo(
+    () => categorias.map(c => ({
+      value: c.id.toString(),
+      // Las de Ingreso/Ahorro llevan su tipo pegado: cambiar a una de ellas
+      // voltea el tipo de la transaccion (@/lib/transaccion-ahorro) y eso no
+      // deberia descubrirse hasta la confirmacion.
+      label: c.tipo === 'Gasto' ? c.nombre : `${c.nombre} · ${c.tipo}`,
+    })),
+    [categorias],
+  )
+
+  const opcionesUsuario: InlineOption[] = useMemo(
+    () => users.map(u => ({ value: u.id.toString(), label: u.nombre })),
+    [users],
+  )
+
+  const opcionesMetodo: InlineOption[] = useMemo(
+    () => metodosPago.map(m => ({ value: m.id.toString(), label: m.nombre })),
+    [metodosPago],
+  )
+
+  function opcionesLineaPara(tx: Transaccion): InlineOption[] {
+    const lineas = lineasDe(tx.quincenaId, { categoriaId: tx.categoriaId, tipo: tx.tipo })
+    if (lineas.length === 0 && estadoLineas(tx.quincenaId) === 'ready') {
+      return [{
+        value: '__vacio__', disabled: true,
+        label: `Sin líneas de ${tx.categoria?.nombre} en ${tx.quincena.codigo}`,
+      }]
+    }
+    return lineas.map(l => ({ value: l.id.toString(), label: etiquetaLinea(l) }))
+  }
+
+  // La fecha no se reescribe al mover de quincena -- seria reescribir un dato
+  // financiero en silencio, y el esquema soporta a proposito que difieran (ver
+  // quincenaConsumoId). Pero si se marca, para que no pase inadvertido.
+  function fechaFueraDeQ(tx: Transaccion) {
+    const sugerida = getQuincenaIdForDate(quincenas, tx.fecha.split('T')[0])
+    return !!sugerida && sugerida !== tx.quincenaId.toString()
+  }
 
   return (
     <div className="space-y-6">
@@ -458,6 +918,32 @@ export default function TransaccionesPage() {
         </div>
       </div>
 
+      {(someSelected || bulkRunning) && (
+        <BulkActionsBar
+          count={selected.size}
+          progress={bulkProgress}
+          quincenas={opcionesQuincena}
+          categorias={opcionesCategoria}
+          users={[{ value: SIN_USUARIO, label: 'Sin asignar' }, ...opcionesUsuario]}
+          onMoverQuincena={v => abrirMoverQuincena(selectedTxs, parseInt(v))}
+          onCambiarCategoria={v => abrirCambiarCategoria(selectedTxs, v)}
+          onCambiarUsuario={v => bulkUsuario(v === SIN_USUARIO ? '' : v)}
+          onAsignarLinea={abrirAsignarLinea}
+          onQuitarAsignacion={bulkQuitarAsignacion}
+          onEstatus={bulkEstatus}
+          onEliminar={() => {
+            // Si todo lo seleccionado son compras a credito no hay nada que
+            // borrar, y un dialogo que dice "Eliminar 0" no explica por que.
+            if (bulkDeleteFilas.length === 0) {
+              toast('Todas las seleccionadas son compras a crédito. Bórralas desde Créditos.', 'error')
+              return
+            }
+            setConfirmBulkDelete(true)
+          }}
+          onClear={() => setSelected(new Set())}
+        />
+      )}
+
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
         {loading ? (
           <div className="py-20 flex justify-center items-center text-slate-400 dark:text-slate-500 text-sm gap-2">
@@ -514,15 +1000,25 @@ export default function TransaccionesPage() {
                         {tx.tipo}
                       </span>
                     )}
-                    {tx.presupuestoId ? (
-                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
-                        <Check size={11} /> Asignada
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                        <AlertCircle size={11} /> Sin asignar
-                      </span>
-                    )}
+                    {/* role=button y no <button>: la tarjeta entera ya es un
+                        <button>, y anidar uno dentro de otro es HTML invalido. */}
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Cambiar línea de presupuesto de ${tx.descripcion}`}
+                      onClick={e => { e.stopPropagation(); setLineaMovilTx(tx) }}
+                      onKeyDown={e => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return
+                        e.preventDefault(); e.stopPropagation(); setLineaMovilTx(tx)
+                      }}
+                      className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full cursor-pointer ${
+                        tx.presupuestoId
+                          ? 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400'
+                          : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
+                      }`}
+                    >
+                      {tx.presupuestoId ? <><Check size={11} /> Asignada</> : <><AlertCircle size={11} /> Sin asignar</>}
+                    </span>
                     <button
                       onClick={e => { e.stopPropagation(); toggleEstatus(tx) }}
                       disabled={togglingId === tx.id}
@@ -541,6 +1037,12 @@ export default function TransaccionesPage() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
                 <tr>
+                  <th className="px-4 py-3 w-10">
+                    <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                      disabled={bulkRunning}
+                      aria-label="Seleccionar todas las de esta página"
+                      className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400 cursor-pointer disabled:cursor-default" />
+                  </th>
                   <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
                   {colVisible.has('categoria') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>}
                   {colVisible.has('presupuesto') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Presup.</th>}
@@ -558,39 +1060,120 @@ export default function TransaccionesPage() {
                   const catColor = CAT_COLORS[tx.categoria?.nombre] ?? DEFAULT_CAT_COLOR
                   return (
                     <tr key={tx.id} onClick={() => setDetailTx(tx)}
-                      className="hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20 cursor-pointer transition-colors group">
+                      className={`cursor-pointer transition-colors group ${
+                        selected.has(tx.id)
+                          ? 'bg-indigo-50/70 dark:bg-indigo-950/40'
+                          : 'hover:bg-indigo-50/40 dark:hover:bg-indigo-950/20'
+                      }`}>
+                      <td className="px-4 py-3.5" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(tx.id)} onChange={() => toggleSelect(tx.id)}
+                          disabled={bulkRunning}
+                          aria-label={`Seleccionar ${tx.descripcion}`}
+                          className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400 cursor-pointer disabled:cursor-default" />
+                      </td>
                       <td className="px-5 py-3.5">
                         <span className="font-medium text-slate-800 dark:text-slate-100 group-hover:text-indigo-700 transition-colors max-w-[200px] block truncate">{tx.descripcion}</span>
                       </td>
                       {colVisible.has('categoria') && (
                         <td className="px-4 py-3.5">
-                          <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
-                            {tx.categoria?.nombre}
-                          </span>
+                          <InlineSelectCell
+                            ariaLabel={`Categoría de ${tx.descripcion}`}
+                            value={tx.categoriaId.toString()}
+                            options={opcionesCategoria}
+                            onChange={v => abrirCambiarCategoria([tx], v)}
+                            busy={busyIds.has(tx.id)}
+                            disabled={bulkRunning}
+                          >
+                            <span className={`inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full ${catColor.bg} ${catColor.text}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${catColor.dot}`} />
+                              {tx.categoria?.nombre}
+                            </span>
+                          </InlineSelectCell>
                         </td>
                       )}
                       {colVisible.has('presupuesto') && (
                         <td className="px-4 py-3.5 text-center">
-                          {tx.presupuestoId ? (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400" title={tx.presupuesto?.descripcion}>
-                              <Check size={10} /> Asignada
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
-                              <AlertCircle size={10} /> Sin asignar
-                            </span>
-                          )}
+                          <InlineSelectCell
+                            ariaLabel={`Línea de presupuesto de ${tx.descripcion}`}
+                            value={tx.presupuestoId?.toString() ?? ''}
+                            emptyLabel="Sin asignar"
+                            options={opcionesLineaPara(tx)}
+                            loading={estadoLineas(tx.quincenaId) === 'loading'}
+                            disabled={bulkRunning || demasiadasQuincenas}
+                            busy={busyIds.has(tx.id)}
+                            title={demasiadasQuincenas
+                              ? 'Filtra por quincena para asignar líneas desde la tabla'
+                              : tx.presupuesto?.descripcion}
+                            onChange={v => void updateTx(tx.id, { presupuestoId: v || null }, {
+                              campos: ['presupuesto'],
+                              okMsg: v ? 'Asignada' : 'Asignación quitada',
+                              invalidarQ: [tx.quincenaId],
+                            })}
+                          >
+                            {tx.presupuestoId ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
+                                <Check size={10} /> Asignada
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                                <AlertCircle size={10} /> Sin asignar
+                              </span>
+                            )}
+                          </InlineSelectCell>
                         </td>
                       )}
                       {colVisible.has('quincena') && (
                         <td className="px-4 py-3.5">
-                          <span className="bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 text-xs font-semibold px-2 py-0.5 rounded-full">{tx.quincena.codigo}</span>
+                          <InlineSelectCell
+                            ariaLabel={`Quincena de ${tx.descripcion}`}
+                            value={tx.quincenaId.toString()}
+                            options={opcionesQuincena}
+                            onChange={v => cambiarQuincenaFila(tx, v)}
+                            busy={busyIds.has(tx.id)}
+                            disabled={bulkRunning}
+                            title={fechaFueraDeQ(tx)
+                              ? `La fecha (${formatDate(tx.fecha)}) no cae dentro de ${tx.quincena.codigo}`
+                              : undefined}
+                          >
+                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                              fechaFueraDeQ(tx)
+                                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400'
+                                : 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400'
+                            }`}>{tx.quincena.codigo}</span>
+                          </InlineSelectCell>
                         </td>
                       )}
                       {colVisible.has('fecha') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400">{formatDate(tx.fecha)}</td>}
-                      {colVisible.has('usuario') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.user?.nombre ?? '—'}</td>}
-                      {colVisible.has('metodoPago') && <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">{tx.metodoPago?.nombre ?? '—'}</td>}
+                      {colVisible.has('usuario') && (
+                        <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">
+                          <InlineSelectCell
+                            ariaLabel={`Usuario de ${tx.descripcion}`}
+                            value={tx.userId?.toString() ?? ''}
+                            emptyLabel="Sin asignar"
+                            options={opcionesUsuario}
+                            busy={busyIds.has(tx.id)}
+                            disabled={bulkRunning}
+                            onChange={v => void updateTx(tx.id, { userId: v || null }, { campos: ['usuario'] })}
+                          >
+                            <span>{tx.user?.nombre ?? '—'}</span>
+                          </InlineSelectCell>
+                        </td>
+                      )}
+                      {colVisible.has('metodoPago') && (
+                        <td className="px-4 py-3.5 text-slate-500 dark:text-slate-400 hidden lg:table-cell">
+                          <InlineSelectCell
+                            ariaLabel={`Método de pago de ${tx.descripcion}`}
+                            value={tx.metodoPagoId?.toString() ?? ''}
+                            emptyLabel="Sin especificar"
+                            options={opcionesMetodo}
+                            busy={busyIds.has(tx.id)}
+                            disabled={bulkRunning}
+                            onChange={v => void updateTx(tx.id, { metodoPagoId: v || null }, { campos: ['metodoPago'] })}
+                          >
+                            <span>{tx.metodoPago?.nombre ?? '—'}</span>
+                          </InlineSelectCell>
+                        </td>
+                      )}
                       {colVisible.has('tipo') && (
                         <td className="px-4 py-3.5 text-center">
                           <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${
@@ -603,7 +1186,7 @@ export default function TransaccionesPage() {
                       )}
                       {colVisible.has('estatus') && (
                         <td className="px-4 py-3.5 text-center">
-                          <button onClick={e => { e.stopPropagation(); toggleEstatus(tx) }} disabled={togglingId === tx.id}
+                          <button onClick={e => { e.stopPropagation(); toggleEstatus(tx) }} disabled={togglingId === tx.id || busyIds.has(tx.id) || bulkRunning}
                             className={`text-xs font-semibold px-2.5 py-1 rounded-full cursor-pointer transition-colors ${
                               tx.estatus === 'Pagado' ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-200' : 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 hover:bg-amber-200'
                             } disabled:opacity-50`}>
@@ -938,6 +1521,162 @@ export default function TransaccionesPage() {
           </div>
         )
       })()}
+
+      {lineaMovilTx && (() => {
+        const tx = lineaMovilTx
+        const opciones = opcionesLineaPara(tx)
+        const cargando = estadoLineas(tx.quincenaId) === 'loading'
+        return (
+          <FormModal open onOpenChange={open => { if (!open) setLineaMovilTx(null) }}
+            title="Línea de presupuesto"
+            subtitle={<p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              {tx.descripcion} · {tx.categoria?.nombre} · {tx.quincena.codigo}
+            </p>}>
+            <div className="space-y-4">
+              <select
+                aria-label="Línea de presupuesto"
+                value={tx.presupuestoId?.toString() ?? ''}
+                disabled={cargando}
+                onChange={e => {
+                  const v = e.target.value
+                  setLineaMovilTx(null)
+                  void updateTx(tx.id, { presupuestoId: v || null }, {
+                    campos: ['presupuesto'],
+                    okMsg: v ? 'Asignada' : 'Asignación quitada',
+                    invalidarQ: [tx.quincenaId],
+                  })
+                }}
+                className="w-full border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:opacity-60"
+              >
+                <option value="">{cargando ? 'Cargando líneas...' : 'Sin asignar'}</option>
+                {opciones.map(o => <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>)}
+              </select>
+              <div className="flex justify-end">
+                <button type="button" onClick={() => setLineaMovilTx(null)}
+                  className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                  Cerrar
+                </button>
+              </div>
+            </div>
+          </FormModal>
+        )
+      })()}
+
+      {moverPlan && (
+        <MoverQuincenaDialog
+          plan={moverPlan.plan}
+          destino={moverPlan.destino}
+          categorias={categorias}
+          reasignar={moverPlan.reasignar}
+          cargandoLineas={estadoLineas(moverPlan.destino.id) === 'loading'}
+          lineasPara={catId =>
+            lineasDe(moverPlan.destino.id, { categoriaId: catId })
+              .map(l => ({ value: l.id.toString(), label: etiquetaLinea(l) }))}
+          onReasignar={(catId, presupuestoId) =>
+            setMoverPlan(prev => prev && ({ ...prev, reasignar: { ...prev.reasignar, [catId]: presupuestoId } }))}
+          onConfirm={() => void confirmarMover()}
+          onCancel={() => setMoverPlan(null)}
+        />
+      )}
+
+      {asignarPlan && (
+        <AsignarLineaDialog
+          grupos={asignarPlan.grupos}
+          elegidas={asignarPlan.elegidas}
+          nombreQuincena={id => quincenas.find(q => q.id === id)?.codigo ?? `Q${id}`}
+          nombreCategoria={id => categorias.find(c => c.id === id)?.nombre ?? 'Sin categoría'}
+          cargando={id => estadoLineas(id) === 'loading'}
+          lineasPara={(quincenaId, categoriaId) =>
+            lineasDe(quincenaId, { categoriaId })
+              .map(l => ({ value: l.id.toString(), label: etiquetaLinea(l) }))}
+          onElegir={(clave, presupuestoId) =>
+            setAsignarPlan(prev => prev && ({ ...prev, elegidas: { ...prev.elegidas, [clave]: presupuestoId } }))}
+          onConfirm={() => void confirmarAsignar()}
+          onCancel={() => setAsignarPlan(null)}
+        />
+      )}
+
+      {categoriaPlan && (
+        <FormModal open onOpenChange={open => { if (!open) setCategoriaPlan(null) }}
+          title={`Cambiar categoría a «${categoriaPlan.categoria.nombre}»`}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600 dark:text-slate-400">
+              {categoriaPlan.filas.length === 1
+                ? `«${categoriaPlan.filas[0].descripcion}» pasará a ${categoriaPlan.categoria.nombre}.`
+                : `${categoriaPlan.filas.length} transacciones pasarán a ${categoriaPlan.categoria.nombre}.`}
+            </p>
+
+            {categoriaPlan.pierdenEnlace.length > 0 && (
+              <p className="flex items-start gap-1.5 text-xs rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-3 py-2">
+                <Unlink size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  {categoriaPlan.pierdenEnlace.length === 1
+                    ? 'Perderá su línea de presupuesto'
+                    : `${categoriaPlan.pierdenEnlace.length} perderán su línea de presupuesto`}
+                  {' '}— una línea pertenece a su categoría.
+                </span>
+              </p>
+            )}
+
+            {categoriaPlan.cambianTipo.length > 0 && (
+              <p className="flex items-start gap-1.5 text-xs rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-950/20 text-amber-800 dark:text-amber-300 px-3 py-2">
+                <AlertCircle size={14} className="mt-0.5 shrink-0" />
+                <span>
+                  {categoriaPlan.cambianTipo.length === 1 ? 'Cambiará' : `${categoriaPlan.cambianTipo.length} cambiarán`}
+                  {' '}de tipo a <strong>{categoriaPlan.categoria.tipo}</strong>, así que se mueven de las
+                  tarjetas de Ingresos/Gastos.
+                </span>
+              </p>
+            )}
+
+            {categoriaPlan.categoria.tipo === 'Ahorro' && (
+              <div>
+                <p className="text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
+                  Dirección del ahorro
+                </p>
+                <div className="flex gap-4">
+                  {(['Aporte', 'Retiro'] as const).map(d => (
+                    <label key={d} className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input type="radio" name="direccion-ahorro" value={d}
+                        checked={categoriaPlan.direccion === d}
+                        onChange={() => setCategoriaPlan(prev => prev && ({ ...prev, direccion: d }))}
+                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 cursor-pointer" />
+                      {d === 'Aporte' ? 'Aporte (suma al ahorro)' : 'Retiro (resta del ahorro)'}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1.5">
+                  Sin esto todas caerían en Aporte, y un retiro quedaría sumando en vez de restando.
+                </p>
+              </div>
+            )}
+
+            <div className="flex gap-3 justify-end pt-2">
+              <button type="button" onClick={() => setCategoriaPlan(null)}
+                className="px-4 py-2 text-sm text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 cursor-pointer">
+                Cancelar
+              </button>
+              <button type="button" onClick={() => void confirmarCategoria()}
+                className="px-5 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer font-medium">
+                Cambiar {categoriaPlan.filas.length > 1 ? categoriaPlan.filas.length : ''}
+              </button>
+            </div>
+          </div>
+        </FormModal>
+      )}
+
+      <ConfirmDialog open={confirmBulkDelete} onOpenChange={open => !open && setConfirmBulkDelete(false)}
+        title={`Eliminar ${bulkDeleteFilas.length} transacci${bulkDeleteFilas.length === 1 ? 'ón' : 'ones'}`}
+        description={
+          `Se eliminarán ${bulkDeleteFilas.length} por un total de ${formatMXN(
+            bulkDeleteFilas.reduce((sum, t) => sum + Number(t.monto), 0),
+          )}. Esta acción no se puede deshacer.`
+          + (bulkDeleteExcluidas.length > 0
+            ? ` ${bulkDeleteExcluidas.length} de las seleccionadas ${bulkDeleteExcluidas.length === 1 ? 'es una compra' : 'son compras'} a crédito y no se ${bulkDeleteExcluidas.length === 1 ? 'elimina' : 'eliminan'}: sus pagos programados quedarían sin transacción detrás. Bórralas desde Créditos.`
+            : '')
+        }
+        confirmLabel={`Eliminar ${bulkDeleteFilas.length}`}
+        onConfirm={() => void confirmarBulkDelete()} />
 
       <ConfirmDialog open={confirmId != null} onOpenChange={open => !open && setConfirmId(null)}
         title="Eliminar transacción" description="Esta acción no se puede deshacer. La transacción se eliminará permanentemente."
