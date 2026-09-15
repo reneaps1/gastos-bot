@@ -382,4 +382,42 @@ como un mensaje nuevo con el monto claro (ej. "150 super" o "gaste 150 en super"
   }
 }
 
-module.exports = { classify, answer, chat, getSystemContext, isEnabled: () => !!GEMINI_API_KEY }
+// Mismo contrato que deepseek.complete: recibe mensajes estilo chat y devuelve
+// el texto, o null si el proveedor falla. Existe para que el agente de
+// herramientas (src/financeAgent.js) pueda correr con cualquiera de los dos
+// proveedores. Antes dependia solo de DeepSeek: si esa llamada fallaba -- un
+// modelo mal configurado, la cuenta sin saldo, un timeout -- el agente devolvia
+// null y Milo caia al catalogo de intents fijos, que solo sabe contestar seis
+// preguntas. Tener dos proveedores hace que un fallo de uno no apague la unica
+// pieza capaz de traducir una pregunta libre en consultas.
+//
+// Gemini no tiene roles de sistema como tal, asi que los mensajes se aplanan a
+// un solo prompt conservando quien dijo que.
+async function complete(messages, { json = false, maxTokens = 500 } = {}) {
+  const m = getModel()
+  if (!m) return null
+
+  try {
+    const prompt = (Array.isArray(messages) ? messages : [])
+      .map(msg => {
+        const rol = msg.role === 'assistant' ? 'ASSISTANT' : msg.role === 'system' ? 'SYSTEM' : 'USER'
+        return `${rol}:\n${msg.content}`
+      })
+      .join('\n\n')
+
+    const result = await m.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        maxOutputTokens: maxTokens,
+        ...(json ? { responseMimeType: 'application/json' } : {}),
+      },
+    })
+
+    return result?.response?.text()?.trim() || null
+  } catch (error) {
+    console.error(`GEMINI_ERROR complete: ${error.message}`)
+    return null
+  }
+}
+
+module.exports = { classify, answer, chat, complete, getSystemContext, isEnabled: () => !!GEMINI_API_KEY }

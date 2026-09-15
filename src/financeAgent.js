@@ -1,7 +1,25 @@
 const deepseek = require('./deepseek')
+const gemini = require('./gemini')
 const { executeTool, getToolDefinitions } = require('./miloTools')
 
 const MAX_STEPS = 5
+
+// DeepSeek es el preferido; Gemini entra si DeepSeek no esta configurado o si
+// su llamada falla. Antes el agente solo hablaba con DeepSeek y devolvia null
+// al primer error, asi que cualquier problema del proveedor (un DEEPSEEK_MODEL
+// que la API no reconoce, la cuenta sin saldo, un timeout) apagaba en silencio
+// la unica pieza que traduce una pregunta libre en consultas, y Milo caia al
+// catalogo de seis intents fijos.
+function proveedoresDisponibles() {
+  const lista = []
+  if (deepseek.isEnabled() && typeof deepseek.complete === 'function') {
+    lista.push({ nombre: 'deepseek', complete: deepseek.complete })
+  }
+  if (gemini.isEnabled() && typeof gemini.complete === 'function') {
+    lista.push({ nombre: 'gemini', complete: gemini.complete })
+  }
+  return lista
+}
 
 function safeJsonParse(raw) {
   if (!raw) return null
@@ -43,7 +61,11 @@ No pongas markdown fuera del JSON.`
 }
 
 async function answer(question, { senderName } = {}) {
-  if (!deepseek.isEnabled() || typeof deepseek.complete !== 'function') return null
+  const proveedores = proveedoresDisponibles()
+  if (proveedores.length === 0) {
+    console.error('FINANCE_AGENT_SIN_PROVEEDOR: ni DEEPSEEK_API_KEY ni GEMINI_API_KEY configuradas')
+    return null
+  }
 
   const messages = [
     { role: 'system', content: buildSystemPrompt(senderName) },
@@ -52,9 +74,24 @@ async function answer(question, { senderName } = {}) {
 
   const seenCalls = new Set()
   const trace = []
+  // Se fija en el primero que conteste y se queda con el: cambiar de proveedor
+  // a media conversacion mezclaria dos estilos de plan en el mismo historial.
+  let proveedorActivo = null
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
-    const raw = await deepseek.complete(messages, { json: true, maxTokens: 700 })
+    let raw = null
+    for (const proveedor of (proveedorActivo ? [proveedorActivo] : proveedores)) {
+      raw = await proveedor.complete(messages, { json: true, maxTokens: 700 })
+      if (raw) {
+        if (!proveedorActivo) {
+          proveedorActivo = proveedor
+          console.log(`FINANCE_AGENT_PROVIDER: ${proveedor.nombre}`)
+        }
+        break
+      }
+      console.error(`FINANCE_AGENT_PROVIDER_FAILED: ${proveedor.nombre}`)
+    }
+
     const plan = safeJsonParse(raw)
 
     if (!plan || !plan.action) {
@@ -66,7 +103,7 @@ async function answer(question, { senderName } = {}) {
       const finalAnswer = typeof plan.answer === 'string' ? plan.answer.trim() : ''
       if (!finalAnswer) return null
       console.log('FINANCE_AGENT_ANSWER:', finalAnswer.substring(0, 180))
-      return { reply: finalAnswer, provider: 'deepseek-agent', trace }
+      return { reply: finalAnswer, provider: `${proveedorActivo?.nombre || 'agent'}-agent`, trace }
     }
 
     if (plan.action !== 'tool' || typeof plan.tool !== 'string') {
