@@ -11,8 +11,11 @@
 //   2. `alignTransactionCategory` mueve la categoria de la transaccion a la de
 //      su linea, DESPUES de que el usuario lo confirma. Cambia
 //      `categoriaId` (y lo que se deriva de el) y nunca toca `presupuestoId`.
+//   3. `createBudgetLineForTransaction` crea una linea a la medida del
+//      movimiento y la enlaza. Es la unica que crea presupuesto, y por eso es
+//      la unica que escribe bitacora (ver su comentario).
 //
-// Son dos escrituras separadas a proposito: enlazar no cambia la categoria en
+// 1 y 2 son escrituras separadas a proposito: enlazar no cambia la categoria en
 // silencio, y confirmar la categoria no puede mover el enlace. Esa separacion
 // es lo que hace que "nunca se sobrescribe en silencio" sea literal.
 //
@@ -22,11 +25,16 @@
 // transaccion de base de datos. Tener dos implementaciones de una operacion
 // financiera auditada es como se terminan desincronizando. El bot detecta el
 // excedido y lleva al dashboard, que es donde vive.
+//
+// La frontera, entonces, no es "el bot no escribe presupuesto": es que el bot
+// no hace operaciones con DONANTE. Crear es aditivo y no le quita nada a nadie;
+// un traspaso si, y validar eso en dos lugares es como se desincronizan.
 
 const prisma = require('./lib/prisma')
 const { getBudgetLineStatus } = require('./budgetTracker')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
 const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
+const { registrarCreacionPresupuesto } = require('./presupuestoCambios')
 
 // Motivos de rechazo, para que el llamador decida que mensaje mostrar sin
 // interpretar cadenas libres.
@@ -44,6 +52,7 @@ const RECHAZO = {
   // La transaccion no esta enlazada a esa linea, asi que no hay nada que
   // alinear. Solo lo usa alignTransactionCategory.
   NO_ENLAZADA: 'NO_ENLAZADA',
+  CATEGORIA_NO_EXISTE: 'CATEGORIA_NO_EXISTE',
 }
 
 /**
@@ -109,6 +118,68 @@ async function linkTransactionToBudget({ transaccionId, presupuestoId }) {
   })
 
   return { ok: true, yaEstaba: false, cruzado, linea, tx, status: await getBudgetLineStatus(lineaId) }
+}
+
+/**
+ * Crea una linea de presupuesto a la medida de una transaccion y la enlaza.
+ *
+ * SOBRE EL ALCANCE: el encabezado de este archivo prohibe duplicar los
+ * TRASPASOS, por dos razones concretas -- validar que la linea donante no quede
+ * bajo lo ya gastado, y escribir la bitacora en la misma transaccion de base de
+ * datos. Crear una linea no tiene donante, asi que la primera no aplica; la
+ * segunda si, y por eso la linea y su fila CREACION se escriben dentro de un
+ * unico `prisma.$transaction`: una linea que exista sin su bitacora rompe el
+ * invariante que vigilan los checks 12 y 13 de scripts/audit-datos.sql.
+ *
+ * El monto es el de la transaccion (queda en cero disponible, sin excedido) y
+ * la descripcion es la suya. Es lo unico que se puede capturar con botones, y
+ * el bot no tiene estado conversacional para pedir mas. Ajustar el monto real
+ * es trabajo del dashboard, que para eso tiene formulario.
+ *
+ * @returns {{ok: boolean, reason?: string, linea?: object, status?: object}}
+ */
+async function createBudgetLineForTransaction({ transaccionId, categoriaId, actor = null }) {
+  const txId = Number(transaccionId)
+  const catId = Number(categoriaId)
+  if (!Number.isInteger(txId) || !Number.isInteger(catId)) {
+    return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
+  }
+
+  const tx = await prisma.transaccion.findUnique({ where: { id: txId } })
+  if (!tx) return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
+
+  const categoria = await prisma.categoria.findUnique({ where: { id: catId } })
+  if (!categoria) return { ok: false, reason: RECHAZO.CATEGORIA_NO_EXISTE }
+
+  // El tipo de la linea nace de la categoria, nunca de lo que mande el cliente:
+  // misma regla que POST /api/presupuestos del dashboard. Y tiene que coincidir
+  // con el de la transaccion, o estariamos creando justo el cruce de tipo que
+  // hace desaparecer el monto de los agregados.
+  if (categoria.tipo !== tx.tipo) return { ok: false, reason: RECHAZO.TIPO_DISTINTO }
+
+  const linea = await prisma.$transaction(async trx => {
+    const creada = await trx.presupuesto.create({
+      data: {
+        quincenaId: tx.quincenaId,
+        descripcion: tx.descripcion,
+        categoriaId: catId,
+        montoPresupuestado: tx.monto,
+        clasificacion: CLASIFICACION_POR_CATEGORIA[categoria.nombre] ?? null,
+        tipo: categoria.tipo,
+        recurrente: false,
+      },
+      include: { categoria: true },
+    })
+    await registrarCreacionPresupuesto(trx, creada, actor, 'Linea creada desde Telegram')
+    return creada
+  })
+
+  // Enlazar pasa por el camino de siempre, ya validado, en vez de escribir
+  // `presupuestoId` aqui por atajo.
+  const enlace = await linkTransactionToBudget({ transaccionId: txId, presupuestoId: linea.id })
+  if (!enlace.ok) return { ok: false, reason: enlace.reason, linea }
+
+  return { ok: true, linea, status: enlace.status }
 }
 
 /**
@@ -233,6 +304,8 @@ function describeRechazo(reason) {
       return 'Esa línea es de otra quincena.'
     case RECHAZO.NO_ENLAZADA:
       return 'Ese movimiento ya no está en esa línea.'
+    case RECHAZO.CATEGORIA_NO_EXISTE:
+      return 'Esa categoría ya no existe.'
     default:
       return 'No pude vincular el movimiento.'
   }
@@ -241,6 +314,7 @@ function describeRechazo(reason) {
 module.exports = {
   linkTransactionToBudget,
   alignTransactionCategory,
+  createBudgetLineForTransaction,
   unlinkTransaction,
   findTransactionsByReference,
   describeRechazo,

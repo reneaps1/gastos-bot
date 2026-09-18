@@ -74,6 +74,9 @@ let nextTxId = 1
 // dependen de que no haya lineas (sin candidatas no hay botones), y los casos
 // de asignacion las agregan justo antes de usarlas.
 const presupuestos = []
+let nextLineaId = 200
+// Cada fila que el bot escriba en presupuesto_cambios. El caso AH lee esto.
+const cambiosPresupuesto = []
 
 const fakePrisma = {
   transaccion: {
@@ -150,6 +153,30 @@ const fakePrisma = {
           ? l.estadoLinea !== where.estadoLinea.not
           : l.estadoLinea === where.estadoLinea)),
     findUnique: async ({ where }) => presupuestos.find(l => l.id === where.id) || null,
+    create: async ({ data }) => {
+      const fila = {
+        id: nextLineaId++, ...data,
+        categoria: categorias.find(c => c.id === data.categoriaId) || null,
+        quincena: quincenas.find(q => q.id === data.quincenaId) || null,
+      }
+      presupuestos.push(fila)
+      return fila
+    },
+  },
+  categoria: {
+    findUnique: async ({ where }) => categorias.find(c => c.id === where.id) || null,
+    findMany: async ({ where } = {}) => categorias.filter(c =>
+      (where?.activo === undefined || c.activo === where.activo) &&
+      (where?.tipo === undefined || c.tipo === where.tipo)),
+  },
+  // $transaction e $executeRaw existen para que el caso AH pueda comprobar que
+  // la linea y su fila CREACION se escriben JUNTAS. Un doble que ignorara
+  // $executeRaw dejaria pasar exactamente el defecto que ese caso vigila:
+  // lineas creadas sin bitacora, invisibles para el timeline del dashboard.
+  $transaction: async fn => fn(fakePrisma),
+  $executeRaw: async (strings, ...valores) => {
+    cambiosPresupuesto.push({ sql: strings.join('?'), valores })
+    return 1
   },
   quincena: { findFirst: async () => ({ id: 1, codigo: 'QTEST', fechaInicio: inicioRango, fechaFin: finRango }) },
   liquidezSnapshot: { findFirst: async () => null },
@@ -609,6 +636,35 @@ async function main() {
   const soloPersonal = editados.at(-1)?.buttons?.flat().map(b => b.callback_data) || []
   check('ahora si muestra lineas de Personal', soloPersonal.includes(`pl:${txPag.id}:10`), JSON.stringify(soloPersonal))
   check('y ninguna de Familia', !soloPersonal.includes(`pl:${txPag.id}:12`), JSON.stringify(soloPersonal))
+
+  console.log('\n=== AH: crear linea desde el bot escribe TAMBIEN su bitacora ===')
+  await post(textUpdate('123, concierto raro'))
+  const txNueva = creadas.at(-1)
+  await post(callbackUpdate(`pd:${txNueva.id}:0`))
+  const menuCats = editados.at(-1)?.buttons?.flat().map(b => b.callback_data) || []
+  check('ofrece categorias del mismo tipo', menuCats.includes(`pd:${txNueva.id}:7`), JSON.stringify(menuCats))
+  check('no ofrece categorias de otro tipo', !menuCats.includes(`pd:${txNueva.id}:1`), JSON.stringify(menuCats))
+
+  const cambiosAntes = cambiosPresupuesto.length
+  await post(callbackUpdate(`pd:${txNueva.id}:7`))
+  const lineaNueva = presupuestos.at(-1)
+  check('creo la linea', lineaNueva?.descripcion === txNueva.descripcion, lineaNueva?.descripcion)
+  check('con el monto del movimiento', Number(lineaNueva?.montoPresupuestado) === Number(txNueva.monto), lineaNueva?.montoPresupuestado)
+  check('el tipo sale de la categoria', lineaNueva?.tipo === 'Gasto', lineaNueva?.tipo)
+  check('enlazo el movimiento a la linea nueva', txNueva.presupuestoId === lineaNueva?.id, txNueva.presupuestoId)
+  check('escribio la fila de bitacora', cambiosPresupuesto.length === cambiosAntes + 1, cambiosPresupuesto.length)
+  const cambio = cambiosPresupuesto.at(-1)
+  check('la bitacora es un CREACION', cambio?.valores?.includes('CREACION'), JSON.stringify(cambio?.valores))
+  check('la bitacora trae el monto de la linea', cambio?.valores?.includes(Number(txNueva.monto)), JSON.stringify(cambio?.valores))
+
+  console.log('\n=== AH2: no se puede crear una linea de otro tipo ===')
+  // Espejo de AB para el camino de creacion: si esto se colara, el bot seria el
+  // unico lugar capaz de fabricar el cruce de tipo que hace desaparecer el monto.
+  const cambiosAntesAH2 = cambiosPresupuesto.length
+  const lineasAntesAH2 = presupuestos.length
+  await post(callbackUpdate(`pd:${txNueva.id}:1`))
+  check('no creo la linea', presupuestos.length === lineasAntesAH2, presupuestos.length)
+  check('no escribio bitacora', cambiosPresupuesto.length === cambiosAntesAH2, cambiosPresupuesto.length)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

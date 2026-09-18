@@ -61,6 +61,7 @@ const {
 const {
   linkTransactionToBudget,
   alignTransactionCategory,
+  createBudgetLineForTransaction,
   unlinkTransaction,
   findTransactionsByReference,
   describeRechazo,
@@ -262,6 +263,7 @@ function etiquetaLinea(c) {
 //   pc:<tx>:<cat>     categorias; cat 0 = el menu, cat real = sus lineas
 //   pk:<tx>:<linea>   confirmar el cambio de categoria (ok)
 //   pm:<tx>:<linea>   mantener mi categoria
+//   pd:<tx>:<cat>     crear linea; cat 0 = elegir categoria, cat real = crearla
 //
 // `0` funciona como centinela en `pc:` porque ninguna categoria tiene id 0.
 const PAGE_SIZE = 6
@@ -296,7 +298,23 @@ function budgetButtons(transaccionId, candidates, { pagina = 0 } = {}) {
     rows.push([{ text: '📂 Buscar por categoría', callback_data: `pc:${transaccionId}:0` }])
   }
 
+  rows.push([{ text: '➕ Crear línea nueva', callback_data: `pd:${transaccionId}:0` }])
   rows.push([{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }])
+  return rows
+}
+
+// Las categorias en las que se puede crear la linea. Filtradas al tipo del
+// movimiento: para un Gasto son 7, y para un Ingreso o un Ahorro es una sola,
+// o sea que el "menu" se vuelve un confirmar de un toque.
+function newLineCategoryButtons(transaccionId, categorias) {
+  const rows = []
+  for (let i = 0; i < categorias.length; i += 3) {
+    rows.push(categorias.slice(i, i + 3).map(c => ({
+      text: c.nombre,
+      callback_data: `pd:${transaccionId}:${c.id}`,
+    })))
+  }
+  rows.push([{ text: '◀ Volver a las líneas', callback_data: `pp:${transaccionId}:0` }])
   return rows
 }
 
@@ -967,6 +985,55 @@ async function handleBudgetCallback(callback) {
         `${resumen}\n\n¿A cuál línea lo mando?`,
         { buttons: budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0 }) },
       )
+      return
+    }
+
+    // 'pd' = crear una linea a la medida del movimiento. arg 0 = elegir
+    // categoria; arg real = crear y enlazar.
+    if (accion === 'pd') {
+      const tx = await prisma.transaccion.findUnique({ where: { id: Number(txId) } })
+      if (!tx) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
+        return
+      }
+      const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
+
+      if (Number(arg) === 0) {
+        const categorias = await prisma.categoria.findMany({
+          where: { activo: true, tipo: tx.tipo },
+          orderBy: { nombre: 'asc' },
+        })
+        if (categorias.length === 0) {
+          await telegram.editMessageText(callback.chatId, callback.messageId, `${resumen}\n\nNo hay categorías disponibles para este tipo de movimiento.`)
+          return
+        }
+        await telegram.editMessageText(
+          callback.chatId,
+          callback.messageId,
+          `${resumen}\n\nLa línea nueva quedará con este monto y este nombre. ¿En qué categoría la creo?`,
+          { buttons: newLineCategoryButtons(tx.id, categorias) },
+        )
+        return
+      }
+
+      const creada = await createBudgetLineForTransaction({
+        transaccionId: txId,
+        categoriaId: arg,
+        actor: callback.senderName || 'telegram',
+      })
+      if (!creada.ok) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, `⚠️ ${describeRechazo(creada.reason)}`)
+        return
+      }
+      const bloqueNueva = budgetStatusBlock(creada.status)
+      const encabezadoNueva = `✅ Creé la línea *${telegram.escapeMarkdown(creada.linea.descripcion)}* en ${telegram.escapeMarkdown(creada.linea.categoria?.nombre || '')} y le asigné el movimiento.`
+      await telegram.editMessageText(
+        callback.chatId,
+        callback.messageId,
+        bloqueNueva.texto ? `${encabezadoNueva}\n\n${bloqueNueva.texto}` : encabezadoNueva,
+        { buttons: bloqueNueva.buttons || dashboardButton('Ajustar el monto en el dashboard') },
+      )
+      console.log(`TELEGRAM_LINEA_CREADA: tx=${txId}; linea=${creada.linea.id}; categoria=${arg}`)
       return
     }
 
