@@ -287,18 +287,41 @@ El modo privacidad se apaga en @BotFather: `/setprivacy` → Disable. Sin eso, e
 
 ### Asignar gastos a lineas desde Telegram
 
-Cuando Milo registra un gasto y `resolveBudgetLine()` no puede vincularlo con seguridad, la confirmacion trae **botones** con las lineas candidatas. Al tocar uno, el gasto queda vinculado y el mensaje original se reescribe con el estado de la linea, ya sin botones.
+**Milo NUNCA asigna solo.** Un movimiento registrado desde Telegram nace siempre sin linea, y la confirmacion trae **botones** con las lineas de la quincena. El enlace lo escribe el toque, no el registro.
+
+`resolveBudgetLine()` sigue existiendo pero ya no enlaza: solo dice cual es la apuesta fuerte, para ponerla **primera y marcada con ⭐**. Antes, cuando acertaba con confianza, escribia el enlace sola y el mensaje salia **sin un solo boton** — dos problemas en uno: asignaba sin preguntar, y cuando se equivocaba no habia forma de verlo ni de corregirlo desde Telegram, porque las opciones ni se mostraban.
+
+Cuando las lineas no caben en una pantalla, hay tres salidas y el texto dice cuantas hay en total, para que no se lea como "estas son las que hay":
+
+| Salida | Para que |
+|---|---|
+| `Ver más »` / `« Anterior` | recorrer las paginas (6 lineas por pagina) |
+| `📂 Buscar por categoría` | saltar directo al grupo, sin recorrer paginas |
+| `➕ Crear línea nueva` | cuando la linea no existe todavia |
 
 Piezas:
 
 - `src/budgetActions.js` — la escritura y su validacion, aparte del handler para poder probarla sola.
 - `handleBudgetCallback()` en `src/index.js` — resuelve el toque del boton.
+- `budgetPickerContext()` en `src/index.js` — recalcula candidatas y sugerida en cada toque. La paginacion no guarda estado, asi que el orden tiene que ser reproducible: si la pagina 0 pusiera la sugerida primero y las demas no, habria lineas duplicadas entre paginas y otras inalcanzables. El caso AG lo vigila.
 - `extractCallbackQuery()`, `answerCallbackQuery()` y `editMessageText()` en `src/telegram.js`.
-- `callback_data` con formato `pl:<txId>:<lineaId>` y `pn:<txId>`. Corto a proposito: Telegram lo limita a 64 bytes.
+- `callback_data`, siempre en 3 partes y muy debajo del limite de 64 bytes de Telegram:
+
+| Prefijo | Significado |
+|---|---|
+| `pl:<tx>:<linea>` | enlazar |
+| `pn:<tx>` | dejar sin asignar |
+| `ps:<tx>` | elegir cual movimiento (reasignacion ambigua) |
+| `pp:<tx>:<pagina>` | paginar |
+| `pc:<tx>:<cat>` | categorias; `0` = el menu, id real = sus lineas |
+| `pk:<tx>:<linea>` | confirmar el cambio de categoria |
+| `pm:<tx>:<linea>` | mantener mi categoria |
+| `pd:<tx>:<cat>` | crear linea; `0` = elegir categoria, id real = crearla |
 
 Reglas que no se pueden relajar:
 
-- **`callback_data` es entrada NO CONFIABLE.** Viaja por el cliente del usuario, asi que un cliente modificado puede mandar cualquier par de ids. `linkTransactionToBudget()` verifica TODO contra la base: que la transaccion exista y sea gasto, que la linea exista, sea de gasto y no este cancelada, y sobre todo **que la linea sea de la misma quincena que la transaccion**. Sin eso, un gasto podria colgarse de una linea de otro periodo y el presupuesto dejaria de cuadrar sin que nadie lo note hasta el cierre.
+- **Nada se asigna sin un toque humano.** No hay atajo "si estoy muy seguro, lo escribo". El caso T0 existe para atrapar esa regresion con la coincidencia mas obvia que hay (un gasto que dice "niñera" y una linea que se llama "Niñera").
+- **`callback_data` es entrada NO CONFIABLE.** Viaja por el cliente del usuario, asi que un cliente modificado puede mandar cualquier par de ids. `linkTransactionToBudget()` verifica TODO contra la base: que la transaccion exista, que la linea exista y no este cancelada, que **los tipos coincidan**, y sobre todo **que la linea sea de la misma quincena que la transaccion**. Sin eso, un gasto podria colgarse de una linea de otro periodo y el presupuesto dejaria de cuadrar sin que nadie lo note hasta el cierre.
 - **Un callback pasa por las mismas puertas que un mensaje**: el secreto del webhook y la lista blanca de chats. Un boton no puede ser una puerta trasera.
 - **Tocar dos veces no escribe dos veces.** El segundo toque es no-op y responde "ya estaba asignado".
 - `registerWebhook()` no manda `allowed_updates`, y el default de Telegram si incluye `callback_query`. No hay que tocar el registro del webhook para que esto funcione.
@@ -317,7 +340,7 @@ Como se resuelve la frase:
 
 1. `detectReassign()` en `src/reassignIntent.js` — detector **local por regex**, sin red. Saca `{ referencia, destino }`. DeepSeek (tipo `reassign` en `classify`) es el respaldo para frases que la regex no cubre, mismo patron que `classifyQuestionLocally()`: lo comun no depende de que un proveedor externo este vivo.
 2. `findTransactionsByReference()` en `src/budgetActions.js` — busca el gasto. **Acotado a la quincena activa** y ordenado por fecha descendente: sin eso "super" podria traer un gasto de hace tres meses y nadie lo notaria al confirmar.
-3. `resolveBudgetLine()` resuelve el destino con el mismo criterio conservador de siempre.
+3. `resolveBudgetLineByName()` resuelve el destino, con los mismos umbrales conservadores de siempre pero buscando en **toda la quincena**, no solo en la categoria del gasto. Aqui el usuario ESCRIBIO el destino: no lo estamos adivinando, y el resultado se confirma con un boton antes de escribir. Acotarlo a la categoria era justo el problema — nombrabas la linea que querias y el bot no la encontraba porque vivia en otra.
 4. Se propone con boton. El `callback_data` es el **mismo `pl:<txId>:<lineaId>`** del flujo de botones, asi que la validacion y la escritura son exactamente las ya probadas.
 
 | Lo que encuentra | Que hace |

@@ -276,12 +276,14 @@ const MAX_LINEAS_POR_CATEGORIA = 10
 // ordena de forma total y determinista (ver su comentario); con un orden que
 // pudiera variar entre dos llamadas habria lineas que no salen en ninguna
 // pagina.
-function budgetButtons(transaccionId, candidates, { pagina = 0 } = {}) {
+function budgetButtons(transaccionId, candidates, { pagina = 0, sugeridaId = null } = {}) {
   const totalPaginas = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE))
   const p = Math.min(Math.max(0, Number(pagina) || 0), totalPaginas - 1)
 
   const rows = candidates.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE).map(c => [{
-    text: etiquetaLinea(c),
+    // La sugerida se marca en vez de aplicarse sola. El bot puede opinar; el
+    // que decide es el usuario, y para eso tiene que poder ver que hay opcion.
+    text: c.id === sugeridaId ? `⭐ ${etiquetaLinea(c)}` : etiquetaLinea(c),
     callback_data: `pl:${transaccionId}:${c.id}`,
   }])
 
@@ -301,6 +303,24 @@ function budgetButtons(transaccionId, candidates, { pagina = 0 } = {}) {
   rows.push([{ text: '➕ Crear línea nueva', callback_data: `pd:${transaccionId}:0` }])
   rows.push([{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }])
   return rows
+}
+
+// El texto que acompaña a los botones de linea.
+//
+// Dice cuantas lineas hay EN TOTAL, no cuantas caben en la pantalla. Sin ese
+// numero, ver seis botones se lee como "estas son las que hay" y la salida
+// ("Ver más", "Buscar por categoría") parece decoracion en vez de la forma de
+// llegar a las otras veinte.
+function budgetPrompt(candidates, sugeridaId = null) {
+  const sugerida = sugeridaId ? candidates.find(c => c.id === sugeridaId) : null
+  const cabeTodo = candidates.length <= PAGE_SIZE
+
+  const pregunta = sugerida
+    ? `¿Lo mando a *${telegram.escapeMarkdown(sugerida.descripcion)}*? Toca la que corresponda:`
+    : '¿A cuál línea lo mando?'
+
+  if (cabeTodo) return pregunta
+  return `${pregunta}\n\n_Hay ${candidates.length} líneas en esta quincena; si no ves la tuya, usa «Ver más» o «Buscar por categoría»._`
 }
 
 // Las categorias en las que se puede crear la linea. Filtradas al tipo del
@@ -404,7 +424,11 @@ async function resolveMiloUser(message) {
   return null
 }
 
-async function saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena, presupuesto) {
+// Sin parametro de presupuesto a proposito: una transaccion de Telegram nace
+// SIEMPRE sin linea, y el enlace lo escribe despues el boton `pl:` (o sea
+// linkTransactionToBudget). Tener aqui una via alterna para escribir
+// `presupuestoId` era justo lo que permitia asignar sin preguntar.
+async function saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena) {
   const { tipo, direccion } = resolverTipoYDireccion(categoria.tipo, parsed.tipo, parsed.direccion ?? null)
 
   return prisma.transaccion.create({
@@ -420,7 +444,7 @@ async function saveTelegramTransaction(parsed, user, categoria, metodoPago, quin
       direccion,
       monto: parsed.monto,
       metodoPagoId: metodoPago?.id || null,
-      presupuestoId: presupuesto?.id || null,
+      presupuestoId: null,
       estatus: parsed.estatus,
       notas: null,
       source: 'telegram',
@@ -899,15 +923,36 @@ async function budgetPickerContext(txId) {
   const tx = await prisma.transaccion.findUnique({ where: { id: Number(txId) } })
   if (!tx) return null
 
-  const candidatas = await getBudgetCandidates({
+  const lookup = {
     quincenaId: tx.quincenaId,
     categoriaId: tx.categoriaId,
     descripcion: tx.descripcion,
     // El tipo sale de la transaccion, no hardcodeado: un ingreso o un ahorro
     // tambien se cuelgan de una linea.
     tipo: tx.tipo,
-  })
-  return { tx, candidatas }
+  }
+
+  // resolveBudgetLine YA NO ENLAZA NADA: solo dice cual linea es la apuesta
+  // fuerte, para ponerla primera y marcarla. Antes, cuando acertaba con
+  // confianza, escribia el enlace sola y el mensaje salia SIN BOTONES -- que es
+  // como se juntaban las dos quejas: asignaba sin preguntar y, de paso, nunca
+  // se veian las demas opciones ni el "Ver más".
+  //
+  // Se recalcula aqui, y no se arrastra desde la captura, porque la paginacion
+  // es sin estado: `pp:<tx>:<pagina>` vuelve a pedir la lista y a cortarla. Si
+  // la pagina 0 pusiera la sugerida primero y las demas no, habria lineas
+  // duplicadas entre paginas y otras inalcanzables.
+  const [candidatas, sugerida] = await Promise.all([
+    getBudgetCandidates(lookup),
+    resolveBudgetLine(lookup),
+  ])
+
+  const sugeridaId = sugerida?.id ?? null
+  const ordenadas = sugeridaId === null ? candidatas : [
+    ...candidatas.filter(c => c.id === sugeridaId),
+    ...candidatas.filter(c => c.id !== sugeridaId),
+  ]
+  return { tx, candidatas: ordenadas, sugeridaId }
 }
 
 // Resuelve el toque de un boton de presupuesto.
@@ -950,7 +995,7 @@ async function handleBudgetCallback(callback) {
         await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
         return
       }
-      const { tx, candidatas } = contexto
+      const { tx, candidatas, sugeridaId } = contexto
       const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
 
       if (candidatas.length === 0) {
@@ -982,8 +1027,8 @@ async function handleBudgetCallback(callback) {
       await telegram.editMessageText(
         callback.chatId,
         callback.messageId,
-        `${resumen}\n\n¿A cuál línea lo mando?`,
-        { buttons: budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0 }) },
+        `${resumen}\n\n${budgetPrompt(candidatas, sugeridaId)}`,
+        { buttons: budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0, sugeridaId }) },
       )
       return
     }
@@ -1340,34 +1385,38 @@ app.post('/telegram/webhook', async (req, res) => {
       tipo: parsed.tipo,
     }
 
-    const presupuesto = await resolveBudgetLine(budgetLookup)
-    const tx = await saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena, presupuesto)
+    // EL MOVIMIENTO NACE SIN LINEA, SIEMPRE.
+    //
+    // Antes, cuando resolveBudgetLine acertaba con confianza, el enlace se
+    // escribia aqui mismo y el mensaje salia sin un solo boton. Dos problemas en
+    // uno: asignaba sin preguntar, y cuando se equivocaba no habia forma de
+    // verlo ni de corregirlo desde Telegram, porque las opciones ni se
+    // mostraban. La sugerencia sigue existiendo -- va primera y marcada con una
+    // estrella -- pero ahora es una propuesta de un toque, no un hecho
+    // consumado. Quien escribe el enlace es siempre el boton `pl:`, o sea
+    // linkTransactionToBudget, que es el unico camino validado.
+    const tx = await saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena)
 
     let confirmation = formatTelegramConfirmation(parsed)
     let buttons = null
+    let sugeridaId = null
 
-    if (presupuesto) {
-      const status = await getBudgetLineStatus(presupuesto.id)
-      const bloque = budgetStatusBlock(status)
-      if (bloque.texto) confirmation += `\n\n${bloque.texto}`
-      buttons = bloque.buttons
-    } else if (TIPOS_CON_LINEA.has(parsed.tipo)) {
-      // Antes esto era `parsed.tipo === 'Gasto'`: los ingresos y los ahorros
-      // nunca veian un boton de linea aunque su categoria tuviera partidas.
-      const candidates = await getBudgetCandidates(budgetLookup)
-      confirmation += '\n\n⚠️ El movimiento quedó registrado, pero no lo vinculé a una línea porque hay ambigüedad.'
+    if (TIPOS_CON_LINEA.has(parsed.tipo)) {
+      const contexto = await budgetPickerContext(tx.id)
+      const candidatas = contexto?.candidatas ?? []
+      sugeridaId = contexto?.sugeridaId ?? null
 
-      if (candidates.length > 0) {
-        // Antes esto era una lista de texto y un "la proxima vez especifica el
-        // concepto": el gasto se quedaba huerfano hasta que alguien abriera el
-        // dashboard. Ahora se resuelve con un toque.
-        confirmation += '\n\n¿A cuál línea lo mando?'
-        buttons = budgetButtons(tx.id, candidates)
+      if (candidatas.length > 0) {
+        confirmation += `\n\n${budgetPrompt(candidatas, sugeridaId)}`
+        buttons = budgetButtons(tx.id, candidatas, { sugeridaId })
+      } else {
+        confirmation += '\n\n⚠️ No hay líneas de presupuesto de este tipo en la quincena.'
+        buttons = [[{ text: '➕ Crear línea nueva', callback_data: `pd:${tx.id}:0` }]]
       }
     }
 
     await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId, { buttons })
-    console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=${presupuesto?.id || 'none'}`)
+    console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=none; sugerida=${sugeridaId ?? '-'}`)
   } catch (error) {
     console.error('Telegram webhook error:', error)
     try {
