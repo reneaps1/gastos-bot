@@ -94,6 +94,7 @@ export interface FilaParaPlan {
   descripcion: string
   quincenaId: number
   categoriaId: number
+  tipo: string
   presupuestoId: number | null
   presupuesto: { id: number; descripcion: string } | null
   creditoId: number | null
@@ -132,23 +133,35 @@ export function planMoverQuincena<T extends FilaParaPlan>(filas: T[], destinoId:
 
 // --- Agrupacion para asignar linea en lote ---------------------------------
 
-// `${quincenaId}::${categoriaId}` es la unica particion en la que una sola
-// linea destino es legal para todas las filas del grupo: la quincena porque el
-// servidor la exige, y la categoria porque ofrecer lineas de otra categoria en
-// una accion masiva seria elegir a ciegas por el usuario.
-export function claveGrupo(quincenaId: number, categoriaId: number): string {
-  return `${quincenaId}::${categoriaId}`
+// `${quincenaId}::${tipo}` es la particion en la que una sola linea destino es
+// legal para todas las filas del grupo:
+//
+//   - la QUINCENA porque el servidor la exige (ver @/lib/validar-enlace-presupuesto);
+//   - el TIPO porque es la frontera que no se puede cruzar sin romper los
+//     numeros: los agregados filtran por `categoria.tipo` (calcularFaltaPorPagar
+//     en @/lib/presupuesto-totales, @/lib/cierre-quincena), asi que un Gasto
+//     colgado de una linea de Ingreso no lo cuenta nadie.
+//
+// ANTES la particion incluia la CATEGORIA, con el argumento de que ofrecer
+// lineas de otra categoria seria elegir a ciegas por el usuario. Eso dejo de ser
+// cierto: la categoria de cada linea se ve en el selector (es el encabezado de
+// su <optgroup>), y particionar por ella multiplicaba los grupos hasta por 9
+// para pedir nueve veces la misma decision. Lo que si hace falta es preguntar
+// que pasa con la categoria de las filas que queden cruzadas, y eso lo resuelve
+// el dialogo, no la particion.
+export function claveGrupoTipo(quincenaId: number, tipo: string): string {
+  return `${quincenaId}::${tipo}`
 }
 
-export function leerClaveGrupo(clave: string): { quincenaId: number; categoriaId: number } {
-  const [q, c] = clave.split('::')
-  return { quincenaId: Number(q), categoriaId: Number(c) }
+export function leerClaveGrupoTipo(clave: string): { quincenaId: number; tipo: string } {
+  const [q, t] = clave.split('::')
+  return { quincenaId: Number(q), tipo: t }
 }
 
-export function agruparPorQuincenaYCategoria<T extends FilaParaPlan>(filas: T[]): Map<string, T[]> {
+export function agruparPorQuincenaYTipo<T extends FilaParaPlan>(filas: T[]): Map<string, T[]> {
   const grupos = new Map<string, T[]>()
   for (const fila of filas) {
-    const clave = claveGrupo(fila.quincenaId, fila.categoriaId)
+    const clave = claveGrupoTipo(fila.quincenaId, fila.tipo)
     const actual = grupos.get(clave)
     if (actual) actual.push(fila)
     else grupos.set(clave, [fila])

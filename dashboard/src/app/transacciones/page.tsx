@@ -16,12 +16,12 @@ import { useSearchShortcut } from '@/lib/use-search-shortcut'
 import { InlineSelectCell, type InlineOption } from '@/components/ui/InlineSelectCell'
 import { usePresupuestoLineas, etiquetaLinea, grupoLinea, type PresupuestoLinea } from './usePresupuestoLineas'
 import {
-  runBulk, planMoverQuincena, agruparPorQuincenaYCategoria, leerClaveGrupo, resumenBulk,
+  runBulk, planMoverQuincena, agruparPorQuincenaYTipo, leerClaveGrupoTipo, resumenBulk,
   type PlanMoverQuincena,
 } from '@/lib/transacciones-bulk'
 import { BulkActionsBar } from './BulkActionsBar'
 import { MoverQuincenaDialog } from './MoverQuincenaDialog'
-import { AsignarLineaDialog } from './AsignarLineaDialog'
+import { AsignarLineaDialog, type DecisionCategoria } from './AsignarLineaDialog'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -80,9 +80,11 @@ interface CategoriaPlanState {
 }
 
 interface AsignarPlanState {
-  grupos: Array<{ clave: string; quincenaId: number; categoriaId: number; filas: Transaccion[] }>
+  grupos: Array<{ clave: string; quincenaId: number; tipo: string; filas: Transaccion[] }>
   /** clave de grupo -> presupuestoId ('' = ese grupo no se toca). */
   elegidas: Record<string, string>
+  /** clave de grupo -> que hacer con las filas que queden cruzadas de categoria. */
+  decisiones: Record<string, DecisionCategoria>
 }
 
 const EMPTY_FORM = {
@@ -697,27 +699,50 @@ export default function TransaccionesPage() {
   // --- Asignar linea en lote -----------------------------------------------
 
   function abrirAsignarLinea() {
-    const grupos = Array.from(agruparPorQuincenaYCategoria(selectedTxs).entries()).map(([clave, filas]) => ({
-      clave, ...leerClaveGrupo(clave), filas,
+    const grupos = Array.from(agruparPorQuincenaYTipo(selectedTxs).entries()).map(([clave, filas]) => ({
+      clave, ...leerClaveGrupoTipo(clave), filas,
     }))
     ensureLineas(grupos.map(g => g.quincenaId))
-    setAsignarPlan({ grupos, elegidas: {} })
+    setAsignarPlan({ grupos, elegidas: {}, decisiones: {} })
   }
 
   async function confirmarAsignar() {
     if (!asignarPlan) return
-    const { grupos, elegidas } = asignarPlan
-    const porFila = new Map<number, string>()
+    const { grupos, elegidas, decisiones } = asignarPlan
+
+    // Por fila: la linea destino y, si el usuario eligio alinear, la categoria
+    // a la que se mueve. `categoriaId` solo viaja cuando alguien lo pidio: el
+    // servidor no la toca por su cuenta y este dialogo tampoco.
+    const porFila = new Map<number, { presupuestoId: string; categoriaId?: number }>()
     for (const g of grupos) {
       const elegida = elegidas[g.clave]
       if (!elegida) continue // grupo sin linea elegida: no se toca
-      for (const f of g.filas) porFila.set(f.id, elegida)
+      const linea = lineasDe(g.quincenaId).find(l => l.id.toString() === elegida)
+      const alinea = decisiones[g.clave] === 'alinear' && linea
+      for (const f of g.filas) {
+        porFila.set(f.id, {
+          presupuestoId: elegida,
+          categoriaId: alinea && f.categoriaId !== linea.categoriaId ? linea.categoriaId : undefined,
+        })
+      }
     }
-    const filas = selectedTxs.filter(
-      t => porFila.has(t.id) && (t.presupuestoId?.toString() ?? '') !== porFila.get(t.id),
-    )
+
+    // Una fila se escribe si le cambia la linea O la categoria. Antes solo se
+    // miraba la linea, lo que dejaba fuera a las que ya estaban en la linea
+    // correcta pero cuya categoria si habia que mover.
+    const filas = selectedTxs.filter(t => {
+      const destino = porFila.get(t.id)
+      if (!destino) return false
+      return (t.presupuestoId?.toString() ?? '') !== destino.presupuestoId
+        || destino.categoriaId !== undefined
+    })
     setAsignarPlan(null)
-    await ejecutarBulk(filas, tx => ({ presupuestoId: porFila.get(tx.id) }), {
+    await ejecutarBulk(filas, tx => {
+      const destino = porFila.get(tx.id)!
+      return destino.categoriaId === undefined
+        ? { presupuestoId: destino.presupuestoId }
+        : { presupuestoId: destino.presupuestoId, categoriaId: destino.categoriaId }
+    }, {
       uno: 'asignada', varias: 'asignadas',
       omitidas: selectedTxs.length - filas.length,
       invalidarQ: Array.from(new Set(filas.map(t => t.quincenaId))),
@@ -1669,14 +1694,23 @@ export default function TransaccionesPage() {
         <AsignarLineaDialog
           grupos={asignarPlan.grupos}
           elegidas={asignarPlan.elegidas}
+          decisiones={asignarPlan.decisiones}
           nombreQuincena={id => quincenas.find(q => q.id === id)?.codigo ?? `Q${id}`}
           nombreCategoria={id => categorias.find(c => c.id === id)?.nombre ?? 'Sin categoría'}
           cargando={id => estadoLineas(id) === 'loading'}
-          lineasPara={(quincenaId, categoriaId) =>
-            lineasDe(quincenaId, { categoriaId })
-              .map(l => ({ value: l.id.toString(), label: etiquetaLinea(l) }))}
+          lineasPara={(quincenaId, tipo) =>
+            lineasDe(quincenaId, { tipo })
+              .map(l => ({ value: l.id.toString(), label: etiquetaLinea(l), group: grupoLinea(l), categoriaId: l.categoriaId }))}
           onElegir={(clave, presupuestoId) =>
-            setAsignarPlan(prev => prev && ({ ...prev, elegidas: { ...prev.elegidas, [clave]: presupuestoId } }))}
+            // Cambiar de linea invalida la decision anterior: la pregunta es
+            // sobre ESA linea, y arrastrarla seria contestar por el usuario.
+            setAsignarPlan(prev => prev && ({
+              ...prev,
+              elegidas: { ...prev.elegidas, [clave]: presupuestoId },
+              decisiones: { ...prev.decisiones, [clave]: '' },
+            }))}
+          onDecidir={(clave, decision) =>
+            setAsignarPlan(prev => prev && ({ ...prev, decisiones: { ...prev.decisiones, [clave]: decision } }))}
           onConfirm={() => void confirmarAsignar()}
           onCancel={() => setAsignarPlan(null)}
         />
