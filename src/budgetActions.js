@@ -270,6 +270,13 @@ async function unlinkTransaction({ transaccionId }) {
 // descendente: sin eso "super" podria traer un gasto de hace tres meses y nadie
 // lo notaria al confirmar el boton.
 //
+// El `tipo: 'Gasto'` SE QUEDA aunque el resto del flujo ya maneje los tres
+// tipos, y es una decision, no un olvido: esto resuelve frases como "el GASTO
+// de X mandalo a Y". Buscar tambien entre ingresos y ahorros haria que "el
+// gasto de nomina" empatara con el deposito de nomina. Si algun dia hay que
+// reasignar ingresos por texto, lo que falta es detectar la palabra en
+// src/reassignIntent.js, no ensanchar esto en silencio.
+//
 // Es LECTURA. Vive aqui porque es el mismo dominio que la escritura que la
 // acompaña, y asi las dos se prueban juntas.
 async function findTransactionsByReference({ referencia, quincenaId, limit = 4 }) {
