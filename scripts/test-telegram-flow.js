@@ -391,6 +391,39 @@ async function main() {
   await post(callbackUpdate(`pl:${txCruzado.id}:12`))
   check('enlazo a la linea de otra categoria', txCruzado.presupuestoId === 12, txCruzado.presupuestoId)
   check('la categoria NO se movio sola', txCruzado.categoriaId === catAntesAC, `${catAntesAC} -> ${txCruzado.categoriaId}`)
+  const msgAC = editados.at(-1)
+  const cbsAC = msgAC?.buttons?.flat().map(b => b.callback_data) || []
+  check('pregunta si mueve la categoria', /¿Muevo también la categoría\?/.test(msgAC?.message || ''), msgAC?.message)
+  check('nombra las dos categorias', /Familia/.test(msgAC?.message || '') && /Personal/.test(msgAC?.message || ''), msgAC?.message)
+  check('ofrece mover y mantener', cbsAC.includes(`pk:${txCruzado.id}:12`) && cbsAC.includes(`pm:${txCruzado.id}:12`), JSON.stringify(cbsAC))
+
+  console.log('\n=== AD: confirmar mueve la categoria y re-deriva la clasificacion ===')
+  await post(callbackUpdate(`pk:${txCruzado.id}:12`))
+  check('ahora si movio la categoria', txCruzado.categoriaId === 3, txCruzado.categoriaId)
+  check('re-derivo la clasificacion de la categoria nueva', txCruzado.clasificacion === 'Variable', txCruzado.clasificacion)
+  check('no toco el enlace', txCruzado.presupuestoId === 12, txCruzado.presupuestoId)
+  const escriturasAntesAD2 = escrituras.length
+  await post(callbackUpdate(`pk:${txCruzado.id}:12`))
+  check('tocar dos veces no escribe dos veces', escrituras.length === escriturasAntesAD2, escrituras.length)
+
+  console.log('\n=== AE: mantener mi categoria no escribe nada ===')
+  await post(textUpdate('90, convivio del salon'))
+  const txMantiene = creadas.at(-1)
+  await post(callbackUpdate(`pl:${txMantiene.id}:12`))
+  const escriturasAntesAE = escrituras.length
+  await post(callbackUpdate(`pm:${txMantiene.id}:12`))
+  check('la categoria sigue siendo la suya', txMantiene.categoriaId === 7, txMantiene.categoriaId)
+  check('no hubo escritura', escrituras.length === escriturasAntesAE, escrituras.length)
+  check('lo deja por escrito', /lo dejé en su categoría/i.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== AF: un pk forjado sobre una linea que no es la suya se rechaza ===')
+  // Espejo del caso P para el prefijo nuevo. txMantiene esta en la linea 12;
+  // un callback que diga 10 no puede mover su categoria a la de la 10.
+  const catAntesAF = txMantiene.categoriaId
+  const escriturasAntesAF = escrituras.length
+  await post(callbackUpdate(`pk:${txMantiene.id}:10`))
+  check('no escribio nada', escrituras.length === escriturasAntesAF, escrituras.length)
+  check('la categoria quedo intacta', txMantiene.categoriaId === catAntesAF, txMantiene.categoriaId)
 
   console.log('\n=== AI: un Ingreso tambien recibe linea (antes solo Gasto) ===')
   await post(textUpdate('cobro 5000 reembolso'))
@@ -524,6 +557,58 @@ async function main() {
   const sinDestino = enviados.at(-1)?.message || ''
   check('no inventa una linea', !/Sí, mandarlo/i.test(sinDestino), sinDestino)
   check('ofrece las candidatas o lo dice', /¿A cuál línea lo mando\?|No encontré una línea/i.test(sinDestino), sinDestino)
+
+  console.log('\n=== AG: paginacion -- ninguna linea queda inalcanzable ===')
+  // Las lineas extra van AL FINAL del archivo a proposito: metidas antes,
+  // cambiarian el ranking de los casos I/AA/AB, que dependen de que linea sale
+  // en la primera pagina.
+  for (let i = 0; i < 6; i++) {
+    presupuestos.push({
+      id: 30 + i, quincenaId: 1, categoriaId: 3, descripcion: `Partida extra ${i}`,
+      tipo: 'Gasto', montoPresupuestado: 100 + i, montoRevisado: null,
+      estadoLinea: 'Abierta', categoria: catPorNombre('Familia'), quincena: quincenas[0],
+    })
+  }
+
+  await post(textUpdate('55, algo sin parecido'))
+  const txPag = creadas.at(-1)
+  const lineasGastoQ1 = presupuestos
+    .filter(l => l.quincenaId === 1 && l.categoria?.tipo === 'Gasto' && l.estadoLinea !== 'Cancelada')
+    .map(l => l.id)
+
+  const vistos = new Set()
+  let pagina = 0
+  let botonesPag = enviados.at(-1)?.buttons || []
+  for (let guard = 0; guard < 10; guard++) {
+    for (const b of botonesPag.flat()) {
+      const m = /^pl:\d+:(\d+)$/.exec(b.callback_data || '')
+      if (m) vistos.add(Number(m[1]))
+    }
+    const siguiente = botonesPag.flat().find(b => b.callback_data === `pp:${txPag.id}:${pagina + 1}`)
+    if (!siguiente) break
+    pagina += 1
+    await post(callbackUpdate(`pp:${txPag.id}:${pagina}`))
+    botonesPag = editados.at(-1)?.buttons || []
+  }
+
+  check('hubo mas de una pagina', pagina > 0, pagina)
+  check('la union de las paginas trae TODAS las lineas',
+    lineasGastoQ1.every(id => vistos.has(id)), `faltaron ${lineasGastoQ1.filter(id => !vistos.has(id))}`)
+  check('nunca ofrecio la linea de Ingreso', !vistos.has(13) && !vistos.has(14), [...vistos].join(','))
+  check('todos los callback_data caben en 64 bytes',
+    botonesPag.every(f => f.every(b => Buffer.byteLength(b.callback_data || '') <= 64)))
+
+  console.log('\n=== AG2: el menu por categoria lleva a las lineas de esa categoria ===')
+  await post(callbackUpdate(`pc:${txPag.id}:0`))
+  const menu = editados.at(-1)
+  const cbsMenu = menu?.buttons?.flat().map(b => b.callback_data) || []
+  check('lista las categorias, no las lineas', cbsMenu.includes(`pc:${txPag.id}:3`) && cbsMenu.includes(`pc:${txPag.id}:7`), JSON.stringify(cbsMenu))
+  check('no ofrece la categoria de Ingresos', !cbsMenu.includes(`pc:${txPag.id}:1`), JSON.stringify(cbsMenu))
+
+  await post(callbackUpdate(`pc:${txPag.id}:7`))
+  const soloPersonal = editados.at(-1)?.buttons?.flat().map(b => b.callback_data) || []
+  check('ahora si muestra lineas de Personal', soloPersonal.includes(`pl:${txPag.id}:10`), JSON.stringify(soloPersonal))
+  check('y ninguna de Familia', !soloPersonal.includes(`pl:${txPag.id}:12`), JSON.stringify(soloPersonal))
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

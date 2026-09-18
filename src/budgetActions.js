@@ -62,7 +62,12 @@ async function linkTransactionToBudget({ transaccionId, presupuestoId }) {
     return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
   }
 
-  const tx = await prisma.transaccion.findUnique({ where: { id: txId } })
+  // `categoria` incluida para que el llamador pueda NOMBRAR las dos categorias
+  // en la pregunta de cruce sin una consulta extra.
+  const tx = await prisma.transaccion.findUnique({
+    where: { id: txId },
+    include: { categoria: true },
+  })
   if (!tx) return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
 
   const linea = await prisma.presupuesto.findUnique({
