@@ -502,22 +502,32 @@ async function main() {
   check('lo dice explicitamente', /sin línea de presupuesto/i.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
   check('deja un boton al dashboard', editados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(editados.at(-1)?.buttons))
 
-  console.log('\n=== T: un gasto que rebasa la linea avisa y ofrece cubrirlo ===')
-  // La linea 11 tiene $750. Un gasto de 800 la rebasa por 50.
+  console.log('\n=== T0: NUNCA se auto-asigna, ni con la coincidencia mas obvia ===')
+  // La linea 11 se llama "Niñera" y el gasto dice "niñera": es el caso donde
+  // resolveBudgetLine acierta con mas holgura, y por eso mismo es el que
+  // atrapa una regresion. Antes esto se enlazaba solo Y el mensaje salia SIN
+  // BOTONES, asi que ademas de no preguntar, cuando se equivocaba no habia
+  // forma de corregirlo desde Telegram.
   //
-  // ESTE CASO FIJA LA FRONTERA DEL AUTO-ENLACE. Solo se auto-vincula porque
-  // resolveBudgetLine sigue acotado a la categoria de la transaccion: dentro de
-  // Personal, "niñera" gana con holgura. Si alguien abre tambien el auto-enlace
-  // a toda la quincena, "niñera" empieza a competir con lineas de otras
-  // categorias, deja de superar los umbrales 0.75/0.15 y este caso truena.
-  // Cuando eso pase, la respuesta es revertir esa apertura, no bajar umbrales.
+  // La sugerencia sigue viva, pero como propuesta: primera y con estrella.
   await post(textUpdate('800, niñera'))
   const txT = creadas.at(-1)
-  check('se auto-vinculo a Niñera', txT?.presupuestoId === 11, txT?.presupuestoId)
-  const msgT = enviados.at(-1)?.message || ''
+  check('el gasto nace SIN linea', txT?.presupuestoId == null, txT?.presupuestoId)
+  const botonesT = enviados.at(-1)?.buttons || []
+  check('pregunta con botones', botonesT.length > 0, JSON.stringify(botonesT))
+  check('la sugerida va primera y marcada', /^⭐ /.test(botonesT[0]?.[0]?.text || ''), botonesT[0]?.[0]?.text)
+  check('la sugerida es Niñera', botonesT[0]?.[0]?.callback_data === `pl:${txT.id}:11`, botonesT[0]?.[0]?.callback_data)
+  check('ofrece salida si no es ninguna', botonesT.flat().some(b => b.callback_data === `pd:${txT.id}:0`), JSON.stringify(botonesT.flat().map(b => b.callback_data)))
+
+  console.log('\n=== T: al confirmar, avisa del excedido y ofrece cubrirlo ===')
+  // La linea 11 tiene $750. Un gasto de 800 la rebasa por 50. El aviso ya no
+  // llega al registrar sino al confirmar, que es cuando el enlace existe.
+  await post(callbackUpdate(`pl:${txT.id}:11`))
+  check('ahora si lo vinculo', txT.presupuestoId === 11, txT.presupuestoId)
+  const msgT = editados.at(-1)?.message || ''
   check('avisa del excedido', /[Ee]xcedido/.test(msgT), msgT)
   check('dice que rebaso la linea', /rebasó la línea/i.test(msgT), msgT)
-  check('ofrece boton al dashboard', enviados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(enviados.at(-1)?.buttons))
+  check('ofrece boton al dashboard', editados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(editados.at(-1)?.buttons))
 
   console.log('\n=== U: "el gasto de X mandalo a Y" encuentra el movimiento y PROPONE ===')
   // Antes las descripciones de estos casos TENIAN que caer en Personal, porque
@@ -619,6 +629,11 @@ async function main() {
   }
 
   check('hubo mas de una pagina', pagina > 0, pagina)
+  // Sin este numero, ver seis botones se lee como "estas son las que hay" y el
+  // "Ver más" parece decoracion en vez de la forma de llegar a las otras.
+  const textoPag = enviados.at(-1)?.message || ''
+  check('dice cuantas lineas hay en total', new RegExp(`Hay ${lineasGastoQ1.length} líneas`).test(textoPag), textoPag)
+  check('nombra las dos salidas', /Ver más/.test(textoPag) && /Buscar por categoría/.test(textoPag), textoPag)
   check('la union de las paginas trae TODAS las lineas',
     lineasGastoQ1.every(id => vistos.has(id)), `faltaron ${lineasGastoQ1.filter(id => !vistos.has(id))}`)
   check('nunca ofrecio la linea de Ingreso', !vistos.has(13) && !vistos.has(14), [...vistos].join(','))
