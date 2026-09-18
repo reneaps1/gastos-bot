@@ -1857,7 +1857,14 @@ function TxSinPresupuestoPanel({ txSinPresupuesto, setTxSinPresupuesto, presupue
           // quincena (no tendria sentido cubrir un gasto de Q35 con una linea
           // de Q36) y de su mismo tipo: un Ingreso no se mezcla con partidas
           // de Gasto/Ahorro.
-          const presupuestosDelTipo = presupuestos.filter(p => p.categoria.tipo === tx.tipo && p.quincenaId === tx.quincenaId)
+          // GEMELO del panel de movimientos sin presupuesto en app/detalle/page.tsx:
+  // hay que cambiarlos juntos.
+  //
+  // Este panel ya ofrecia lineas de TODAS las categorias, filtrando solo por
+  // quincena y tipo. Ese es exactamente el comportamiento al que migro el resto
+  // del dashboard (ver lineasDe en transacciones/usePresupuestoLineas.ts): la
+  // categoria se muestra como etiqueta, el tipo si es una frontera dura.
+  const presupuestosDelTipo = presupuestos.filter(p => p.categoria.tipo === tx.tipo && p.quincenaId === tx.quincenaId)
           const categoriasDisponibles = Array.from(
             new Map([tx.categoria, ...categorias.filter(c => c.tipo === tx.tipo)].map(c => [c.id, c])).values()
           ).sort((a, b) => a.nombre.localeCompare(b.nombre))

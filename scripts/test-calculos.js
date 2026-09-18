@@ -165,6 +165,24 @@ async function main() {
   check('una linea con categoria de Gasto sigue siendo candidata de Gasto',
     linea != null && linea.id === 5, JSON.stringify(linea))
 
+  console.log('\n=== G2: el auto-enlace NO cruza de categoria, ni con texto identico ===')
+  // Esta es la frontera entre las dos mitades del cambio: las CANDIDATAS (las
+  // que el usuario ve y toca) van a toda la quincena; el AUTO-ENLACE (el unico
+  // camino donde nadie confirma nada) se queda dentro de la categoria. Si
+  // alguien "termina el trabajo" abriendo tambien resolveBudgetLine, aqui
+  // truena. Categoria 1 lleva DOS lineas a proposito: con una sola, el atajo de
+  // "unica linea de su categoria" devolveria esa y el caso no probaria nada.
+  presupuestos = [
+    { id: 6, quincenaId: 1, categoriaId: 1, tipo: 'Gasto', estadoLinea: 'Abierta',
+      descripcion: 'Papeleria', categoria: { tipo: 'Gasto', nombre: 'Personal' } },
+    { id: 7, quincenaId: 1, categoriaId: 1, tipo: 'Gasto', estadoLinea: 'Abierta',
+      descripcion: 'Regalos', categoria: { tipo: 'Gasto', nombre: 'Personal' } },
+    { id: 8, quincenaId: 1, categoriaId: 2, tipo: 'Gasto', estadoLinea: 'Abierta',
+      descripcion: 'Colegiatura', categoria: { tipo: 'Gasto', nombre: 'Familia' } },
+  ]
+  const cruzada = await resolveBudgetLine({ quincenaId: 1, categoriaId: 1, descripcion: 'Colegiatura' })
+  check('no auto-elige la linea de la otra categoria', cruzada === null, JSON.stringify(cruzada))
+
   console.log('\n=== H: Milo no mete los ingresos en el total de gasto a cubrir ===')
   // Caso real de Q35: las lineas de sueldo tenian categoria de Ingreso pero
   // `Presupuesto.tipo` habia quedado en 'Gasto'. Filtrando por el campo de la

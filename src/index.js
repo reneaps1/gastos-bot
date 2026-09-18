@@ -45,17 +45,27 @@ const media = require('./media')
 const db = require('./database')
 const prisma = require('./lib/prisma')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
+const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
 const telegram = require('./telegram')
 const telegramBrain = require('./telegramBrain')
 const aiRouter = require('./aiRouter')
 const financeAgent = require('./financeAgent')
 const {
+  TIPOS_CON_LINEA,
   resolveBudgetLine,
+  resolveBudgetLineByName,
   getBudgetCandidates,
   getBudgetLineStatus,
   formatBudgetStatus,
 } = require('./budgetTracker')
-const { linkTransactionToBudget, unlinkTransaction, findTransactionsByReference, describeRechazo } = require('./budgetActions')
+const {
+  linkTransactionToBudget,
+  alignTransactionCategory,
+  createBudgetLineForTransaction,
+  unlinkTransaction,
+  findTransactionsByReference,
+  describeRechazo,
+} = require('./budgetActions')
 const { detectReassign } = require('./reassignIntent')
 
 // A donde mandar a la gente cuando hay que cubrir un excedido: el traspaso entre
@@ -83,10 +93,6 @@ async function assuredSend(to, message, context) {
 }
 
 function parseMessageFromMedia(analysis, senderName, senderPhone, messageId) {
-  const CLASIFICACION_POR = {
-    Hogar: 'Fijo', Salud: 'Fijo', Familia: 'Variable', Transporte: 'Variable',
-    Suscripciones: 'Fijo', Deudas: 'Fijo', Personal: 'Variable', Ingresos: null, Ahorro: null,
-  }
   const categoria = analysis.categoria || 'Personal'
   const now = new Date()
   const fechaMexico = new Date(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T00:00:00.000Z`)
@@ -100,7 +106,7 @@ function parseMessageFromMedia(analysis, senderName, senderPhone, messageId) {
     categoria,
     formaPago: 'Efectivo',
     tipo: categoria === 'Ingresos' ? 'Ingreso' : categoria === 'Ahorro' ? 'Ahorro' : 'Gasto',
-    clasificacion: CLASIFICACION_POR[categoria] || null,
+    clasificacion: CLASIFICACION_POR_CATEGORIA[categoria] || null,
     quincena: getCurrentQuincena(),
     estatus: 'Pagado',
     messageId: messageId || null,
@@ -228,15 +234,129 @@ function formatTelegramConfirmation(parsed) {
   ].join('\n')
 }
 
+// Etiqueta de un boton de linea. Vive aparte para que los tests puedan fijarla
+// y para que el formato no se reinvente en cada lugar que dibuja botones.
+//
+// La CATEGORIA es parte de la etiqueta, no decoracion: ahora se ofrecen lineas
+// de todas las categorias de la quincena, asi que sin ella el usuario estaria
+// eligiendo a ciegas entre partidas que pueden llamarse parecido en categorias
+// distintas. La descripcion se trunca porque Telegram corta los botones largos
+// por el unico lado que importa: el final.
+const LARGO_DESC_BOTON = 20
+
+function etiquetaLinea(c) {
+  const desc = c.descripcion.length > LARGO_DESC_BOTON
+    ? `${c.descripcion.slice(0, LARGO_DESC_BOTON - 1)}…`
+    : c.descripcion
+  const categoria = c.categoriaNombre ? ` · ${c.categoriaNombre}` : ''
+  return `${desc}${categoria} — $${c.presupuesto.toFixed(2)}`
+}
+
 // callback_data tiene un limite de 64 bytes, de ahi los prefijos de dos letras.
-// `pl` = presupuesto link, `pn` = presupuesto none.
-function budgetButtons(transaccionId, candidates) {
-  const rows = candidates.slice(0, 4).map(c => [{
-    text: `${c.descripcion} — $${c.presupuesto.toFixed(2)}`,
+// Todos caben de sobra (`pl:1234567:1234567` son 18 bytes); la restriccion real
+// es el ancho del boton en un telefono, no los bytes.
+//
+//   pl:<tx>:<linea>   enlazar
+//   pn:<tx>           dejar sin asignar
+//   ps:<tx>           elegir cual movimiento (reasignacion ambigua)
+//   pp:<tx>:<pagina>  paginar la lista de lineas
+//   pc:<tx>:<cat>     categorias; cat 0 = el menu, cat real = sus lineas
+//   pk:<tx>:<linea>   confirmar el cambio de categoria (ok)
+//   pm:<tx>:<linea>   mantener mi categoria
+//   pd:<tx>:<cat>     crear linea; cat 0 = elegir categoria, cat real = crearla
+//
+// `0` funciona como centinela en `pc:` porque ninguna categoria tiene id 0.
+const PAGE_SIZE = 6
+const MAX_LINEAS_POR_CATEGORIA = 10
+
+// Una pagina de lineas mas sus filas de navegacion.
+//
+// La paginacion NO GUARDA ESTADO: `pp:<tx>:<pagina>` vuelve a pedir las
+// candidatas y corta otra vez. Eso funciona solo porque getBudgetCandidates
+// ordena de forma total y determinista (ver su comentario); con un orden que
+// pudiera variar entre dos llamadas habria lineas que no salen en ninguna
+// pagina.
+function budgetButtons(transaccionId, candidates, { pagina = 0 } = {}) {
+  const totalPaginas = Math.max(1, Math.ceil(candidates.length / PAGE_SIZE))
+  const p = Math.min(Math.max(0, Number(pagina) || 0), totalPaginas - 1)
+
+  const rows = candidates.slice(p * PAGE_SIZE, (p + 1) * PAGE_SIZE).map(c => [{
+    text: etiquetaLinea(c),
     callback_data: `pl:${transaccionId}:${c.id}`,
   }])
+
+  if (totalPaginas > 1) {
+    const nav = []
+    if (p > 0) nav.push({ text: '« Anterior', callback_data: `pp:${transaccionId}:${p - 1}` })
+    if (p < totalPaginas - 1) nav.push({ text: `Ver más » (${p + 1}/${totalPaginas})`, callback_data: `pp:${transaccionId}:${p + 1}` })
+    rows.push(nav)
+  }
+
+  // Atajo por categoria: con muchas lineas, saltar al grupo es mejor que
+  // recorrer paginas. Solo aparece si de verdad hay mas de una categoria.
+  if (new Set(candidates.map(c => c.categoriaId)).size > 1) {
+    rows.push([{ text: '📂 Buscar por categoría', callback_data: `pc:${transaccionId}:0` }])
+  }
+
+  rows.push([{ text: '➕ Crear línea nueva', callback_data: `pd:${transaccionId}:0` }])
   rows.push([{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }])
   return rows
+}
+
+// Las categorias en las que se puede crear la linea. Filtradas al tipo del
+// movimiento: para un Gasto son 7, y para un Ingreso o un Ahorro es una sola,
+// o sea que el "menu" se vuelve un confirmar de un toque.
+function newLineCategoryButtons(transaccionId, categorias) {
+  const rows = []
+  for (let i = 0; i < categorias.length; i += 3) {
+    rows.push(categorias.slice(i, i + 3).map(c => ({
+      text: c.nombre,
+      callback_data: `pd:${transaccionId}:${c.id}`,
+    })))
+  }
+  rows.push([{ text: '◀ Volver a las líneas', callback_data: `pp:${transaccionId}:0` }])
+  return rows
+}
+
+// El menu de categorias, con cuantas lineas tiene cada una.
+function categoryMenuButtons(transaccionId, candidates) {
+  const porCategoria = new Map()
+  for (const c of candidates) {
+    const actual = porCategoria.get(c.categoriaId)
+    if (actual) actual.n += 1
+    else porCategoria.set(c.categoriaId, { nombre: c.categoriaNombre || `#${c.categoriaId}`, n: 1 })
+  }
+
+  const rows = [...porCategoria]
+    .sort((a, b) => a[1].nombre.localeCompare(b[1].nombre))
+    .map(([id, { nombre, n }]) => [{ text: `${nombre} (${n})`, callback_data: `pc:${transaccionId}:${id}` }])
+
+  rows.push([{ text: '◀ Volver a las sugeridas', callback_data: `pp:${transaccionId}:0` }])
+  rows.push([{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }])
+  return rows
+}
+
+// Las lineas de UNA categoria. Sin paginar: un tope basta, y quien tenga mas
+// lineas que eso en una sola categoria las sigue alcanzando por la lista
+// principal, que si pagina.
+function categoryLinesButtons(transaccionId, candidates, categoriaId) {
+  const rows = candidates
+    .filter(c => c.categoriaId === categoriaId)
+    .slice(0, MAX_LINEAS_POR_CATEGORIA)
+    .map(c => [{ text: etiquetaLinea(c), callback_data: `pl:${transaccionId}:${c.id}` }])
+
+  rows.push([{ text: '◀ Volver a las categorías', callback_data: `pc:${transaccionId}:0` }])
+  return rows
+}
+
+// La pregunta de cruce. Alinear va PRIMERO porque es la respuesta por default:
+// lo normal es que la linea que elegiste sea la correcta y la categoria que
+// adivino el parser sea la que estaba mal.
+function crossCategoryButtons(transaccionId, lineaId, nombreCatLinea, nombreCatTx) {
+  return [
+    [{ text: `Sí, moverlo a ${nombreCatLinea}`, callback_data: `pk:${transaccionId}:${lineaId}` }],
+    [{ text: `No, dejarlo en ${nombreCatTx}`, callback_data: `pm:${transaccionId}:${lineaId}` }],
+  ]
 }
 
 // Boton que lleva al dashboard a cubrir el excedido. Es un boton `url`, no un
@@ -728,8 +848,11 @@ async function handleReassign(message, { referencia, destino }) {
   }
 
   const tx = candidatos[0]
-  const lookup = { quincenaId: quincena.id, categoriaId: tx.categoriaId, descripcion: destino, tipo: 'Gasto' }
-  const linea = await resolveBudgetLine(lookup)
+  const lookup = { quincenaId: quincena.id, categoriaId: tx.categoriaId, descripcion: destino, tipo: tx.tipo }
+  // Por NOMBRE y en toda la quincena: aqui el usuario escribio el destino, no
+  // lo estamos adivinando, y el resultado se confirma con un boton antes de
+  // escribir nada. Ver resolveBudgetLineByName en src/budgetTracker.js.
+  const linea = await resolveBudgetLineByName({ quincenaId: quincena.id, destino, tipo: tx.tipo })
 
   const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
 
@@ -751,7 +874,7 @@ async function handleReassign(message, { referencia, destino }) {
   if (candidatasLinea.length === 0) {
     await telegram.sendTelegramMessage(
       message.chatId,
-      `${resumen}\n\nNo encontré una línea que se parezca a “${telegram.escapeMarkdown(destino)}” en su categoría.`,
+      `${resumen}\n\nNo encontré ninguna línea de esta quincena que se parezca a “${telegram.escapeMarkdown(destino)}”.`,
       message.messageId,
     )
     return true
@@ -766,6 +889,27 @@ async function handleReassign(message, { referencia, destino }) {
   return true
 }
 
+// Lo que necesitan los botones que solo NAVEGAN (paginar, agrupar por
+// categoria, elegir movimiento): la transaccion y sus candidatas.
+//
+// Se recalcula en cada toque en vez de guardarse: el bot no tiene estado
+// conversacional y no queremos inventarselo. El costo es una consulta por
+// toque; el beneficio es que no hay nada que expirar ni que sincronizar.
+async function budgetPickerContext(txId) {
+  const tx = await prisma.transaccion.findUnique({ where: { id: Number(txId) } })
+  if (!tx) return null
+
+  const candidatas = await getBudgetCandidates({
+    quincenaId: tx.quincenaId,
+    categoriaId: tx.categoriaId,
+    descripcion: tx.descripcion,
+    // El tipo sale de la transaccion, no hardcodeado: un ingreso o un ahorro
+    // tambien se cuelgan de una linea.
+    tipo: tx.tipo,
+  })
+  return { tx, candidatas }
+}
+
 // Resuelve el toque de un boton de presupuesto.
 //
 // `callback.data` es entrada NO CONFIABLE: viajo por el cliente del usuario y un
@@ -776,8 +920,11 @@ async function handleBudgetCallback(callback) {
   // contesta, aunque la accion ya haya corrido.
   await telegram.answerCallbackQuery(callback.callbackId)
 
-  const [accion, txId, lineaId] = callback.data.split(':')
-  console.log(`TELEGRAM_CALLBACK: accion=${accion} tx=${txId} linea=${lineaId ?? '-'} chat=${callback.chatId}`)
+  // Split posicional: cada rama lee las posiciones que le tocan. El tercer
+  // campo significa cosas distintas segun el prefijo (linea, pagina o
+  // categoria), de ahi el nombre generico.
+  const [accion, txId, arg] = callback.data.split(':')
+  console.log(`TELEGRAM_CALLBACK: accion=${accion} tx=${txId} arg=${arg ?? '-'} chat=${callback.chatId}`)
 
   try {
     if (accion === 'pn') {
@@ -795,37 +942,146 @@ async function handleBudgetCallback(callback) {
       return
     }
 
-    // 'ps' = elegir cual movimiento, cuando la frase empataba varios. Solo
-    // cambia que botones se muestran; no escribe nada.
-    if (accion === 'ps') {
+    // 'ps' = elegir cual movimiento, 'pp' = paginar, 'pc' = categorias. Las
+    // tres solo cambian que botones se ven; ninguna escribe nada.
+    if (accion === 'ps' || accion === 'pp' || accion === 'pc') {
+      const contexto = await budgetPickerContext(txId)
+      if (!contexto) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
+        return
+      }
+      const { tx, candidatas } = contexto
+      const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
+
+      if (candidatas.length === 0) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, `${resumen}\n\nNo hay líneas de presupuesto en esta quincena.`)
+        return
+      }
+
+      if (accion === 'pc' && Number(arg) > 0) {
+        const nombre = candidatas.find(c => c.categoriaId === Number(arg))?.categoriaNombre || 'esa categoría'
+        await telegram.editMessageText(
+          callback.chatId,
+          callback.messageId,
+          `${resumen}\n\nLíneas de *${telegram.escapeMarkdown(nombre)}*:`,
+          { buttons: categoryLinesButtons(tx.id, candidatas, Number(arg)) },
+        )
+        return
+      }
+
+      if (accion === 'pc') {
+        await telegram.editMessageText(
+          callback.chatId,
+          callback.messageId,
+          `${resumen}\n\n¿De qué categoría es la línea?`,
+          { buttons: categoryMenuButtons(tx.id, candidatas) },
+        )
+        return
+      }
+
+      await telegram.editMessageText(
+        callback.chatId,
+        callback.messageId,
+        `${resumen}\n\n¿A cuál línea lo mando?`,
+        { buttons: budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0 }) },
+      )
+      return
+    }
+
+    // 'pd' = crear una linea a la medida del movimiento. arg 0 = elegir
+    // categoria; arg real = crear y enlazar.
+    if (accion === 'pd') {
       const tx = await prisma.transaccion.findUnique({ where: { id: Number(txId) } })
       if (!tx) {
         await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
         return
       }
-      const candidatas = await getBudgetCandidates({
-        quincenaId: tx.quincenaId,
-        categoriaId: tx.categoriaId,
-        descripcion: tx.descripcion,
-        tipo: 'Gasto',
-      })
       const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
-      if (candidatas.length === 0) {
-        await telegram.editMessageText(callback.chatId, callback.messageId, `${resumen}\n\nNo hay líneas de presupuesto en su categoría.`)
+
+      if (Number(arg) === 0) {
+        const categorias = await prisma.categoria.findMany({
+          where: { activo: true, tipo: tx.tipo },
+          orderBy: { nombre: 'asc' },
+        })
+        if (categorias.length === 0) {
+          await telegram.editMessageText(callback.chatId, callback.messageId, `${resumen}\n\nNo hay categorías disponibles para este tipo de movimiento.`)
+          return
+        }
+        await telegram.editMessageText(
+          callback.chatId,
+          callback.messageId,
+          `${resumen}\n\nLa línea nueva quedará con este monto y este nombre. ¿En qué categoría la creo?`,
+          { buttons: newLineCategoryButtons(tx.id, categorias) },
+        )
         return
       }
+
+      const creada = await createBudgetLineForTransaction({
+        transaccionId: txId,
+        categoriaId: arg,
+        actor: callback.senderName || 'telegram',
+      })
+      if (!creada.ok) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, `⚠️ ${describeRechazo(creada.reason)}`)
+        return
+      }
+      const bloqueNueva = budgetStatusBlock(creada.status)
+      const encabezadoNueva = `✅ Creé la línea *${telegram.escapeMarkdown(creada.linea.descripcion)}* en ${telegram.escapeMarkdown(creada.linea.categoria?.nombre || '')} y le asigné el movimiento.`
       await telegram.editMessageText(
         callback.chatId,
         callback.messageId,
-        `${resumen}\n\n¿A cuál línea lo mando?`,
-        { buttons: budgetButtons(tx.id, candidatas) },
+        bloqueNueva.texto ? `${encabezadoNueva}\n\n${bloqueNueva.texto}` : encabezadoNueva,
+        { buttons: bloqueNueva.buttons || dashboardButton('Ajustar el monto en el dashboard') },
       )
+      console.log(`TELEGRAM_LINEA_CREADA: tx=${txId}; linea=${creada.linea.id}; categoria=${arg}`)
+      return
+    }
+
+    // 'pk' = confirmar que la categoria se mueve a la de la linea. Es la SEGUNDA
+    // escritura del flujo, separada del enlace a proposito.
+    if (accion === 'pk') {
+      const result = await alignTransactionCategory({ transaccionId: txId, presupuestoId: arg })
+      if (!result.ok) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, `⚠️ ${describeRechazo(result.reason)}`)
+        return
+      }
+      const status = await getBudgetLineStatus(Number(arg))
+      const bloque = budgetStatusBlock(status)
+      const encabezado = `✅ Movido a *${telegram.escapeMarkdown(result.categoriaNueva?.nombre || 'la categoría de la línea')}*`
+      await telegram.editMessageText(
+        callback.chatId,
+        callback.messageId,
+        bloque.texto ? `${encabezado}\n\n${bloque.texto}` : encabezado,
+        { buttons: bloque.buttons },
+      )
+      console.log(`TELEGRAM_CATEGORIA_ALINEADA: tx=${txId}; linea=${arg}; de=${result.categoriaAnterior?.nombre}; a=${result.categoriaNueva?.nombre}`)
+      return
+    }
+
+    // 'pm' = mantener mi categoria. No escribe: solo cierra el mensaje dejando
+    // por escrito que el cruce fue una decision, no un descuido.
+    if (accion === 'pm') {
+      const tx = await prisma.transaccion.findUnique({ where: { id: Number(txId) } })
+      if (!tx) {
+        await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
+        return
+      }
+      const status = await getBudgetLineStatus(Number(arg))
+      const bloque = budgetStatusBlock(status)
+      const encabezado = `✅ Asignado a *${telegram.escapeMarkdown(status?.descripcion || 'la línea')}*, y lo dejé en su categoría.`
+      await telegram.editMessageText(
+        callback.chatId,
+        callback.messageId,
+        bloque.texto ? `${encabezado}\n\n${bloque.texto}` : encabezado,
+        { buttons: bloque.buttons },
+      )
+      console.log(`TELEGRAM_CRUCE_MANTENIDO: tx=${txId}; linea=${arg}`)
       return
     }
 
     if (accion !== 'pl') return
 
-    const result = await linkTransactionToBudget({ transaccionId: txId, presupuestoId: lineaId })
+    const result = await linkTransactionToBudget({ transaccionId: txId, presupuestoId: arg })
     if (!result.ok) {
       // Se edita el mensaje (y con eso se quitan los botones) para que no quede
       // invitando a repetir algo que no va a funcionar.
@@ -838,13 +1094,34 @@ async function handleBudgetCallback(callback) {
       ? `✅ Ya estaba asignado a *${telegram.escapeMarkdown(result.linea.descripcion)}*`
       : `✅ Asignado a *${telegram.escapeMarkdown(result.linea.descripcion)}*`
 
+    // La pregunta de categoria va DESPUES del enlace, no antes: preguntar
+    // primero obligaria a arrastrar un enlace pendiente por un round-trip, y el
+    // unico lugar donde cabria ese estado es el propio callback_data. Enlazar
+    // ya ocurrio; lo que falta es una decision distinta.
+    if (result.cruzado) {
+      const catLinea = result.linea.categoria?.nombre || 'otra categoría'
+      const catTx = result.tx.categoria?.nombre || 'su categoría'
+      const aviso = `Esta línea es de *${telegram.escapeMarkdown(catLinea)}*, y el movimiento está en *${telegram.escapeMarkdown(catTx)}*. ¿Muevo también la categoría?`
+      await telegram.editMessageText(
+        callback.chatId,
+        callback.messageId,
+        bloque.texto ? `${encabezado}\n\n${bloque.texto}\n\n${aviso}` : `${encabezado}\n\n${aviso}`,
+        { buttons: [...crossCategoryButtons(result.tx.id, result.linea.id, catLinea, catTx), ...(bloque.buttons || [])] },
+      )
+      console.log(`TELEGRAM_BUDGET_LINKED: tx=${txId}; linea=${arg}; cruzado=true; excedido=${result.status?.excedido || 0}`)
+      return
+    }
+
     await telegram.editMessageText(
       callback.chatId,
       callback.messageId,
       bloque.texto ? `${encabezado}\n\n${bloque.texto}` : encabezado,
       { buttons: bloque.buttons },
     )
-    console.log(`TELEGRAM_BUDGET_LINKED: tx=${txId}; linea=${lineaId}; excedido=${result.status?.excedido || 0}`)
+    // `cruzado` mide en produccion algo que no se puede saber de otro modo: con
+    // que frecuencia la linea que la gente elige es de otra categoria que la
+    // que el parser adivino. Si sale alto, el parser es el que esta mal.
+    console.log(`TELEGRAM_BUDGET_LINKED: tx=${txId}; linea=${arg}; cruzado=false; excedido=${result.status?.excedido || 0}`)
   } catch (error) {
     console.error('TELEGRAM_CALLBACK_ERROR:', error)
     try {
@@ -1074,9 +1351,11 @@ app.post('/telegram/webhook', async (req, res) => {
       const bloque = budgetStatusBlock(status)
       if (bloque.texto) confirmation += `\n\n${bloque.texto}`
       buttons = bloque.buttons
-    } else if (parsed.tipo === 'Gasto') {
+    } else if (TIPOS_CON_LINEA.has(parsed.tipo)) {
+      // Antes esto era `parsed.tipo === 'Gasto'`: los ingresos y los ahorros
+      // nunca veian un boton de linea aunque su categoria tuviera partidas.
       const candidates = await getBudgetCandidates(budgetLookup)
-      confirmation += '\n\n⚠️ El gasto quedó registrado, pero no lo vinculé a una línea porque hay ambigüedad.'
+      confirmation += '\n\n⚠️ El movimiento quedó registrado, pero no lo vinculé a una línea porque hay ambigüedad.'
 
       if (candidates.length > 0) {
         // Antes esto era una lista de texto y un "la proxima vez especifica el

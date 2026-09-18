@@ -14,14 +14,14 @@ import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
 import { useColumnVisibility } from '@/lib/use-column-visibility'
 import { useSearchShortcut } from '@/lib/use-search-shortcut'
 import { InlineSelectCell, type InlineOption } from '@/components/ui/InlineSelectCell'
-import { usePresupuestoLineas, etiquetaLinea } from './usePresupuestoLineas'
+import { usePresupuestoLineas, etiquetaLinea, grupoLinea, type PresupuestoLinea } from './usePresupuestoLineas'
 import {
-  runBulk, planMoverQuincena, agruparPorQuincenaYCategoria, leerClaveGrupo, resumenBulk,
+  runBulk, planMoverQuincena, agruparPorQuincenaYTipo, leerClaveGrupoTipo, resumenBulk,
   type PlanMoverQuincena,
 } from '@/lib/transacciones-bulk'
 import { BulkActionsBar } from './BulkActionsBar'
 import { MoverQuincenaDialog } from './MoverQuincenaDialog'
-import { AsignarLineaDialog } from './AsignarLineaDialog'
+import { AsignarLineaDialog, type DecisionCategoria } from './AsignarLineaDialog'
 
 const CAT_COLORS: Record<string, { bg: string; text: string; dot: string }> = {
   Hogar: { bg: 'bg-orange-50 dark:bg-orange-950/30', text: 'text-orange-700 dark:text-orange-400', dot: 'bg-orange-500' },
@@ -44,7 +44,6 @@ interface User { id: number; nombre: string }
 interface Quincena { id: number; codigo: string; fechaInicio: string; fechaFin: string; fechaCierre?: string | null }
 interface MetodoPago { id: number; nombre: string }
 interface Credito { id: number; nombre: string; tipoCredito: string; acreedor: string; activo: boolean; diaPago: number | null }
-interface PresupuestoOption { id: number; descripcion: string; montoEfectivo: number }
 interface Transaccion {
   id: number; fecha: string; descripcion: string; tipo: 'Gasto' | 'Ingreso' | 'Ahorro'
   direccion: 'Aporte' | 'Retiro' | null
@@ -81,9 +80,11 @@ interface CategoriaPlanState {
 }
 
 interface AsignarPlanState {
-  grupos: Array<{ clave: string; quincenaId: number; categoriaId: number; filas: Transaccion[] }>
+  grupos: Array<{ clave: string; quincenaId: number; tipo: string; filas: Transaccion[] }>
   /** clave de grupo -> presupuestoId ('' = ese grupo no se toca). */
   elegidas: Record<string, string>
+  /** clave de grupo -> que hacer con las filas que queden cruzadas de categoria. */
+  decisiones: Record<string, DecisionCategoria>
 }
 
 const EMPTY_FORM = {
@@ -170,7 +171,6 @@ export default function TransaccionesPage() {
   const [users, setUsers] = useState<User[]>([])
   const [metodosPago, setMetodosPago] = useState<MetodoPago[]>([])
   const [creditos, setCreditos] = useState<Credito[]>([])
-  const [presupuestoOpciones, setPresupuestoOpciones] = useState<PresupuestoOption[]>([])
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingTx, setEditingTx] = useState<Transaccion | null>(null)
@@ -290,20 +290,29 @@ export default function TransaccionesPage() {
     ensureLineas(quincenasEnPagina)
   }, [quincenasEnPagina, ensureLineas])
 
+  // El modal usa el MISMO cache que la tabla (ensureLineas) en vez de su propio
+  // fetch. Antes pedia `?quincenaId=X&categoriaId=Y` cada vez que cambiabas de
+  // categoria, para quedarse con un pedazo de lo que el cache ya tenia entero:
+  // GET /api/presupuestos con solo quincenaId devuelve las lineas de TODAS las
+  // categorias de esa quincena (ver el encabezado de usePresupuestoLineas).
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (!modalOpen || !form.quincenaId || !form.categoriaId) {
-        setPresupuestoOpciones([])
-        return
-      }
-      const params = new URLSearchParams({ quincenaId: form.quincenaId, categoriaId: form.categoriaId })
-      fetch(`/api/presupuestos?${params}`)
-        .then(r => r.json())
-        .then((data: PresupuestoOption[]) => setPresupuestoOpciones(data))
-        .catch(() => setPresupuestoOpciones([]))
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [modalOpen, form.quincenaId, form.categoriaId])
+    if (!modalOpen || !form.quincenaId) return
+    ensureLineas([form.quincenaId])
+  }, [modalOpen, form.quincenaId, ensureLineas])
+
+  // Lineas ofrecidas en el modal: toda la quincena, agrupadas por categoria.
+  // El tipo sale de la categoria elegida (una categoria de Ahorro fuerza
+  // tipo Ahorro, ver resolverTipoYDireccion), no del campo `tipo` del form.
+  const tipoDelForm = categorias.find(c => c.id.toString() === form.categoriaId)?.tipo ?? form.tipo
+  const lineasDelModal = form.quincenaId ? lineasDe(form.quincenaId, { tipo: tipoDelForm }) : []
+
+  // La linea elegida es de otra categoria que la del form. Se AVISA, no se
+  // bloquea: en el dashboard la categoria de cada linea esta a la vista (es el
+  // encabezado del <optgroup>), asi que un modal de confirmacion seria ruido.
+  // Lo que no puede pasar es que cambie la categoria sin que nadie lo pida.
+  const lineaElegidaCruzada = form.presupuestoId && form.categoriaId
+    ? lineasDelModal.find(l => String(l.id) === form.presupuestoId && String(l.categoriaId) !== form.categoriaId) ?? null
+    : null
 
   function openCreate() {
     setEditingTx(null)
@@ -634,15 +643,22 @@ export default function TransaccionesPage() {
 
   // --- Cambiar de categoria ------------------------------------------------
 
-  // El servidor solo suelta el enlace heredado cuando cuadraba con la categoria
-  // anterior (una linea comodin elegida a proposito se respeta). Si el cache ya
-  // tiene las lineas de esa quincena se sabe exactamente; si no, se asume que
-  // si, que es el caso normal.
+  // Espejo de la regla del servidor (ver api/transacciones/[id]/route.ts): el
+  // enlace solo se suelta cuando el cambio de categoria cambia tambien el TIPO,
+  // porque ahi el monto desaparece de los agregados. Un cruce de categoria
+  // dentro del mismo tipo se conserva: es legal, se marca en la tabla y lo mide
+  // el check 21 de la auditoria.
+  //
+  // Si el cache todavia no tiene las lineas de esa quincena no se puede saber,
+  // y se avisa de mas: es preferible una advertencia que sobra a un enlace que
+  // desaparece sin que nadie lo dijera.
   function perderaEnlace(tx: Transaccion, categoriaDestinoId: number) {
     if (tx.presupuestoId == null || tx.categoriaId === categoriaDestinoId) return false
     if (estadoLineas(tx.quincenaId) !== 'ready') return true
     const linea = lineasDe(tx.quincenaId).find(l => l.id === tx.presupuestoId)
-    return !linea || linea.categoriaId === tx.categoriaId
+    if (!linea) return true
+    const tipoDestino = categorias.find(c => c.id === categoriaDestinoId)?.tipo
+    return !!tipoDestino && linea.categoria?.tipo !== tipoDestino
   }
 
   function abrirCambiarCategoria(filas: Transaccion[], valor: string) {
@@ -683,27 +699,50 @@ export default function TransaccionesPage() {
   // --- Asignar linea en lote -----------------------------------------------
 
   function abrirAsignarLinea() {
-    const grupos = Array.from(agruparPorQuincenaYCategoria(selectedTxs).entries()).map(([clave, filas]) => ({
-      clave, ...leerClaveGrupo(clave), filas,
+    const grupos = Array.from(agruparPorQuincenaYTipo(selectedTxs).entries()).map(([clave, filas]) => ({
+      clave, ...leerClaveGrupoTipo(clave), filas,
     }))
     ensureLineas(grupos.map(g => g.quincenaId))
-    setAsignarPlan({ grupos, elegidas: {} })
+    setAsignarPlan({ grupos, elegidas: {}, decisiones: {} })
   }
 
   async function confirmarAsignar() {
     if (!asignarPlan) return
-    const { grupos, elegidas } = asignarPlan
-    const porFila = new Map<number, string>()
+    const { grupos, elegidas, decisiones } = asignarPlan
+
+    // Por fila: la linea destino y, si el usuario eligio alinear, la categoria
+    // a la que se mueve. `categoriaId` solo viaja cuando alguien lo pidio: el
+    // servidor no la toca por su cuenta y este dialogo tampoco.
+    const porFila = new Map<number, { presupuestoId: string; categoriaId?: number }>()
     for (const g of grupos) {
       const elegida = elegidas[g.clave]
       if (!elegida) continue // grupo sin linea elegida: no se toca
-      for (const f of g.filas) porFila.set(f.id, elegida)
+      const linea = lineasDe(g.quincenaId).find(l => l.id.toString() === elegida)
+      const alinea = decisiones[g.clave] === 'alinear' && linea
+      for (const f of g.filas) {
+        porFila.set(f.id, {
+          presupuestoId: elegida,
+          categoriaId: alinea && f.categoriaId !== linea.categoriaId ? linea.categoriaId : undefined,
+        })
+      }
     }
-    const filas = selectedTxs.filter(
-      t => porFila.has(t.id) && (t.presupuestoId?.toString() ?? '') !== porFila.get(t.id),
-    )
+
+    // Una fila se escribe si le cambia la linea O la categoria. Antes solo se
+    // miraba la linea, lo que dejaba fuera a las que ya estaban en la linea
+    // correcta pero cuya categoria si habia que mover.
+    const filas = selectedTxs.filter(t => {
+      const destino = porFila.get(t.id)
+      if (!destino) return false
+      return (t.presupuestoId?.toString() ?? '') !== destino.presupuestoId
+        || destino.categoriaId !== undefined
+    })
     setAsignarPlan(null)
-    await ejecutarBulk(filas, tx => ({ presupuestoId: porFila.get(tx.id) }), {
+    await ejecutarBulk(filas, tx => {
+      const destino = porFila.get(tx.id)!
+      return destino.categoriaId === undefined
+        ? { presupuestoId: destino.presupuestoId }
+        : { presupuestoId: destino.presupuestoId, categoriaId: destino.categoriaId }
+    }, {
       uno: 'asignada', varias: 'asignadas',
       omitidas: selectedTxs.length - filas.length,
       invalidarQ: Array.from(new Set(filas.map(t => t.quincenaId))),
@@ -816,15 +855,44 @@ export default function TransaccionesPage() {
     [metodosPago],
   )
 
+  // Sin `categoriaId`: se ofrecen las lineas de TODA la quincena, agrupadas por
+  // categoria (`group` -> <optgroup>). Antes habia que acordarse de en que
+  // categoria vivia la linea que uno buscaba antes de poder verla; ahora la
+  // categoria es el encabezado del grupo, no la reja de entrada.
+  //
+  // El filtro por `tipo` si se queda, y no es cosmetico: ver el comentario de
+  // lineasDe en usePresupuestoLineas.ts.
+  // Tramos contiguos por categoria, para los <optgroup>. No reordena: se apoya
+  // en que lineasDe ya devuelve las lineas ordenadas por categoria.
+  function agruparPorCategoria(lineas: PresupuestoLinea[]): Array<[string, PresupuestoLinea[]]> {
+    const grupos = new Map<string, PresupuestoLinea[]>()
+    for (const l of lineas) {
+      const clave = grupoLinea(l)
+      const actual = grupos.get(clave)
+      if (actual) actual.push(l)
+      else grupos.set(clave, [l])
+    }
+    return [...grupos]
+  }
+
   function opcionesLineaPara(tx: Transaccion): InlineOption[] {
-    const lineas = lineasDe(tx.quincenaId, { categoriaId: tx.categoriaId, tipo: tx.tipo })
+    const lineas = lineasDe(tx.quincenaId, { tipo: tx.tipo })
     if (lineas.length === 0 && estadoLineas(tx.quincenaId) === 'ready') {
       return [{
         value: '__vacio__', disabled: true,
-        label: `Sin líneas de ${tx.categoria?.nombre} en ${tx.quincena.codigo}`,
+        label: `Sin líneas de ${tx.tipo} en ${tx.quincena.codigo}`,
       }]
     }
-    return lineas.map(l => ({ value: l.id.toString(), label: etiquetaLinea(l) }))
+    return lineas.map(l => ({ value: l.id.toString(), label: etiquetaLinea(l), group: grupoLinea(l) }))
+  }
+
+  /** La linea asignada es de otra categoria que la transaccion. Estado legal
+   *  (una partida comodin) pero que conviene ver: el `real` de esa linea se
+   *  reporta en la categoria de la LINEA, no en la de la transaccion. */
+  function enlaceCruzado(tx: Transaccion): PresupuestoLinea | null {
+    if (tx.presupuestoId == null) return null
+    const linea = lineasDe(tx.quincenaId).find(l => l.id === tx.presupuestoId)
+    return linea && linea.categoriaId !== tx.categoriaId ? linea : null
   }
 
   // La fecha no se reescribe al mover de quincena -- seria reescribir un dato
@@ -1111,9 +1179,23 @@ export default function TransaccionesPage() {
                             })}
                           >
                             {tx.presupuestoId ? (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
-                                <Check size={10} /> Asignada
-                              </span>
+                              // Un enlace cruzado se marca, no se prohibe: es legal
+                              // (una partida comodin), pero el `real` de esa linea se
+                              // reporta en la categoria de la LINEA y no en la de la
+                              // transaccion, y eso no se nota en ningun otro lado.
+                              // Lo mide el check 21 de scripts/audit-datos.sql.
+                              enlaceCruzado(tx) ? (
+                                <span
+                                  className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400"
+                                  title={`Línea de ${enlaceCruzado(tx)?.categoria?.nombre}, movimiento en ${tx.categoria?.nombre}`}
+                                >
+                                  <Check size={10} /> {enlaceCruzado(tx)?.categoria?.nombre}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400">
+                                  <Check size={10} /> Asignada
+                                </span>
+                              )
                             ) : (
                               <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
                                 <AlertCircle size={10} /> Sin asignar
@@ -1360,10 +1442,16 @@ export default function TransaccionesPage() {
               <select id="tx-categoria" value={form.categoriaId} onChange={e => {
                 const catId = e.target.value
                 const cat = categorias.find(c => c.id.toString() === catId)
+                const lineaActual = lineasDelModal.find(l => String(l.id) === form.presupuestoId)
                 setForm(f => ({
                   ...f,
                   categoriaId: catId,
-                  presupuestoId: '',
+                  // Cambiar de categoria ya NO borra la linea: un enlace cruzado
+                  // es legal y borrarlo en silencio seria justo la sobrescritura
+                  // que este cambio evita. Solo se suelta si el TIPO deja de
+                  // coincidir, que es el unico cruce que hace desaparecer el
+                  // monto de los agregados.
+                  presupuestoId: lineaActual && cat && lineaActual.categoria?.tipo !== cat.tipo ? '' : f.presupuestoId,
                   tipo: cat?.tipo === 'Ahorro' ? 'Ahorro' : (f.tipo === 'Ahorro' ? 'Gasto' : f.tipo),
                 }))
               }} className={fieldClass(formErrors.categoriaId)}>
@@ -1394,14 +1482,37 @@ export default function TransaccionesPage() {
           </div>
           <div>
             <Label htmlFor="tx-presupuesto">Línea de presupuesto</Label>
-            <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.categoriaId || !form.quincenaId}>
+            {/* Ya NO depende de que elijas categoria: el selector se habilita en
+                cuanto hay quincena. Ese `disabled={!form.categoriaId}` era la
+                version de escritorio del mismo problema que el bot tenia en
+                Telegram -- para ver la linea habia que adivinar primero su
+                categoria. */}
+            <select id="tx-presupuesto" value={form.presupuestoId} onChange={e => setForm(f => ({ ...f, presupuestoId: e.target.value }))} className={fieldClass()} disabled={!form.quincenaId}>
               <option value="">Sin asignar</option>
-              {presupuestoOpciones.map(p => (
-                <option key={p.id} value={p.id}>{p.descripcion} ({formatMXN(p.montoEfectivo)})</option>
+              {agruparPorCategoria(lineasDelModal).map(([categoria, lineas]) => (
+                <optgroup key={categoria} label={categoria}>
+                  {lineas.map(l => (
+                    <option key={l.id} value={l.id}>{etiquetaLinea(l)}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
-            {form.categoriaId && form.quincenaId && presupuestoOpciones.length === 0 && (
-              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Esta categoría no tiene partidas de presupuesto en esta quincena.</p>
+            {form.quincenaId && lineasDelModal.length === 0 && (
+              <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Esta quincena no tiene partidas de presupuesto de este tipo.</p>
+            )}
+            {lineaElegidaCruzada && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                Esa línea es de <strong>{lineaElegidaCruzada.categoria?.nombre}</strong> y el movimiento queda en{' '}
+                <strong>{categorias.find(c => c.id.toString() === form.categoriaId)?.nombre}</strong>. Se guarda así,
+                pero el gasto se reportará en la categoría de la línea.{' '}
+                <button
+                  type="button"
+                  className="underline font-medium"
+                  onClick={() => setForm(f => ({ ...f, categoriaId: String(lineaElegidaCruzada.categoriaId) }))}
+                >
+                  Mover también la categoría
+                </button>
+              </p>
             )}
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -1583,14 +1694,23 @@ export default function TransaccionesPage() {
         <AsignarLineaDialog
           grupos={asignarPlan.grupos}
           elegidas={asignarPlan.elegidas}
+          decisiones={asignarPlan.decisiones}
           nombreQuincena={id => quincenas.find(q => q.id === id)?.codigo ?? `Q${id}`}
           nombreCategoria={id => categorias.find(c => c.id === id)?.nombre ?? 'Sin categoría'}
           cargando={id => estadoLineas(id) === 'loading'}
-          lineasPara={(quincenaId, categoriaId) =>
-            lineasDe(quincenaId, { categoriaId })
-              .map(l => ({ value: l.id.toString(), label: etiquetaLinea(l) }))}
+          lineasPara={(quincenaId, tipo) =>
+            lineasDe(quincenaId, { tipo })
+              .map(l => ({ value: l.id.toString(), label: etiquetaLinea(l), group: grupoLinea(l), categoriaId: l.categoriaId }))}
           onElegir={(clave, presupuestoId) =>
-            setAsignarPlan(prev => prev && ({ ...prev, elegidas: { ...prev.elegidas, [clave]: presupuestoId } }))}
+            // Cambiar de linea invalida la decision anterior: la pregunta es
+            // sobre ESA linea, y arrastrarla seria contestar por el usuario.
+            setAsignarPlan(prev => prev && ({
+              ...prev,
+              elegidas: { ...prev.elegidas, [clave]: presupuestoId },
+              decisiones: { ...prev.decisiones, [clave]: '' },
+            }))}
+          onDecidir={(clave, decision) =>
+            setAsignarPlan(prev => prev && ({ ...prev, decisiones: { ...prev.decisiones, [clave]: decision } }))}
           onConfirm={() => void confirmarAsignar()}
           onCancel={() => setAsignarPlan(null)}
         />

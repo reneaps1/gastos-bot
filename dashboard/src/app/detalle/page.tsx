@@ -162,7 +162,9 @@ export default function DashboardPage() {
           descripcion: crearLineaForm.descripcion,
           categoriaId: crearLineaForm.categoriaId,
           montoPresupuestado: crearLineaForm.monto,
-          tipo: 'Gasto',
+          // Sin `tipo`: la ruta lo resuelve desde la categoria y descarta lo que
+          // mande el cliente (ver POST /api/presupuestos). Mandarlo aqui hacia
+          // creer que este panel decidia algo que no decide.
         }),
       })
       if (!presupRes.ok) return
@@ -771,6 +773,16 @@ export default function DashboardPage() {
                   {expandedSinPresupuesto && (
                     <div className="mt-1 border border-amber-200 dark:border-amber-800/40 rounded-lg overflow-visible bg-white dark:bg-slate-800/60">
                       {txSinPresupuesto.map((tx, idx) => {
+                        // GEMELO de TxSinPresupuestoPanel en
+                        // presupuesto/PresupuestoAhoraLegacy.tsx: los dos son el
+                        // panel de "movimientos sin presupuesto" y hay que
+                        // cambiarlos juntos.
+                        //
+                        // Este ya ofrece lineas de TODAS las categorias (con el
+                        // nombre de la categoria debajo de cada una), que es el
+                        // comportamiento al que migro el resto del dashboard.
+                        // El tipo no hace falta filtrarlo aqui: presupuestosDisplay
+                        // y txSinPresupuesto son ambos de Gasto por construccion.
                         const opciones = presupuestosDisplay
                         const isOpen = openPopoverId === tx.id
                         const isAssigning = assigningTxId === tx.id

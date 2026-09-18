@@ -712,6 +712,7 @@ Cambios importantes deben guardar auditoría:
 - Parser actual demasiado simple.
 - Falta de autenticación para app web.
 - Falta de pruebas automatizadas.
+- **Deuda conocida: `calcularRealPorLinea` es ciega a la categoría.** Agrupa solo por `presupuesto_id` (`dashboard/src/lib/real-transacciones.ts`), mientras varios consumidores atribuyen ese `real` a la categoría de la **línea** y el gasto no presupuestado a la categoría de la **transacción**. Cuando las dos difieren, el reparto por categoría se desplaza; no hay doble conteo y los totales de quincena siguen cuadrando. El único número a nivel quincena que se degrada es `calcularFaltaPorPagar`, y solo cuando una línea llega al clamp `Math.max(montoEfectivo - real, 0)`. Medido por el check 21 de `scripts/audit-datos.sql`. Arreglarlo de raíz toca ~8 consumidores en un árbol sin tests; es un proyecto aparte, no un pendiente de la clasificación por línea.
 
 ## Decisiones Pendientes
 

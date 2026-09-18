@@ -1,4 +1,5 @@
 const { getCurrentQuincena } = require('./quincenas')
+const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
 
 const CATEGORIAS = {
   hogar: ['hogar', 'casa', 'renta', 'luz', 'agua', 'internet', 'telefono', 'celular', 'electricidad', 'gas natural', 'gas de casa', 'mantenimiento', 'limpieza', 'lavanderia', 'lavandería'],
@@ -21,18 +22,6 @@ const FORMAS_PAGO = {
 }
 
 const INGRESO_KEYWORDS = ['ingreso', 'ingresos', 'pago', 'cobro', 'cobrado', 'salario', 'nomina', 'nómina', 'sueldo', 'freelance', 'bono', 'extra', 'recibido', 'ganancia', 'ganado']
-
-const CLASIFICACION_POR_CATEGORIA = {
-  Hogar: 'Fijo',
-  Salud: 'Fijo',
-  Familia: 'Variable',
-  Transporte: 'Variable',
-  Suscripciones: 'Fijo',
-  Deudas: 'Fijo',
-  Personal: 'Variable',
-  Ingresos: null,
-  Ahorro: null,
-}
 
 function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

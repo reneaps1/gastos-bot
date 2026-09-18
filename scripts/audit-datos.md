@@ -183,6 +183,33 @@ creo sin pasar por la API, o falta registrar un cambio.
 Un traspaso mueve dinero de una linea a otra: la entrada y la salida deben
 cancelarse. Si `suma_deltas` no es 0, el traspaso creo o destruyo presupuesto.
 
+### Movimientos cruzados de categoria (check 21)
+
+**No es un defecto: es un termometro.** Desde que la clasificacion se entra por
+la linea de presupuesto y no por la categoria, un movimiento puede quedar
+enlazado a una linea de otra categoria a proposito. El bot y el dashboard
+preguntan antes de mover la categoria; si el usuario dice que no, el cruce
+queda y esta bien.
+
+Lo que mide: el `real` de una linea se calcula solo por `presupuesto_id`, sin
+mirar la categoria (`calcularRealPorLinea` en
+`dashboard/src/lib/real-transacciones.ts`). Cada fila de este check es un peso
+que se reporta en la categoria de la **linea** y no en la de la **transaccion**.
+No hay doble conteo ni dinero perdido — los totales de la quincena siguen
+cuadrando — lo que se desplaza es el reparto por categoria.
+
+Que hacer con el numero:
+
+- **Crece poco a poco**: normal, son las partidas comodin.
+- **Crece mucho**: el problema no es el cruce, es que el parser esta adivinando
+  mal la categoria de origen. Revisa los keywords de `src/parser.js`.
+- **`tipo_coincide` dice `f` en alguna fila**: eso **si** es un defecto y es
+  grave. Cruzar de TIPO (un Gasto colgado de una linea de Ingreso) hace que el
+  monto **desaparezca** de los agregados, porque `calcularFaltaPorPagar` y
+  `cierre-quincena` filtran por `categoria.tipo`. No deberia poder pasar:
+  `getActiveBudgetLines` filtra por tipo y `linkTransactionToBudget` compara los
+  dos. Si aparece una fila asi, hay un camino de escritura que se salto ambos.
+
 ---
 
 ## Orden sugerido

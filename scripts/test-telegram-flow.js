@@ -37,10 +37,14 @@ const hoy = new Date()
 const inicioRango = new Date(hoy); inicioRango.setDate(inicioRango.getDate() - 5)
 const finRango = new Date(hoy); finRango.setDate(finRango.getDate() + 25)
 
+// Ingresos va AL FINAL a proposito: mas abajo hay fixtures que referencian
+// `categorias[1]` (Personal) por indice, y meterla antes las movia en silencio.
 const categorias = [
   { id: 3, nombre: 'Familia', tipo: 'Gasto', activo: true },
   { id: 7, nombre: 'Personal', tipo: 'Gasto', activo: true },
+  { id: 1, nombre: 'Ingresos', tipo: 'Ingreso', activo: true },
 ]
+const catPorNombre = nombre => categorias.find(c => c.nombre === nombre)
 const quincenas = [{ id: 1, codigo: 'QTEST', tipo: 'QUINCENAL', fechaInicio: inicioRango, fechaFin: finRango }]
 
 const fakeDb = {
@@ -70,6 +74,9 @@ let nextTxId = 1
 // dependen de que no haya lineas (sin candidatas no hay botones), y los casos
 // de asignacion las agregan justo antes de usarlas.
 const presupuestos = []
+let nextLineaId = 200
+// Cada fila que el bot escriba en presupuesto_cambios. El caso AH lee esto.
+const cambiosPresupuesto = []
 
 const fakePrisma = {
   transaccion: {
@@ -78,7 +85,12 @@ const fakePrisma = {
       creadas.push(row)
       return row
     },
-    findUnique: async ({ where }) => creadas.find(t => t.id === where.id) || null,
+    // `categoria` hidratada porque alignTransactionCategory la pide con
+    // include para poder nombrar la categoria vieja en el mensaje.
+    findUnique: async ({ where }) => {
+      const row = creadas.find(t => t.id === where.id)
+      return row ? { ...row, categoria: categorias.find(c => c.id === row.categoriaId) || null } : null
+    },
     update: async ({ where, data }) => {
       const row = creadas.find(t => t.id === where.id)
       if (!row) throw new Error('transaccion no encontrada')
@@ -123,12 +135,48 @@ const fakePrisma = {
     },
   },
   presupuesto: {
+    // OJO CON ESTE DOBLE: antes ignoraba por completo el filtro ANIDADO
+    // `categoria: { tipo }` y resolvia `estadoLinea` a mano. Con el `where` que
+    // usa hoy getActiveBudgetLines eso no era un detalle: una linea de Ingreso
+    // se habria colado entre las candidatas de un Gasto y el caso AB -- el que
+    // vigila que el dinero no desaparezca de los agregados -- habria pasado en
+    // verde sin probar nada. Si aparece un filtro nuevo en el `where`, tiene
+    // que aparecer aqui tambien.
     findMany: async ({ where } = {}) => presupuestos.filter(l =>
       (where?.quincenaId === undefined || l.quincenaId === where.quincenaId) &&
       (where?.categoriaId === undefined || l.categoriaId === where.categoriaId) &&
+      (where?.categoria?.tipo === undefined || l.categoria?.tipo === where.categoria.tipo) &&
       (where?.tipo === undefined || l.tipo === where.tipo) &&
-      l.estadoLinea !== 'Cancelada'),
+      (where?.estadoLinea === undefined
+        ? true
+        : where.estadoLinea.not !== undefined
+          ? l.estadoLinea !== where.estadoLinea.not
+          : l.estadoLinea === where.estadoLinea)),
     findUnique: async ({ where }) => presupuestos.find(l => l.id === where.id) || null,
+    create: async ({ data }) => {
+      const fila = {
+        id: nextLineaId++, ...data,
+        categoria: categorias.find(c => c.id === data.categoriaId) || null,
+        quincena: quincenas.find(q => q.id === data.quincenaId) || null,
+      }
+      presupuestos.push(fila)
+      return fila
+    },
+  },
+  categoria: {
+    findUnique: async ({ where }) => categorias.find(c => c.id === where.id) || null,
+    findMany: async ({ where } = {}) => categorias.filter(c =>
+      (where?.activo === undefined || c.activo === where.activo) &&
+      (where?.tipo === undefined || c.tipo === where.tipo)),
+  },
+  // $transaction e $executeRaw existen para que el caso AH pueda comprobar que
+  // la linea y su fila CREACION se escriben JUNTAS. Un doble que ignorara
+  // $executeRaw dejaria pasar exactamente el defecto que ese caso vigila:
+  // lineas creadas sin bitacora, invisibles para el timeline del dashboard.
+  $transaction: async fn => fn(fakePrisma),
+  $executeRaw: async (strings, ...valores) => {
+    cambiosPresupuesto.push({ sql: strings.join('?'), valores })
+    return 1
   },
   quincena: { findFirst: async () => ({ id: 1, codigo: 'QTEST', fechaInicio: inicioRango, fechaFin: finRango }) },
   liquidezSnapshot: { findFirst: async () => null },
@@ -315,6 +363,17 @@ async function main() {
     { id: 10, quincenaId: 1, categoriaId: 7, descripcion: 'Gastos Personales', tipo: 'Gasto', montoPresupuestado: 1000, montoRevisado: null, estadoLinea: 'Abierta', categoria: categorias[1], quincena: quincenas[0] },
     { id: 11, quincenaId: 1, categoriaId: 7, descripcion: 'Niñera', tipo: 'Gasto', montoPresupuestado: 750, montoRevisado: null, estadoLinea: 'Abierta', categoria: categorias[1], quincena: quincenas[0] },
     { id: 99, quincenaId: 2, categoriaId: 7, descripcion: 'Linea de otra quincena', tipo: 'Gasto', montoPresupuestado: 500, montoRevisado: null, estadoLinea: 'Abierta', categoria: categorias[1], quincena: { id: 2, codigo: 'QOTRA' } },
+    // La linea CRUZADA: misma quincena y mismo tipo, otra categoria. Antes de
+    // quitar la compuerta por categoria era inalcanzable para un gasto de
+    // Personal; ahora tiene que aparecer entre las candidatas (caso AA).
+    { id: 12, quincenaId: 1, categoriaId: 3, descripcion: 'Colegiatura', tipo: 'Gasto', montoPresupuestado: 2000, montoRevisado: null, estadoLinea: 'Abierta', categoria: catPorNombre('Familia'), quincena: quincenas[0] },
+    // El negativo de TIPO: misma quincena, tipo distinto. Nunca debe ofrecerse
+    // a un Gasto (caso AB). Es la unica linea de esta lista cuyo cruce haria
+    // que el monto desaparezca de los agregados en vez de cambiar de columna.
+    { id: 13, quincenaId: 1, categoriaId: 1, descripcion: 'Sueldo', tipo: 'Ingreso', montoPresupuestado: 20000, montoRevisado: null, estadoLinea: 'Abierta', categoria: catPorNombre('Ingresos'), quincena: quincenas[0] },
+    // Segunda linea de Ingreso: con una sola, resolveBudgetLine la elegiria
+    // sola y el caso AI no llegaria a ver botones.
+    { id: 14, quincenaId: 1, categoriaId: 1, descripcion: 'Bono', tipo: 'Ingreso', montoPresupuestado: 3000, montoRevisado: null, estadoLinea: 'Abierta', categoria: catPorNombre('Ingresos'), quincena: quincenas[0] },
   )
 
   console.log('\n=== I: gasto ambiguo ofrece botones en vez de una lista muerta ===')
@@ -324,9 +383,83 @@ async function main() {
   check('registro el gasto', Number(txAmbiguo?.monto) === 115, txAmbiguo?.monto)
   check('no lo vinculo solo (hay ambiguedad)', txAmbiguo?.presupuestoId == null, txAmbiguo?.presupuestoId)
   check('la respuesta trae botones', Array.isArray(msgAmbiguo?.buttons), JSON.stringify(msgAmbiguo?.buttons))
-  check('un boton por linea candidata + "sin asignar"', msgAmbiguo?.buttons?.length === 3, msgAmbiguo?.buttons?.length)
-  check('el callback_data apunta a esta transaccion', msgAmbiguo?.buttons?.[0]?.[0]?.callback_data === `pl:${txAmbiguo.id}:10`, JSON.stringify(msgAmbiguo?.buttons?.[0]))
+  // La asercion es sobre CONTENIDO, no sobre cuantos botones hay: el numero
+  // depende del ranking y de la paginacion, y fijarlo obligaria a reescribir
+  // este caso cada vez que se agrega una linea a las fixtures.
+  const cbsI = msgAmbiguo?.buttons?.flat().map(b => b.callback_data) || []
+  check('ofrece la linea de su categoria', cbsI.includes(`pl:${txAmbiguo.id}:10`), JSON.stringify(cbsI))
+  check('deja dejarlo sin asignar', cbsI.includes(`pn:${txAmbiguo.id}`), JSON.stringify(cbsI))
   check('callback_data cabe en los 64 bytes de Telegram', msgAmbiguo.buttons.every(f => f.every(b => Buffer.byteLength(b.callback_data || '') <= 64)))
+
+  console.log('\n=== AA: las candidatas cruzan la frontera de categoria ===')
+  // El punto entero del cambio: un gasto que el parser mando a Personal tiene
+  // que poder llegar a una linea de Familia sin pasar por el dashboard.
+  check('ofrece una linea de OTRA categoria', cbsI.includes(`pl:${txAmbiguo.id}:12`), JSON.stringify(cbsI))
+  const etiquetasI = msgAmbiguo?.buttons?.flat().map(b => b.text) || []
+  check('la etiqueta dice de que categoria es', etiquetasI.some(t => /Colegiatura/.test(t) && /Familia/.test(t)), JSON.stringify(etiquetasI))
+
+  console.log('\n=== AB: las candidatas NUNCA cruzan la frontera de TIPO ===')
+  // El test mas importante de este cambio. Un Gasto colgado de una linea de
+  // Ingreso no lo cuenta ningun agregado (calcularFaltaPorPagar y
+  // cierre-quincena filtran por categoria.tipo), asi que el monto no cambiaria
+  // de columna: desapareceria. Antes esto era imposible porque 'Gasto' estaba
+  // hardcodeado en los dos lados; ahora lo unico que lo impide es el filtro por
+  // tipo de getActiveBudgetLines y la comparacion de linkTransactionToBudget.
+  check('no ofrece la linea de Ingreso', !cbsI.includes(`pl:${txAmbiguo.id}:13`), JSON.stringify(cbsI))
+
+  console.log('\n=== AC: enlazar a una linea cruzada NO mueve la categoria sola ===')
+  // La decision de negocio es literal: elegir la linea enlaza, y nada mas.
+  // Mover la categoria es una segunda escritura que el usuario confirma aparte
+  // (alignTransactionCategory). Si algun dia enlazar recategoriza en silencio,
+  // este caso truena.
+  await post(textUpdate('80, convivio de la escuela'))
+  const txCruzado = creadas.at(-1)
+  const catAntesAC = txCruzado.categoriaId
+  await post(callbackUpdate(`pl:${txCruzado.id}:12`))
+  check('enlazo a la linea de otra categoria', txCruzado.presupuestoId === 12, txCruzado.presupuestoId)
+  check('la categoria NO se movio sola', txCruzado.categoriaId === catAntesAC, `${catAntesAC} -> ${txCruzado.categoriaId}`)
+  const msgAC = editados.at(-1)
+  const cbsAC = msgAC?.buttons?.flat().map(b => b.callback_data) || []
+  check('pregunta si mueve la categoria', /¿Muevo también la categoría\?/.test(msgAC?.message || ''), msgAC?.message)
+  check('nombra las dos categorias', /Familia/.test(msgAC?.message || '') && /Personal/.test(msgAC?.message || ''), msgAC?.message)
+  check('ofrece mover y mantener', cbsAC.includes(`pk:${txCruzado.id}:12`) && cbsAC.includes(`pm:${txCruzado.id}:12`), JSON.stringify(cbsAC))
+
+  console.log('\n=== AD: confirmar mueve la categoria y re-deriva la clasificacion ===')
+  await post(callbackUpdate(`pk:${txCruzado.id}:12`))
+  check('ahora si movio la categoria', txCruzado.categoriaId === 3, txCruzado.categoriaId)
+  check('re-derivo la clasificacion de la categoria nueva', txCruzado.clasificacion === 'Variable', txCruzado.clasificacion)
+  check('no toco el enlace', txCruzado.presupuestoId === 12, txCruzado.presupuestoId)
+  const escriturasAntesAD2 = escrituras.length
+  await post(callbackUpdate(`pk:${txCruzado.id}:12`))
+  check('tocar dos veces no escribe dos veces', escrituras.length === escriturasAntesAD2, escrituras.length)
+
+  console.log('\n=== AE: mantener mi categoria no escribe nada ===')
+  await post(textUpdate('90, convivio del salon'))
+  const txMantiene = creadas.at(-1)
+  await post(callbackUpdate(`pl:${txMantiene.id}:12`))
+  const escriturasAntesAE = escrituras.length
+  await post(callbackUpdate(`pm:${txMantiene.id}:12`))
+  check('la categoria sigue siendo la suya', txMantiene.categoriaId === 7, txMantiene.categoriaId)
+  check('no hubo escritura', escrituras.length === escriturasAntesAE, escrituras.length)
+  check('lo deja por escrito', /lo dejé en su categoría/i.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== AF: un pk forjado sobre una linea que no es la suya se rechaza ===')
+  // Espejo del caso P para el prefijo nuevo. txMantiene esta en la linea 12;
+  // un callback que diga 10 no puede mover su categoria a la de la 10.
+  const catAntesAF = txMantiene.categoriaId
+  const escriturasAntesAF = escrituras.length
+  await post(callbackUpdate(`pk:${txMantiene.id}:10`))
+  check('no escribio nada', escrituras.length === escriturasAntesAF, escrituras.length)
+  check('la categoria quedo intacta', txMantiene.categoriaId === catAntesAF, txMantiene.categoriaId)
+
+  console.log('\n=== AI: un Ingreso tambien recibe linea (antes solo Gasto) ===')
+  await post(textUpdate('cobro 5000 reembolso'))
+  const txIngreso = creadas.at(-1)
+  const msgIngreso = enviados.at(-1)
+  const cbsAI = msgIngreso?.buttons?.flat().map(b => b.callback_data) || []
+  check('lo registro como Ingreso', txIngreso?.tipo === 'Ingreso', txIngreso?.tipo)
+  check('le ofrece lineas de presupuesto', cbsAI.some(cb => cb.startsWith(`pl:${txIngreso.id}:`)), JSON.stringify(cbsAI))
+  check('solo lineas de Ingreso', !cbsAI.includes(`pl:${txIngreso.id}:10`) && !cbsAI.includes(`pl:${txIngreso.id}:12`), JSON.stringify(cbsAI))
 
   console.log('\n=== J: tocar el boton vincula y reescribe el mensaje sin botones ===')
   const antesJ = editados.length
@@ -371,6 +504,13 @@ async function main() {
 
   console.log('\n=== T: un gasto que rebasa la linea avisa y ofrece cubrirlo ===')
   // La linea 11 tiene $750. Un gasto de 800 la rebasa por 50.
+  //
+  // ESTE CASO FIJA LA FRONTERA DEL AUTO-ENLACE. Solo se auto-vincula porque
+  // resolveBudgetLine sigue acotado a la categoria de la transaccion: dentro de
+  // Personal, "niñera" gana con holgura. Si alguien abre tambien el auto-enlace
+  // a toda la quincena, "niñera" empieza a competir con lineas de otras
+  // categorias, deja de superar los umbrales 0.75/0.15 y este caso truena.
+  // Cuando eso pase, la respuesta es revertir esa apertura, no bajar umbrales.
   await post(textUpdate('800, niñera'))
   const txT = creadas.at(-1)
   check('se auto-vinculo a Niñera', txT?.presupuestoId === 11, txT?.presupuestoId)
@@ -380,9 +520,10 @@ async function main() {
   check('ofrece boton al dashboard', enviados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(enviados.at(-1)?.buttons))
 
   console.log('\n=== U: "el gasto de X mandalo a Y" encuentra el movimiento y PROPONE ===')
-  // Las descripciones de estos casos caen en Personal a proposito: ahi viven
-  // las lineas 10 y 11 del doble. Con otra categoria no habria candidatas y el
-  // caso no probaria lo que dice probar.
+  // Antes las descripciones de estos casos TENIAN que caer en Personal, porque
+  // fuera de la categoria de la transaccion no habia candidatas y el caso no
+  // probaba nada. Eso ya no aplica: las candidatas salen de toda la quincena.
+  // El caso U2 prueba justo lo que esa restriccion impedia probar.
   await post(textUpdate('45, boliche'))
   const txU = creadas.at(-1)
   const escriturasAntesU = escrituras.length
@@ -397,6 +538,21 @@ async function main() {
   console.log('\n=== V: al confirmar SI escribe, por el mismo camino ya probado ===')
   await post(callbackUpdate(`pl:${txU.id}:10`))
   check('ahora si lo vinculo', txU.presupuestoId === 10, txU.presupuestoId)
+
+  console.log('\n=== U2: reasignar a una linea de OTRA categoria ===')
+  // Lo que la restriccion vieja del caso U hacia imposible probar. El gasto de
+  // "tamales" cae en Familia o Personal segun el parser; "colegiatura" es la
+  // linea 12, de Familia. Antes, si los dos no coincidian, el bot contestaba
+  // "no encontré una línea que se parezca en su categoría" y no habia salida
+  // desde Telegram.
+  await post(textUpdate('60, tamales de la esquina'))
+  const txU2 = creadas.at(-1)
+  const escriturasAntesU2 = escrituras.length
+  await post(textUpdate('el gasto de tamales mandalo a colegiatura'))
+  const propuestaU2 = enviados.at(-1)
+  const cbsU2 = propuestaU2?.buttons?.flat().map(b => b.callback_data) || []
+  check('propone la linea aunque sea de otra categoria', cbsU2.includes(`pl:${txU2.id}:12`), JSON.stringify(cbsU2))
+  check('propone, no escribe', escrituras.length === escriturasAntesU2, escrituras.length)
 
   console.log('\n=== W: referencia que no empata con nada ===')
   const antesW = escrituras.length
@@ -428,6 +584,87 @@ async function main() {
   const sinDestino = enviados.at(-1)?.message || ''
   check('no inventa una linea', !/Sí, mandarlo/i.test(sinDestino), sinDestino)
   check('ofrece las candidatas o lo dice', /¿A cuál línea lo mando\?|No encontré una línea/i.test(sinDestino), sinDestino)
+
+  console.log('\n=== AG: paginacion -- ninguna linea queda inalcanzable ===')
+  // Las lineas extra van AL FINAL del archivo a proposito: metidas antes,
+  // cambiarian el ranking de los casos I/AA/AB, que dependen de que linea sale
+  // en la primera pagina.
+  for (let i = 0; i < 6; i++) {
+    presupuestos.push({
+      id: 30 + i, quincenaId: 1, categoriaId: 3, descripcion: `Partida extra ${i}`,
+      tipo: 'Gasto', montoPresupuestado: 100 + i, montoRevisado: null,
+      estadoLinea: 'Abierta', categoria: catPorNombre('Familia'), quincena: quincenas[0],
+    })
+  }
+
+  await post(textUpdate('55, algo sin parecido'))
+  const txPag = creadas.at(-1)
+  const lineasGastoQ1 = presupuestos
+    .filter(l => l.quincenaId === 1 && l.categoria?.tipo === 'Gasto' && l.estadoLinea !== 'Cancelada')
+    .map(l => l.id)
+
+  const vistos = new Set()
+  let pagina = 0
+  let botonesPag = enviados.at(-1)?.buttons || []
+  for (let guard = 0; guard < 10; guard++) {
+    for (const b of botonesPag.flat()) {
+      const m = /^pl:\d+:(\d+)$/.exec(b.callback_data || '')
+      if (m) vistos.add(Number(m[1]))
+    }
+    const siguiente = botonesPag.flat().find(b => b.callback_data === `pp:${txPag.id}:${pagina + 1}`)
+    if (!siguiente) break
+    pagina += 1
+    await post(callbackUpdate(`pp:${txPag.id}:${pagina}`))
+    botonesPag = editados.at(-1)?.buttons || []
+  }
+
+  check('hubo mas de una pagina', pagina > 0, pagina)
+  check('la union de las paginas trae TODAS las lineas',
+    lineasGastoQ1.every(id => vistos.has(id)), `faltaron ${lineasGastoQ1.filter(id => !vistos.has(id))}`)
+  check('nunca ofrecio la linea de Ingreso', !vistos.has(13) && !vistos.has(14), [...vistos].join(','))
+  check('todos los callback_data caben en 64 bytes',
+    botonesPag.every(f => f.every(b => Buffer.byteLength(b.callback_data || '') <= 64)))
+
+  console.log('\n=== AG2: el menu por categoria lleva a las lineas de esa categoria ===')
+  await post(callbackUpdate(`pc:${txPag.id}:0`))
+  const menu = editados.at(-1)
+  const cbsMenu = menu?.buttons?.flat().map(b => b.callback_data) || []
+  check('lista las categorias, no las lineas', cbsMenu.includes(`pc:${txPag.id}:3`) && cbsMenu.includes(`pc:${txPag.id}:7`), JSON.stringify(cbsMenu))
+  check('no ofrece la categoria de Ingresos', !cbsMenu.includes(`pc:${txPag.id}:1`), JSON.stringify(cbsMenu))
+
+  await post(callbackUpdate(`pc:${txPag.id}:7`))
+  const soloPersonal = editados.at(-1)?.buttons?.flat().map(b => b.callback_data) || []
+  check('ahora si muestra lineas de Personal', soloPersonal.includes(`pl:${txPag.id}:10`), JSON.stringify(soloPersonal))
+  check('y ninguna de Familia', !soloPersonal.includes(`pl:${txPag.id}:12`), JSON.stringify(soloPersonal))
+
+  console.log('\n=== AH: crear linea desde el bot escribe TAMBIEN su bitacora ===')
+  await post(textUpdate('123, concierto raro'))
+  const txNueva = creadas.at(-1)
+  await post(callbackUpdate(`pd:${txNueva.id}:0`))
+  const menuCats = editados.at(-1)?.buttons?.flat().map(b => b.callback_data) || []
+  check('ofrece categorias del mismo tipo', menuCats.includes(`pd:${txNueva.id}:7`), JSON.stringify(menuCats))
+  check('no ofrece categorias de otro tipo', !menuCats.includes(`pd:${txNueva.id}:1`), JSON.stringify(menuCats))
+
+  const cambiosAntes = cambiosPresupuesto.length
+  await post(callbackUpdate(`pd:${txNueva.id}:7`))
+  const lineaNueva = presupuestos.at(-1)
+  check('creo la linea', lineaNueva?.descripcion === txNueva.descripcion, lineaNueva?.descripcion)
+  check('con el monto del movimiento', Number(lineaNueva?.montoPresupuestado) === Number(txNueva.monto), lineaNueva?.montoPresupuestado)
+  check('el tipo sale de la categoria', lineaNueva?.tipo === 'Gasto', lineaNueva?.tipo)
+  check('enlazo el movimiento a la linea nueva', txNueva.presupuestoId === lineaNueva?.id, txNueva.presupuestoId)
+  check('escribio la fila de bitacora', cambiosPresupuesto.length === cambiosAntes + 1, cambiosPresupuesto.length)
+  const cambio = cambiosPresupuesto.at(-1)
+  check('la bitacora es un CREACION', cambio?.valores?.includes('CREACION'), JSON.stringify(cambio?.valores))
+  check('la bitacora trae el monto de la linea', cambio?.valores?.includes(Number(txNueva.monto)), JSON.stringify(cambio?.valores))
+
+  console.log('\n=== AH2: no se puede crear una linea de otro tipo ===')
+  // Espejo de AB para el camino de creacion: si esto se colara, el bot seria el
+  // unico lugar capaz de fabricar el cruce de tipo que hace desaparecer el monto.
+  const cambiosAntesAH2 = cambiosPresupuesto.length
+  const lineasAntesAH2 = presupuestos.length
+  await post(callbackUpdate(`pd:${txNueva.id}:1`))
+  check('no creo la linea', presupuestos.length === lineasAntesAH2, presupuestos.length)
+  check('no escribio bitacora', cambiosPresupuesto.length === cambiosAntesAH2, cambiosPresupuesto.length)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
