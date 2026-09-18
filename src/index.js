@@ -45,12 +45,15 @@ const media = require('./media')
 const db = require('./database')
 const prisma = require('./lib/prisma')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
+const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
 const telegram = require('./telegram')
 const telegramBrain = require('./telegramBrain')
 const aiRouter = require('./aiRouter')
 const financeAgent = require('./financeAgent')
 const {
+  TIPOS_CON_LINEA,
   resolveBudgetLine,
+  resolveBudgetLineByName,
   getBudgetCandidates,
   getBudgetLineStatus,
   formatBudgetStatus,
@@ -83,10 +86,6 @@ async function assuredSend(to, message, context) {
 }
 
 function parseMessageFromMedia(analysis, senderName, senderPhone, messageId) {
-  const CLASIFICACION_POR = {
-    Hogar: 'Fijo', Salud: 'Fijo', Familia: 'Variable', Transporte: 'Variable',
-    Suscripciones: 'Fijo', Deudas: 'Fijo', Personal: 'Variable', Ingresos: null, Ahorro: null,
-  }
   const categoria = analysis.categoria || 'Personal'
   const now = new Date()
   const fechaMexico = new Date(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T00:00:00.000Z`)
@@ -100,7 +99,7 @@ function parseMessageFromMedia(analysis, senderName, senderPhone, messageId) {
     categoria,
     formaPago: 'Efectivo',
     tipo: categoria === 'Ingresos' ? 'Ingreso' : categoria === 'Ahorro' ? 'Ahorro' : 'Gasto',
-    clasificacion: CLASIFICACION_POR[categoria] || null,
+    clasificacion: CLASIFICACION_POR_CATEGORIA[categoria] || null,
     quincena: getCurrentQuincena(),
     estatus: 'Pagado',
     messageId: messageId || null,
@@ -228,11 +227,29 @@ function formatTelegramConfirmation(parsed) {
   ].join('\n')
 }
 
+// Etiqueta de un boton de linea. Vive aparte para que los tests puedan fijarla
+// y para que el formato no se reinvente en cada lugar que dibuja botones.
+//
+// La CATEGORIA es parte de la etiqueta, no decoracion: ahora se ofrecen lineas
+// de todas las categorias de la quincena, asi que sin ella el usuario estaria
+// eligiendo a ciegas entre partidas que pueden llamarse parecido en categorias
+// distintas. La descripcion se trunca porque Telegram corta los botones largos
+// por el unico lado que importa: el final.
+const LARGO_DESC_BOTON = 20
+
+function etiquetaLinea(c) {
+  const desc = c.descripcion.length > LARGO_DESC_BOTON
+    ? `${c.descripcion.slice(0, LARGO_DESC_BOTON - 1)}…`
+    : c.descripcion
+  const categoria = c.categoriaNombre ? ` · ${c.categoriaNombre}` : ''
+  return `${desc}${categoria} — $${c.presupuesto.toFixed(2)}`
+}
+
 // callback_data tiene un limite de 64 bytes, de ahi los prefijos de dos letras.
 // `pl` = presupuesto link, `pn` = presupuesto none.
 function budgetButtons(transaccionId, candidates) {
   const rows = candidates.slice(0, 4).map(c => [{
-    text: `${c.descripcion} — $${c.presupuesto.toFixed(2)}`,
+    text: etiquetaLinea(c),
     callback_data: `pl:${transaccionId}:${c.id}`,
   }])
   rows.push([{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }])
@@ -728,8 +745,11 @@ async function handleReassign(message, { referencia, destino }) {
   }
 
   const tx = candidatos[0]
-  const lookup = { quincenaId: quincena.id, categoriaId: tx.categoriaId, descripcion: destino, tipo: 'Gasto' }
-  const linea = await resolveBudgetLine(lookup)
+  const lookup = { quincenaId: quincena.id, categoriaId: tx.categoriaId, descripcion: destino, tipo: tx.tipo }
+  // Por NOMBRE y en toda la quincena: aqui el usuario escribio el destino, no
+  // lo estamos adivinando, y el resultado se confirma con un boton antes de
+  // escribir nada. Ver resolveBudgetLineByName en src/budgetTracker.js.
+  const linea = await resolveBudgetLineByName({ quincenaId: quincena.id, destino, tipo: tx.tipo })
 
   const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
 
@@ -751,7 +771,7 @@ async function handleReassign(message, { referencia, destino }) {
   if (candidatasLinea.length === 0) {
     await telegram.sendTelegramMessage(
       message.chatId,
-      `${resumen}\n\nNo encontré una línea que se parezca a “${telegram.escapeMarkdown(destino)}” en su categoría.`,
+      `${resumen}\n\nNo encontré ninguna línea de esta quincena que se parezca a “${telegram.escapeMarkdown(destino)}”.`,
       message.messageId,
     )
     return true
@@ -807,11 +827,13 @@ async function handleBudgetCallback(callback) {
         quincenaId: tx.quincenaId,
         categoriaId: tx.categoriaId,
         descripcion: tx.descripcion,
-        tipo: 'Gasto',
+        // El tipo sale de la transaccion, no hardcodeado: un ingreso o un
+        // ahorro tambien se cuelgan de una linea.
+        tipo: tx.tipo,
       })
       const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
       if (candidatas.length === 0) {
-        await telegram.editMessageText(callback.chatId, callback.messageId, `${resumen}\n\nNo hay líneas de presupuesto en su categoría.`)
+        await telegram.editMessageText(callback.chatId, callback.messageId, `${resumen}\n\nNo hay líneas de presupuesto en esta quincena.`)
         return
       }
       await telegram.editMessageText(
@@ -844,7 +866,10 @@ async function handleBudgetCallback(callback) {
       bloque.texto ? `${encabezado}\n\n${bloque.texto}` : encabezado,
       { buttons: bloque.buttons },
     )
-    console.log(`TELEGRAM_BUDGET_LINKED: tx=${txId}; linea=${lineaId}; excedido=${result.status?.excedido || 0}`)
+    // `cruzado` mide en produccion algo que no se puede saber de otro modo: con
+    // que frecuencia la linea que la gente elige es de otra categoria que la
+    // que el parser adivino. Si sale alto, el parser es el que esta mal.
+    console.log(`TELEGRAM_BUDGET_LINKED: tx=${txId}; linea=${lineaId}; cruzado=${!!result.cruzado}; excedido=${result.status?.excedido || 0}`)
   } catch (error) {
     console.error('TELEGRAM_CALLBACK_ERROR:', error)
     try {
@@ -1074,9 +1099,11 @@ app.post('/telegram/webhook', async (req, res) => {
       const bloque = budgetStatusBlock(status)
       if (bloque.texto) confirmation += `\n\n${bloque.texto}`
       buttons = bloque.buttons
-    } else if (parsed.tipo === 'Gasto') {
+    } else if (TIPOS_CON_LINEA.has(parsed.tipo)) {
+      // Antes esto era `parsed.tipo === 'Gasto'`: los ingresos y los ahorros
+      // nunca veian un boton de linea aunque su categoria tuviera partidas.
       const candidates = await getBudgetCandidates(budgetLookup)
-      confirmation += '\n\n⚠️ El gasto quedó registrado, pero no lo vinculé a una línea porque hay ambigüedad.'
+      confirmation += '\n\n⚠️ El movimiento quedó registrado, pero no lo vinculé a una línea porque hay ambigüedad.'
 
       if (candidates.length > 0) {
         // Antes esto era una lista de texto y un "la proxima vez especifica el

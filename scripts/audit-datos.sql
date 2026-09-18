@@ -226,6 +226,25 @@ SELECT * FROM (
          count(*), 0
     FROM information_schema.views
    WHERE table_schema = 'public' AND table_name LIKE 'v\_%'
+
+  UNION ALL
+  -- 21 NO es un defecto: es un termometro. Un movimiento puede estar enlazado a
+  -- una linea de otra categoria a proposito (una partida comodin), y el bot y
+  -- el dashboard ahora preguntan antes de mover la categoria en vez de
+  -- prohibir el cruce. Pero el `real` de una linea se calcula solo por
+  -- presupuesto_id, sin mirar categoria (ver calcularRealPorLinea en
+  -- dashboard/src/lib/real-transacciones.ts), asi que cada fila aqui es un peso
+  -- que se reporta en la categoria de la LINEA y no en la de la transaccion.
+  -- No hay doble conteo ni dinero perdido: los totales de la quincena siguen
+  -- cuadrando, lo que se desplaza es el reparto por categoria.
+  -- Si este numero crece mucho, el problema no es el cruce: es que el parser
+  -- esta adivinando mal la categoria de origen.
+  SELECT 21, 'INFO',
+         'Movimientos enlazados a una linea de otra categoria (legal, informativo)',
+         count(*), COALESCE(SUM(t.monto), 0)
+    FROM transacciones t
+    JOIN presupuesto p ON p.id = t.presupuesto_id
+   WHERE p.categoria_id <> t.categoria_id
 ) resumen
 ORDER BY n;
 
@@ -281,6 +300,22 @@ SELECT cp.id, c.nombre AS credito, q.codigo AS quincena, cp.monto_total,
   JOIN presupuesto p ON p.id = cp.presupuesto_id
  WHERE cp.estatus = 'Pendiente'
  ORDER BY q.codigo DESC;
+
+\echo ''
+\echo '=== 21. Movimientos enlazados a una linea de otra categoria (informativo) ==='
+\echo '    Legal a proposito. Revisa la columna tipo_coincide: si alguna fila'
+\echo '    dice f, eso SI es un defecto -- cruzar de TIPO hace que el monto'
+\echo '    desaparezca de los agregados, no que solo cambie de categoria.'
+SELECT t.id AS tx_id, t.fecha, t.descripcion, t.monto,
+       ct.nombre AS categoria_tx, cp2.nombre AS categoria_linea,
+       p.id AS presupuesto_id, p.descripcion AS linea,
+       (ct.tipo = cp2.tipo) AS tipo_coincide
+  FROM transacciones t
+  JOIN presupuesto p ON p.id = t.presupuesto_id
+  JOIN categorias ct ON ct.id = t.categoria_id
+  JOIN categorias cp2 ON cp2.id = p.categoria_id
+ WHERE p.categoria_id <> t.categoria_id
+ ORDER BY (ct.tipo = cp2.tipo), t.fecha DESC;
 
 \echo ''
 \echo '=== 6. Compras a credito Pagadas, por quincena (C1) ==='

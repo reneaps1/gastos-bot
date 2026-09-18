@@ -1,4 +1,5 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai')
+const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
@@ -28,16 +29,6 @@ const CATEGORIA_EJEMPLOS = {
   Personal: 'Diversion, Yoga, GYM, Audifonos, Educacion, Ropa, Corte pelo, Cursos',
   Ingresos: 'Salario, Vales, Bono, Prima, Anticipo, Freelance',
   Ahorro: 'Fondo emergencia, Meta vacaciones, Ahorro pareja, Inversion',
-}
-
-const CLASIFICACION_POR_CATEGORIA = {
-  Hogar: 'Fijo',
-  Salud: 'Fijo',
-  Familia: 'Variable',
-  Transporte: 'Variable',
-  Suscripciones: 'Fijo',
-  Deudas: 'Fijo',
-  Personal: 'Variable',
 }
 
 function buildCategoriasInfo() {
