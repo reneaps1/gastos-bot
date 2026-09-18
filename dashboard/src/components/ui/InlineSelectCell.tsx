@@ -19,6 +19,23 @@ export interface InlineOption {
   value: string
   label: string
   disabled?: boolean
+  /** Si se define, la opcion se dibuja dentro de un <optgroup> con este nombre.
+   *  Las opciones CONTIGUAS con el mismo grupo caen en el mismo optgroup, asi
+   *  que el orden del array es el que manda -- no se reordena nada aqui. */
+  group?: string
+}
+
+/** Parte las opciones en tramos contiguos por `group`. Sin `group` en ninguna,
+ *  devuelve un solo tramo sin nombre y el <select> queda plano, igual que
+ *  antes de que existiera esto. */
+function agruparContiguas(options: InlineOption[]): Array<{ group?: string; items: InlineOption[] }> {
+  const tramos: Array<{ group?: string; items: InlineOption[] }> = []
+  for (const o of options) {
+    const ultimo = tramos[tramos.length - 1]
+    if (ultimo && ultimo.group === o.group) ultimo.items.push(o)
+    else tramos.push({ group: o.group, items: [o] })
+  }
+  return tramos
 }
 
 interface Props {
@@ -81,8 +98,18 @@ export function InlineSelectCell({
         ) : (
           <>
             {emptyLabel !== undefined && <option value="">{emptyLabel}</option>}
-            {options.map(o => (
-              <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+            {agruparContiguas(options).map((tramo, i) => (
+              tramo.group === undefined ? (
+                tramo.items.map(o => (
+                  <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+                ))
+              ) : (
+                <optgroup key={`${tramo.group}-${i}`} label={tramo.group}>
+                  {tramo.items.map(o => (
+                    <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
+                  ))}
+                </optgroup>
+              )
             ))}
           </>
         )}

@@ -95,25 +95,36 @@ export async function PUT(
         presupuestoIdFinal = null
       }
 
-      // Cambiar de categoria tambien puede dejar huerfano un enlace heredado:
-      // la linea sigue siendo de la quincena correcta, pero ya no es de la
-      // categoria de la transaccion, y calcularRealPorLinea tampoco filtra por
-      // categoria (ver @/lib/real-transacciones), asi que el gasto se quedaria
-      // inflando el `real` de una categoria que ya no es la suya.
+      // Cambiar de categoria puede dejar el enlace cruzado: la linea sigue
+      // siendo de la quincena correcta, pero ya no es de la categoria de la
+      // transaccion.
       //
-      // Solo se suelta cuando el enlace SI cuadraba con la categoria anterior,
-      // o sea cuando era un enlace alineado que este cambio rompe. Un enlace
-      // deliberadamente cruzado (una linea comodin de otra categoria del mismo
-      // tipo, que es justo lo que ofrece el panel "Movimientos sin presupuesto"
-      // de /presupuesto) lo eligio una persona a proposito y se respeta.
+      // ANTES esto soltaba el enlace en silencio cuando cuadraba con la
+      // categoria anterior. Eso tenia sentido cuando cruzar era una rareza; ya
+      // no lo es: la clasificacion se entra por la linea, y un cruce es un
+      // estado normal, visible en la tabla y medido por el check 21 de
+      // scripts/audit-datos.sql. Borrar la asignacion de alguien sin avisar es
+      // justo la sobrescritura silenciosa que este cambio existe para evitar.
+      //
+      // Lo que SI se suelta es el cruce de TIPO, y esa es otra cosa: los
+      // agregados filtran por `categoria.tipo` (ver calcularFaltaPorPagar en
+      // @/lib/presupuesto-totales y @/lib/cierre-quincena), asi que un Gasto
+      // colgado de una linea de Ingreso no lo cuenta nadie -- el monto no
+      // cambia de columna, desaparece. Ahi soltar el enlace es lo correcto.
       if (categoriaId && presupuestoIdFinal === undefined && actual.presupuestoId != null) {
         const categoriaFinal = parseInt(categoriaId)
         if (categoriaFinal !== actual.categoriaId) {
-          const linea = await prisma.presupuesto.findUnique({
-            where: { id: actual.presupuestoId },
-            select: { categoriaId: true },
-          })
-          if (linea?.categoriaId === actual.categoriaId) {
+          const [linea, categoriaNueva] = await Promise.all([
+            prisma.presupuesto.findUnique({
+              where: { id: actual.presupuestoId },
+              select: { categoria: { select: { tipo: true } } },
+            }),
+            prisma.categoria.findUnique({
+              where: { id: categoriaFinal },
+              select: { tipo: true },
+            }),
+          ])
+          if (linea && categoriaNueva && linea.categoria?.tipo !== categoriaNueva.tipo) {
             presupuestoIdFinal = null
           }
         }

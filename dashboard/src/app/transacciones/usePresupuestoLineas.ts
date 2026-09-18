@@ -32,10 +32,19 @@ export type EstadoLineas = 'idle' | 'loading' | 'ready' | 'error'
 interface Entrada { estado: EstadoLineas; lineas: PresupuestoLinea[] }
 
 /** Texto de la opcion en el dropdown: "Despensa ($6,500)" y, si ya se paso,
- *  "Despensa ($6,500) · excedido". Mismo formato que el modal de edicion. */
+ *  "Despensa ($6,500) · excedido". Mismo formato que el modal de edicion.
+ *
+ *  La categoria NO va aqui: ahora se ofrecen lineas de todas las categorias,
+ *  pero van dentro de un <optgroup> con el nombre de la categoria como
+ *  encabezado, asi que repetirla en cada opcion seria ruido. */
 export function etiquetaLinea(l: PresupuestoLinea): string {
   const base = `${l.descripcion} (${formatMXN(l.montoEfectivo)})`
   return l.excedido > 0 ? `${base} · excedido` : base
+}
+
+/** Nombre del grupo de una linea en el selector. */
+export function grupoLinea(l: PresupuestoLinea): string {
+  return l.categoria?.nombre ?? 'Sin categoría'
 }
 
 export function usePresupuestoLineas() {
@@ -71,20 +80,40 @@ export function usePresupuestoLineas() {
     return cache.current.get(Number(quincenaId))?.estado ?? 'idle'
   }, [])
 
-  /** Lineas candidatas para una transaccion. Se filtra por categoria y por tipo
-   *  (un Ingreso no se cuelga de una partida de Gasto) y se excluyen las
-   *  Canceladas: una linea que "nunca paso" no debe ofrecerse. */
+  /** Lineas candidatas para una transaccion.
+   *
+   *  `categoriaId` YA NO SE PASA desde los selectores de asignacion: filtrar por
+   *  categoria obligaba a acordarse de que categoria contiene la linea que uno
+   *  busca antes de poder verla, que es justo el problema que este cambio ataca.
+   *  El parametro sobrevive para los agrupamientos que si necesitan una
+   *  categoria concreta.
+   *
+   *  `tipo` SI es obligatorio en la practica y es la frontera de integridad
+   *  real: `real-transacciones.ts` calcula el `real` de una linea solo por
+   *  `presupuestoId`, y `presupuesto-totales.ts` / `cierre-quincena.ts` filtran
+   *  los agregados por `categoria.tipo`. Un Gasto colgado de una linea de
+   *  Ingreso no lo cuenta nadie: el monto no cambia de columna, desaparece.
+   *
+   *  Las Canceladas se excluyen siempre: una linea que "nunca paso" no debe
+   *  ofrecerse.
+   *
+   *  El orden es por categoria y luego por descripcion, para que los <optgroup>
+   *  del selector salgan contiguos sin que el llamador reordene nada. */
   const lineasDe = useCallback((
     quincenaId: number | string,
     filtro: { categoriaId?: number; tipo?: string } = {},
   ): PresupuestoLinea[] => {
     const entrada = cache.current.get(Number(quincenaId))
     if (!entrada || entrada.estado !== 'ready') return []
-    return entrada.lineas.filter(l =>
-      l.estadoLinea !== 'Cancelada'
-      && (filtro.categoriaId === undefined || l.categoriaId === filtro.categoriaId)
-      && (filtro.tipo === undefined || l.categoria?.tipo === filtro.tipo),
-    )
+    return entrada.lineas
+      .filter(l =>
+        l.estadoLinea !== 'Cancelada'
+        && (filtro.categoriaId === undefined || l.categoriaId === filtro.categoriaId)
+        && (filtro.tipo === undefined || l.categoria?.tipo === filtro.tipo),
+      )
+      .sort((a, b) =>
+        (a.categoria?.nombre ?? '').localeCompare(b.categoria?.nombre ?? '')
+        || a.descripcion.localeCompare(b.descripcion))
   }, [])
 
   /** Tras cualquier escritura que mueva el `real` de una quincena. No refetchea
