@@ -67,9 +67,21 @@ interface PresupuestoGrupo {
   montoPresupuestado: number; real: number; pct: number; excedido: number; items: Presupuesto[]
 }
 
+// Las lineas Canceladas NO entran a las tarjetas.
+//
+// "Eliminar" desde la app las deja Cancelada en vez de borrarlas, para que el
+// Original y el historial sigan siendo auditables (ver el DELETE de
+// api/presupuestos/[id]). Correcto, pero la fila seguia a la vista y borrar se
+// sentia como que no habia pasado nada. Ya no contaban para el `real` -- lo
+// unico que hacian era estorbar.
+//
+// Aqui se ocultan sin toggle, a diferencia de la vista de Tabla: esta vista no
+// tiene barra de filtros donde ponerlo, y el rastro sigue alcanzable desde
+// Tabla ("Ver canceladas") y desde el historial de cada linea.
 function buildGrupos(presupuestos: Presupuesto[]): PresupuestoGrupo[] {
   const map = new Map<string, PresupuestoGrupo>()
   for (const p of presupuestos) {
+    if (p.estadoLinea === 'Cancelada') continue
     const k = groupKey(p)
     if (!map.has(k)) {
       map.set(k, { key: k, categoriaId: p.categoriaId, categoria: p.categoria,
@@ -131,6 +143,13 @@ interface TablaFiltros {
   saldo: string // '', 'pendiente', 'pagado'
   porCubrir: string // '', '0', '50', '100' — % usado por debajo del cual se considera "por cubrir"
   ocultarIngresos: boolean
+  // "Eliminar" una linea desde la app no la borra: la deja Cancelada, para que
+  // el Original y el historial sigan siendo auditables (ver el DELETE de
+  // api/presupuestos/[id], y el trigger que bloquea los DELETE fisicos).
+  // Esa decision es correcta, pero dejaba la fila a la vista y el borrado se
+  // sentia como que no habia pasado nada. Por default se ocultan; el toggle
+  // existe para que el rastro siga siendo alcanzable desde la app.
+  mostrarCanceladas: boolean
   busqueda: string
 }
 
@@ -147,6 +166,7 @@ function matchesFiltrosTabla(p: Presupuesto, f: TablaFiltros) {
   if (f.porCubrir === '0' && p.real !== 0) return false
   if (f.porCubrir === '50' && !(p.pct < 50)) return false
   if (f.porCubrir === '100' && !(p.pct < 100)) return false
+  if (!f.mostrarCanceladas && p.estadoLinea === 'Cancelada') return false
   if (f.ocultarIngresos && p.categoria.tipo === 'Ingreso') return false
   const needle = f.busqueda.trim().toLowerCase()
   if (needle && !p.descripcion.toLowerCase().includes(needle) && !p.categoria.nombre.toLowerCase().includes(needle)) return false
@@ -235,6 +255,7 @@ export default function PresupuestoPage() {
   const [tablaSaldo, setTablaSaldo] = useState('')
   const [tablaPorCubrir, setTablaPorCubrir] = useState('')
   const [tablaOcultarIngresos, setTablaOcultarIngresos] = useState(false)
+  const [tablaMostrarCanceladas, setTablaMostrarCanceladas] = useState(false)
   const [busquedaTabla, setBusquedaTabla] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('quincena')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -768,6 +789,7 @@ export default function PresupuestoPage() {
           tablaSaldo={tablaSaldo} setTablaSaldo={setTablaSaldo}
           tablaPorCubrir={tablaPorCubrir} setTablaPorCubrir={setTablaPorCubrir}
           tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
+          tablaMostrarCanceladas={tablaMostrarCanceladas} setTablaMostrarCanceladas={setTablaMostrarCanceladas}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
           sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
           openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP} setTraspasoOrigen={setTraspasoOrigen}
@@ -1759,6 +1781,7 @@ interface PresupuestoTablaProps {
   tablaSaldo: string; setTablaSaldo: (v: string) => void
   tablaPorCubrir: string; setTablaPorCubrir: (v: string) => void
   tablaOcultarIngresos: boolean; setTablaOcultarIngresos: (v: boolean) => void
+  tablaMostrarCanceladas: boolean; setTablaMostrarCanceladas: (v: boolean) => void
   busquedaTabla: string; setBusquedaTabla: (v: string) => void
   sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
   openEdit: (p: Presupuesto) => void
@@ -1989,6 +2012,7 @@ function PresupuestoTabla({
   tablaRecurrente, setTablaRecurrente, tablaEstado, setTablaEstado,
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
+  tablaMostrarCanceladas, setTablaMostrarCanceladas,
   busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
   openEdit, setDeleteTarget, setDetalleP, setTraspasoOrigen,
 }: PresupuestoTablaProps) {
@@ -2002,7 +2026,14 @@ function PresupuestoTabla({
   // alguna columna.
   const leadingCols = 1 + ['quincena', 'categoria', 'clasificacion'].filter(k => colVisible.has(k)).length
   const trailingCols = 1 + ['recurrente', 'vence'].filter(k => colVisible.has(k)).length
-  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, busqueda: busquedaTabla }
+  const filtros: TablaFiltros = { categoriaId: tablaCategoriaId, clasificacion: tablaClasificacion, recurrente: tablaRecurrente, estado: tablaEstado, saldo: tablaSaldo, porCubrir: tablaPorCubrir, ocultarIngresos: tablaOcultarIngresos, mostrarCanceladas: tablaMostrarCanceladas, busqueda: busquedaTabla }
+  // Cuantas quedarian fuera SOLO por estar canceladas: se cuentan contra el
+  // resto de filtros activos, para no ofrecer "3 canceladas ocultas" y que al
+  // destaparlas no aparezca ninguna porque otro filtro tambien las descarta.
+  const canceladasOcultas = presupuestosTabla.filter(
+    p => p.estadoLinea === 'Cancelada' && matchesFiltrosTabla(p, { ...filtros, mostrarCanceladas: true }),
+  ).length
+
   const filasTabla = presupuestosTabla
     .filter(p => matchesFiltrosTabla(p, filtros))
     .sort((a, b) => {
@@ -2014,8 +2045,12 @@ function PresupuestoTabla({
 
   // Los totales de dinero solo deben sumar partidas de Gasto — Ingreso/Ahorro (p.ej.
   // una línea "Salario") nunca se suman a un total de gasto. Mismo criterio que la
-  // vista Tarjetas (gastoGrupos). Las filas siguen mostrándose todas; solo se excluyen
-  // de las sumas.
+  // vista Tarjetas (gastoGrupos). Las filas de Ingreso/Ahorro se siguen mostrando;
+  // solo se excluyen de las sumas.
+  //
+  // `cuentaParaAgregados` ademas descarta las Canceladas, y por eso el toggle
+  // "Ver canceladas" es puramente visual: destaparlas NO mueve ningun total.
+  // Si algun dia esos numeros bailan al prender el toggle, el defecto esta aqui.
   const gastoFilasTabla = filasTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
 
   // Dynamic totals over the filtered Gasto rows — recompute on every filter change
@@ -2160,9 +2195,24 @@ function PresupuestoTabla({
               className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400" />
             Ocultar ingresos
           </label>
+          <label className="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" checked={tablaMostrarCanceladas} onChange={e => setTablaMostrarCanceladas(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400" />
+            Ver canceladas
+          </label>
           <ColumnsMenu columns={PRESUPUESTO_TABLA_COLUMNS} visible={colVisible} onToggle={toggleCol} />
         </div>
-        <p className="text-xs text-slate-400 dark:text-slate-500">{filasTabla.length} de {presupuestosTabla.length} partidas</p>
+        <p className="text-xs text-slate-400 dark:text-slate-500">
+          {filasTabla.length} de {presupuestosTabla.length} partidas
+          {/* Se dice cuantas hay ocultas en vez de desaparecerlas sin mas: una
+              linea cancelada sigue existiendo y su historial tambien. */}
+          {!tablaMostrarCanceladas && canceladasOcultas > 0 && (
+            <> · <button type="button" onClick={() => setTablaMostrarCanceladas(true)}
+              className="underline hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer">
+              {canceladasOcultas} cancelada{canceladasOcultas > 1 ? 's' : ''} oculta{canceladasOcultas > 1 ? 's' : ''}
+            </button></>
+          )}
+        </p>
       </div>
 
       <div className={`grid grid-cols-2 gap-3 ${tablaQuincenaId !== ALL_QUINCENAS ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
