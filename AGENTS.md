@@ -266,9 +266,10 @@ migracion aplicada que falta en el filesystem solo produce un aviso), asi que
 el dashboard seguia levantando con un cliente Prisma que describia otra base.
 
 Por eso `scripts/check-prisma-sync.js` compara los dos `schema.prisma` y las
-dos carpetas de migraciones (nombres y contenido de cada `migration.sql`), y
-corre en cada PR via `.github/workflows/ci.yml`. Si agregas una migracion,
-agregala en los dos lados: el CI te avisa si te olvidas.
+dos carpetas de migraciones (nombres y contenido de cada `migration.sql`). Corre
+como primer paso de `npm test`, que es lo que ejecuta el CI en cada PR y en
+cada push a `main`. Si agregas una migracion, agregala en los dos lados: el CI
+te avisa si te olvidas.
 
 `views.sql` deje de ser un archivo suelto (Prisma solo aplica migraciones que
 viven en una carpeta numerada, y por eso nunca se aplicaba) y ahora es la
