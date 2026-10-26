@@ -8,6 +8,14 @@ import { prisma } from '@/lib/prisma'
 // reiniciaria el servicio en bucle sin arreglar nada: el problema no es del
 // proceso sino de la base, y un reinicio no arregla una base caida. La verdad
 // va en el cuerpo, para que se pueda leer sin depender de los logs.
+//
+// force-dynamic es obligatorio: sin esto, Next.js evalua la ruta en build time
+// y guarda la respuesta como estatica. El estado de la base quedaria congelado
+// en el momento del build, y el endpoint que existe justamente para ver si la
+// base esta viva reportaria siempre lo mismo. Ademas, el build no debe
+// depender de que la base este disponible.
+export const dynamic = 'force-dynamic'
+
 export async function GET() {
   let database = { ok: true, error: null as string | null }
 
