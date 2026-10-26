@@ -1,6 +1,22 @@
 const prisma = require('./lib/prisma')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
 
+// Comprobacion de vida de la base. Es la que distingue "el bot esta vivo" de
+// "el bot puede registrar algo".
+//
+// Sin esto, /health decia "ok" con Postgres caido, el watchdog daba verde y
+// el bot se comia los mensajes de WhatsApp en silencio: ni read receipt, ni
+// reaccion, ni confirmacion. Un health check que no consulta la base no
+// puede ver caer la base.
+async function checkDatabase() {
+  try {
+    await prisma.$queryRaw`SELECT 1`
+    return { ok: true, error: null }
+  } catch (error) {
+    return { ok: false, error: error.message }
+  }
+}
+
 async function findUserByPhone(phone) {
   if (!phone) return null
   return prisma.user.findFirst({ where: { phoneWhatsapp: phone, activo: true } })
@@ -109,6 +125,7 @@ async function getResumenQuincena(quincenaId) {
 }
 
 module.exports = {
+  checkDatabase,
   findUserByPhone,
   findUserByName,
   findCategoria,

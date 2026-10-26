@@ -255,6 +255,29 @@ La logica de "que cuenta como roto" vive en `src/telegramHealth.js` (sin depende
 - `DATABASE_URL` debe configurarse **manualmente** en el Environment de cada servicio en el dashboard (el `fromDatabase` de render.yaml solo aplica en Blueprints nuevos).
 - Ambos servicios usan la URL **interna** de gastos-db (sin `.oregon-postgres.render.com`).
 
+### Los dos Prisma del repo, y como se mantienen iguales
+
+El bot usa `prisma/` y el dashboard usa `dashboard/prisma/`. Los dos corren
+`prisma migrate deploy` contra la MISMA base (`gastos-db`) con su propia
+historia de migraciones. Si esas historias divergen, no duele en el repo:
+duele en produccion y en silencio. Ya paso: el dashboard no tenia la
+migracion `init` que el bot si aplicaba, y Prisma no se queja de eso (una
+migracion aplicada que falta en el filesystem solo produce un aviso), asi que
+el dashboard seguia levantando con un cliente Prisma que describia otra base.
+
+Por eso `scripts/check-prisma-sync.js` compara los dos `schema.prisma` y las
+dos carpetas de migraciones (nombres y contenido de cada `migration.sql`). Corre
+como primer paso de `npm test`, que es lo que ejecuta el CI en cada PR y en
+cada push a `main`. Si agregas una migracion, agregala en los dos lados: el CI
+te avisa si te olvidas.
+
+`views.sql` deje de ser un archivo suelto (Prisma solo aplica migraciones que
+viven en una carpeta numerada, y por eso nunca se aplicaba) y ahora es la
+migracion `20261026120000_views_sql`, en los dos lados.
+
+Unificar de verdad las dos carpetas (que los dos apunten a la misma) sigue
+pendiente: hasta entonces, el check de CI es la red de seguridad.
+
 ### Runbook: el bot de Telegram no responde
 
 El handler de `/telegram/webhook` puede descartar un mensaje **sin contestar nada en el chat**. Estos son todos los caminos, en el orden en que ocurren:
@@ -388,10 +411,34 @@ Eso ya no puede pasar: `evaluate()` en `src/telegramHealth.js` anula la reparaci
 
 | Tarea | Prioridad | Detalle |
 |-------|-----------|---------|
-| Correr views.sql en la DB | Alta | `prisma/migrations/views.sql` — vistas de resumen quincenal, deudas, presupuesto, liquidez |
-| Configurar tokens WhatsApp en gastos-bot | Alta | `META_VERIFY_TOKEN`, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID` en Render Environment |
+| Verificar el `DATABASE_URL` de los tres servicios | Alta | El 2026-10-26 el bot dejo de registrar gastos de WhatsApp y el dashboard quedo en 503. La causa mas probable: los servicios no lograban autenticarse contra `gastos-db`. Compara el `DATABASE_URL` de `gastos-bot`, `milo-telegram-bot` y `gastos-dashboard` contra la conexion actual de la base, y verifica que la contrasena no se haya rotado sin actualizar el Environment. |
+| Configurar tokens WhatsApp en gastos-bot | Alta | `META_VERIFY_TOKEN`, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID` en Render Environment. `META_VERIFY_TOKEN` ya esta puesto (el challenge responde), pero los otros dos no se pueden verificar desde fuera: si faltan, el gasto se guarda y no hay confirmacion. |
 | Migrar datos históricos a producción | Media | 239 transacciones + presupuestos + liquidez del Excel |
-| Rotar contraseña de gastos-db | Media | Credencial expuesta en chat — gastos-db → Settings → Reset Password |
+| Rotar contraseña de gastos-db | Media | Credencial expuesta en chat — gastos-db → Settings → Reset Password. Al rotarla, actualiza el `DATABASE_URL` de los TRES servicios en el mismo movimiento: si no, el bot se queda mudo sin avisar. |
+| Agregar `TELEGRAM_WEBHOOK_SECRET` a los secrets de Actions | Media | Hoy esta vacio. El watchdog repara el webhook con `setWebhook`, y un `setWebhook` sin `secret_token` BORRA el secreto guardado en Telegram: el servicio seguiria exigiendolo y contestaria 403 a todo. |
+
+### El bot no puede quedarse mudo otra vez (regla del 2026-10-26)
+
+El 2026-10-26 el bot dejo de registrar gastos de WhatsApp sin dar ninguna señal: ni
+read receipt, ni reaccion, ni confirmacion. Tres cosas se rompieron a la vez y
+ninguna era visible desde afuera:
+
+1. **El primer query del flujo esta fuera de todo try/catch interno.** Es
+   `db.findUserByPhone()`, en `src/index.js`. Si la base no responde, el error
+   subia al catch externo, que solo logueaba. Ahora hay un catch propio que
+   avisa al usuario de que su mensaje NO quedo guardado, y el `WEBHOOK_MESSAGE_FAILED`
+   queda en el log.
+2. **`GET /health` no consultaba Postgres.** Decía "ok" con la base caida, y el
+   watchdog se veía verde con el sistema roto. Ahora `/health` hace
+   `SELECT 1` y devuelve `database: { ok, error }`. Sigue respondiendo 200 a
+   proposito: si devolviera 503, Render reiniciaria el servicio en bucle sin
+   arreglar nada, porque el problema no es del proceso sino de la base.
+3. **El watchdog era ciego a la base.** Solo miraba la API de Telegram,
+   `/health` y `/telegram/status`. Ahora lee el cuerpo de `/health` y levanta
+   `DATABASE_UNREACHABLE` cuando la base no responde, asi que avisa por Telegram
+   en vez de quedarse callado.
+La regla que sale de ahi: **un health check que no consulta la base no puede ver
+caer la base**, y **un error que nadie ve es un error que no se arregla**.
 
 ## Stack Oficial
 

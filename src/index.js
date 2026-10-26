@@ -486,6 +486,10 @@ app.post('/webhook', async (req, res) => {
     for (const message of messages) {
       let text = null
       let mediaMeta = null
+      // Se declara antes del try para que el catch de mas abajo sepa a quien
+      // avisarle: sin esto, un fallo de la base se comia el error y el usuario
+      // se quedaba sin ninguna señal.
+      let senderPhone = null
 
       if (message.type === 'text') {
         text = message.text?.body?.trim()
@@ -505,7 +509,7 @@ app.post('/webhook', async (req, res) => {
       processingMessages.add(message.id)
 
       try {
-        const senderPhone = extractPhoneNumber(message.from)
+        senderPhone = extractPhoneNumber(message.from)
         const senderName = changes.value.contacts?.[0]?.profile?.name || 'Rene'
         const user = await db.findUserByPhone(senderPhone) || await db.findUserByName(senderName)
         await ensureFreshQuincenas()
@@ -824,6 +828,29 @@ app.post('/webhook', async (req, res) => {
             error: error.message,
             fechaMensaje: new Date(),
           })
+        }
+      } catch (error) {
+        // Esto solo atrapa lo que revienta ANTES del bloque de procesamiento
+        // (que tiene su propio catch, mas abajo, con el mensaje "Error al
+        // procesar tu mensaje"). Lo que llega aqui es, sobre todo, la primera
+        // consulta a la base: db.findUserByPhone().
+        //
+        // Antes este error subia hasta el catch externo, que solo logueaba, y
+        // el usuario se quedaba con el mensaje en "no leido", sin reaccion y
+        // sin confirmacion: silencio total. Con la base caida, el bot no
+        // guardaba nada y nadie se enteraba. Ahora al menos se avisa.
+        console.error('WEBHOOK_MESSAGE_FAILED:', error.message)
+        if (senderPhone) {
+          try {
+            await react(senderPhone, message.id, '❌')
+            await assuredSend(
+              senderPhone,
+              'No pude registrar tu gasto porque el sistema no responde a la base de datos. Tu mensaje NO quedo guardado. No lo reintentes todavia para no duplicarlo: avisame y lo registro yo.',
+              'webhook:db_error',
+            )
+          } catch (notifyError) {
+            console.error('WEBHOOK_NOTIFY_FAILED:', notifyError.message)
+          }
         }
       } finally {
         processingMessages.delete(message.id)
@@ -1427,7 +1454,7 @@ app.post('/telegram/webhook', async (req, res) => {
   }
 })
 
-app.get('/', (req, res) => {
+app.get('/', async (req, res) => {
   const ai = aiRouter.status()
   res.json({
     status: 'ok',
@@ -1440,19 +1467,27 @@ app.get('/', (req, res) => {
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
     financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
     telegramWebhookUrl: telegram.getWebhookUrl(),
+    database: await db.checkDatabase(),
     timestamp: new Date().toISOString(),
   })
 })
 
-app.get('/health', (req, res) => {
+// Health check de Render. SIEMPRE responde 200: si devolviera 503 con la base
+// caida, Render reiniciaria el servicio en bucle sin arreglar nada, porque el
+// problema no es del proceso sino de la base. La verdad va en el cuerpo, y el
+// watchdog la lee para avisar. Un health check que no consulta la base no
+// puede ver caer la base: por eso antes decia "ok" con todo roto.
+app.get('/health', async (req, res) => {
   const ai = aiRouter.status()
+  const database = await db.checkDatabase()
   res.json({
-    status: 'ok',
+    status: database.ok ? 'ok' : 'degraded',
     telegramEnabled: telegram.isEnabled(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
     financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
+    database,
     timestamp: new Date().toISOString(),
   })
 })

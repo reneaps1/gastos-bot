@@ -44,7 +44,7 @@ function describeDeliveryError(message) {
  * @param {object} input
  * @param {object|null} input.webhookInfo  `result` de getWebhookInfo, o null si no se pudo consultar
  * @param {string|null} input.expectedUrl  URL que DEBE tener registrada el webhook
- * @param {{ok: boolean, status?: number, error?: string}|null} input.health  resultado de GET /health
+ * @param {{ok: boolean, status?: number, error?: string, data?: object}|null} input.health  resultado de GET /health (incluye el cuerpo, para ver el estado de la base)
  * @param {object|null} input.status  payload de GET /telegram/status
  * @param {{ok: boolean, status?: number|string}|null} input.me  resultado de getMe
  * @param {boolean} input.watchdogHasSecret  si quien llama tiene TELEGRAM_WEBHOOK_SECRET
@@ -128,6 +128,23 @@ function evaluate({ webhookInfo = null, expectedUrl = null, health = null, statu
       `El servicio no responde en /health (${health.status || health.error || 'sin respuesta'})`,
       'Deploy fallido, crash loop, o servicio suspendido. Revisa Render: Events y Logs.',
     ))
+  }
+
+  // 3b. El servicio responde pero su base de datos no.
+  //
+  // El caso del 2026-10-26: /health decia "ok" con Postgres caido, el watchdog
+  // daba verde y el bot se comia los mensajes de WhatsApp en silencio. El
+  // servicio estaba vivo y no podia guardar nada: /health no consultaba la
+  // base, asi que nadie miraba donde estaba el problema.
+  if (health && health.ok && health.data && health.data.database) {
+    if (health.data.database.ok === false) {
+      problems.push(problem(
+        'DATABASE_UNREACHABLE',
+        'ERROR',
+        `El servicio responde pero no puede leer la base de datos: ${health.data.database.error || 'sin detalle'}`,
+        'El bot guarda todo en Postgres: sin base no registra nada y el usuario se queda sin confirmacion. Revisa el DATABASE_URL de cada servicio y el estado de gastos-db en Render.',
+      ))
+    }
   }
 
   // 4. El servicio responde pero esta mal configurado. Este bloque cubre el

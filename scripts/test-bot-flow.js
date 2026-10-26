@@ -125,9 +125,15 @@ const quincenas = [
 const transacciones = []
 const whatsappMessages = []
 let nextTxId = 1, nextMsgId = 1
+// Permite simular que Postgres no responde, para probar que el bot avisa en
+// vez de comerse el error (el caso del 2026-10-26).
+let dbCaida = false
 
 const fakeDb = {
-  findUserByPhone: async () => null,
+  findUserByPhone: async () => {
+    if (dbCaida) throw new Error('Connection refused: la base de datos no responde')
+    return null
+  },
   findUserByName: async () => null,
   findCategoria: async (nombre) => nombre
     ? categorias.find(c => c.nombre.toLowerCase() === String(nombre).toLowerCase() && c.activo) || null
@@ -257,6 +263,28 @@ async function main() {
   const conPresupuesto = transacciones.filter(t => t.presupuestoId != null)
   check('ninguna transaccion trae presupuestoId', conPresupuesto.length === 0, JSON.stringify(conPresupuesto))
   check('se registraron 3 gastos en total', transacciones.length === 3, transacciones.length)
+
+  console.log('\n=== F: si la base esta caida, el bot AVISA en vez de quedarse mudo ===')
+  // Con Postgres caido, db.findUserByPhone() truena antes de cualquier otra
+  // cosa. Antes ese error subia al catch externo, que solo logueaba, y el
+  // usuario se quedaba sin read receipt, sin reaccion y sin confirmacion:
+  // silencio total. Ahora el bot dice que no pudo guardar el mensaje.
+  dbCaida = true
+  await send('gaste 200 en uber')
+  dbCaida = false
+  const aviso = ultimaConfirmacion()
+  check('el bot aviso al usuario', /No pude registrar tu gasto/.test(aviso), aviso)
+  check('aviso que el mensaje NO quedo guardado', /NO quedo guardado/.test(aviso), aviso)
+  check('no registro ninguna transaccion', transacciones.length === 3, transacciones.length)
+  check('reacciono con error', reacciones.at(-1)?.emoji === '❌', JSON.stringify(reacciones.at(-1)))
+  check('no se registro ningun WhatsAppMessage del mensaje fallido', !whatsappMessages.some(m => m.body === 'gaste 200 en uber'), JSON.stringify(whatsappMessages.at(-1)))
+
+  console.log('\n=== G: despues de la caida, el bot vuelve a funcionar normal ===')
+  await send('gaste 300 en uber')
+  sinErrores('G')
+  check('volvio a registrar', transacciones.length === 4, transacciones.length)
+  check('monto = 300', Number(transacciones.at(-1)?.monto) === 300, transacciones.at(-1)?.monto)
+  check('confirmo el registro', ultimaConfirmacion().includes('Gasto registrado'), ultimaConfirmacion())
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
