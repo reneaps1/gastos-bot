@@ -162,6 +162,33 @@ const o = evaluate({
 check('repara normal', o.heal?.url === URL_OK, JSON.stringify(o.heal))
 check('sin aviso de secreto', !codigos(o).includes('WATCHDOG_SECRET_MISSING'), JSON.stringify(codigos(o)))
 
+console.log('\n=== P: el servicio responde pero su base de datos NO (el caso del 2026-10-26) ===')
+// El watchdog daba verde con Postgres caido: /health decia "ok" sin consultar
+// la base, el bot se comia los mensajes en silencio y nadie se enteraba. Ahora
+// /health reporta el estado de la base y el watchdog lo ve.
+const p1 = evaluate({
+  ...SANO,
+  health: { ok: true, status: 200, data: { status: 'degraded', database: { ok: false, error: 'Connection refused' } } },
+})
+check('detecta DATABASE_UNREACHABLE', codigos(p1).includes('DATABASE_UNREACHABLE'), JSON.stringify(codigos(p1)))
+check('es ERROR', hasErrors(p1.problems) === true, JSON.stringify(p1.problems))
+check('no lo confunde con el servicio caido', !codigos(p1).includes('SERVICE_DOWN'), JSON.stringify(codigos(p1)))
+check('el mensaje menciona el error de la base', p1.problems.find(x => x.code === 'DATABASE_UNREACHABLE')?.message.includes('Connection refused'), JSON.stringify(p1.problems))
+check('la pista dice que revisar el DATABASE_URL', /DATABASE_URL/.test(p1.problems.find(x => x.code === 'DATABASE_UNREACHABLE')?.hint || ''), JSON.stringify(p1.problems))
+
+console.log('\n=== Q: base de datos sana = no alerta ===')
+const q1 = evaluate({
+  ...SANO,
+  health: { ok: true, status: 200, data: { status: 'ok', database: { ok: true, error: null } } },
+})
+check('sin problemas', q1.problems.length === 0, JSON.stringify(codigos(q1)))
+check('ok = true', q1.ok === true)
+
+console.log('\n=== R: /health viejo, sin el campo database, no dispara la alerta ===')
+// Un despliegue viejo (sin el campo) no debe generar falsos positivos.
+const r1 = evaluate({ ...SANO, health: { ok: true, status: 200, data: { status: 'ok' } } })
+check('sin problemas', r1.problems.length === 0, JSON.stringify(codigos(r1)))
+
 console.log('\n=== L: el mensaje de alerta es legible y accionable ===')
 const alerta = formatAlert({ problems: d.problems, healed: null, serviceName: 'milo-telegram-bot' })
 check('nombra el servicio', alerta.includes('milo-telegram-bot'), alerta)

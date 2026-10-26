@@ -105,7 +105,15 @@ async function main() {
   let status = null
   if (SERVICE_URL) {
     const healthResponse = await httpJson(`${SERVICE_URL}/health`, { timeout: SERVICE_TIMEOUT_MS })
-    health = { ok: healthResponse.ok, status: healthResponse.status, error: healthResponse.error }
+    // El cuerpo se pasa completo: /health reporta el estado de la base de
+    // datos. Sin el, el watchdog solo ve "el servicio responde" y no puede
+    // distinguir un bot sano de un bot que no puede guardar nada.
+    health = {
+      ok: healthResponse.ok,
+      status: healthResponse.status,
+      error: healthResponse.error,
+      data: healthResponse.data,
+    }
     log(`GET /health -> ${healthResponse.status}`)
 
     if (healthResponse.ok) {
