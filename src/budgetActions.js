@@ -53,6 +53,9 @@ const RECHAZO = {
   // alinear. Solo lo usa alignTransactionCategory.
   NO_ENLAZADA: 'NO_ENLAZADA',
   CATEGORIA_NO_EXISTE: 'CATEGORIA_NO_EXISTE',
+  // Solo correctTransactionCategory: el movimiento ya cuelga de una linea, y
+  // cambiarle la categoria por fuera la dejaria cruzada sin preguntar.
+  YA_ENLAZADA: 'YA_ENLAZADA',
 }
 
 /**
@@ -245,6 +248,48 @@ async function alignTransactionCategory({ transaccionId, presupuestoId }) {
   return { ok: true, yaEstaba: false, categoriaAnterior: tx.categoria, categoriaNueva: linea.categoria }
 }
 
+/**
+ * Cambia la categoria de un gasto porque el usuario dijo que la propuesta
+ * estaba mal (boton `kc:` del clasificador). Hermana de
+ * alignTransactionCategory, pero sin linea de por medio: aqui el destino lo
+ * eligio el usuario de un menu.
+ *
+ * Los ids llegan por callback_data (no confiable): todo se revalida. Solo se
+ * permite dentro del MISMO tipo (Gasto -> Gasto): cruzar tipos moveria el monto
+ * entre ingresos, gastos y ahorros, y eso no es "corregir la categoria".
+ */
+async function correctTransactionCategory({ transaccionId, categoriaId }) {
+  const txId = Number(transaccionId)
+  const catId = Number(categoriaId)
+  if (!Number.isInteger(txId)) return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
+  if (!Number.isInteger(catId)) return { ok: false, reason: RECHAZO.CATEGORIA_NO_EXISTE }
+
+  const tx = await prisma.transaccion.findUnique({
+    where: { id: txId },
+    include: { categoria: true },
+  })
+  if (!tx) return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
+
+  const categoria = await prisma.categoria.findUnique({ where: { id: catId } })
+  if (!categoria || categoria.activo === false) return { ok: false, reason: RECHAZO.CATEGORIA_NO_EXISTE }
+  if (categoria.tipo !== tx.tipo) return { ok: false, reason: RECHAZO.TIPO_DISTINTO }
+
+  if (tx.categoriaId === catId) {
+    return { ok: true, yaEstaba: true, tx, categoriaAnterior: tx.categoria, categoriaNueva: categoria }
+  }
+  if (tx.presupuestoId != null) return { ok: false, reason: RECHAZO.YA_ENLAZADA }
+
+  await prisma.transaccion.update({
+    where: { id: txId },
+    data: {
+      categoriaId: catId,
+      clasificacion: CLASIFICACION_POR_CATEGORIA[categoria.nombre] ?? null,
+    },
+  })
+
+  return { ok: true, yaEstaba: false, tx, categoriaAnterior: tx.categoria, categoriaNueva: categoria }
+}
+
 // Deja la transaccion explicitamente sin linea. Existe para que "Dejar sin
 // asignar" sea una decision registrada y no simplemente ignorar los botones:
 // asi el mensaje se cierra y el gasto no queda en el limbo visual.
@@ -313,6 +358,8 @@ function describeRechazo(reason) {
       return 'Ese movimiento ya no está en esa línea.'
     case RECHAZO.CATEGORIA_NO_EXISTE:
       return 'Esa categoría ya no existe.'
+    case RECHAZO.YA_ENLAZADA:
+      return 'Ese movimiento ya tiene línea de presupuesto. Cámbiale la categoría desde el dashboard.'
     default:
       return 'No pude vincular el movimiento.'
   }
@@ -321,6 +368,7 @@ function describeRechazo(reason) {
 module.exports = {
   linkTransactionToBudget,
   alignTransactionCategory,
+  correctTransactionCategory,
   createBudgetLineForTransaction,
   unlinkTransaction,
   findTransactionsByReference,
