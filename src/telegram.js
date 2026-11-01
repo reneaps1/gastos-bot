@@ -170,7 +170,30 @@ function isMarkdownParseError(error) {
   return error.response?.status === 400 && /can't parse entities/i.test(error.response?.data?.description || '')
 }
 
-async function sendTelegramMessage(chatId, message, replyToMessageId = null, { buttons = null } = {}) {
+// "Milo esta escribiendo...". Se manda en cuanto entra el update, antes de
+// cualquier llamada a la IA: en el plan gratis de Render el primer mensaje
+// despues de dormir tarda, y sin esta senal parece que el bot ignoro el
+// mensaje. Telegram la muestra ~5 s; quien espera mas la repite. Nunca lanza:
+// es cosmetica y no debe tumbar el flujo.
+async function sendChatAction(chatId, action = 'typing') {
+  if (!isEnabled()) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
+  try {
+    const response = await axios.post(
+      `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendChatAction`,
+      { chat_id: chatId, action },
+      { headers: { 'Content-Type': 'application/json' }, timeout: 5000 },
+    )
+    return { ok: true, data: response.data }
+  } catch (error) {
+    const details = error.response?.data || error.message
+    console.warn('Telegram sendChatAction error:', JSON.stringify(details))
+    return { ok: false, error: details }
+  }
+}
+
+// `plain: true` manda el texto sin parse_mode. Es para texto generado por la
+// IA: un asterisco o guion bajo suelto ahi no es formato, es contenido.
+async function sendTelegramMessage(chatId, message, replyToMessageId = null, { buttons = null, plain = false } = {}) {
   if (!isEnabled()) {
     return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
   }
@@ -178,8 +201,8 @@ async function sendTelegramMessage(chatId, message, replyToMessageId = null, { b
   const payload = {
     chat_id: chatId,
     text: message,
-    parse_mode: 'Markdown',
   }
+  if (!plain) payload.parse_mode = 'Markdown'
 
   // El reintento en texto plano de abajo hace `const { parse_mode, ...resto }`,
   // asi que reply_markup sobrevive al fallback sin tratamiento especial.
@@ -378,6 +401,7 @@ module.exports = {
   answerCallbackQuery,
   editMessageText,
   describeAccess,
+  sendChatAction,
   sendTelegramMessage,
   extractTelegramMessage,
   escapeMarkdown,

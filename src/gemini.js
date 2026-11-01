@@ -2,7 +2,15 @@ const { GoogleGenerativeAI } = require('@google/generative-ai')
 const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+// UN solo default para todo el repo (media.js y el log de arranque lo leen de
+// aqui). Antes habia tres distintos -- aqui, en telegramBrain.js y en el log
+// de src/index.js -- y el log anunciaba un modelo que nadie usaba.
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'
+const GEMINI_MODEL = process.env.GEMINI_MODEL || GEMINI_DEFAULT_MODEL
+// Sin timeout, una llamada colgada de Gemini dejaba el webhook esperando para
+// siempre y el usuario sin respuesta. 20 s: holgado para una respuesta normal
+// y por debajo de lo que alguien espera en un chat antes de reintentar.
+const GEMINI_TIMEOUT_MS = 20000
 let genModel = null
 let currentModel = null
 
@@ -10,10 +18,21 @@ function getModel() {
   if (!GEMINI_API_KEY) return null
   if (!genModel || currentModel !== GEMINI_MODEL) {
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY)
-    genModel = genAI.getGenerativeModel({ model: GEMINI_MODEL })
+    genModel = genAI.getGenerativeModel({ model: GEMINI_MODEL }, { timeout: GEMINI_TIMEOUT_MS })
     currentModel = GEMINI_MODEL
   }
   return genModel
+}
+
+// Los modelos 2.5-flash "piensan" antes de contestar y ese pensamiento cuenta
+// contra maxOutputTokens: con 700 tokens el JSON del agente podia salir
+// cortado. En la familia flash se apaga (thinkingBudget 0); en las demas no se
+// puede apagar, asi que se deja holgura extra de salida.
+function generationConfigFor(maxTokens, model = GEMINI_MODEL) {
+  if (/^gemini-2\.5-flash/.test(model)) {
+    return { maxOutputTokens: maxTokens, thinkingConfig: { thinkingBudget: 0 } }
+  }
+  return { maxOutputTokens: maxTokens + 4096 }
 }
 
 const CATEGORIAS = ['Hogar', 'Salud', 'Familia', 'Transporte', 'Suscripciones', 'Deudas', 'Personal', 'Ingresos', 'Ahorro']
@@ -399,7 +418,7 @@ async function complete(messages, { json = false, maxTokens = 500 } = {}) {
     const result = await m.generateContent({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: maxTokens,
+        ...generationConfigFor(maxTokens),
         ...(json ? { responseMimeType: 'application/json' } : {}),
       },
     })
@@ -411,4 +430,15 @@ async function complete(messages, { json = false, maxTokens = 500 } = {}) {
   }
 }
 
-module.exports = { classify, answer, chat, complete, getSystemContext, isEnabled: () => !!GEMINI_API_KEY }
+module.exports = {
+  classify,
+  answer,
+  chat,
+  complete,
+  getSystemContext,
+  isEnabled: () => !!GEMINI_API_KEY,
+  GEMINI_DEFAULT_MODEL,
+  GEMINI_MODEL,
+  GEMINI_TIMEOUT_MS,
+  generationConfigFor,
+}

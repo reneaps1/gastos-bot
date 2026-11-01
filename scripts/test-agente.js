@@ -14,7 +14,12 @@
 //      reporta como total la suma de los 20 que le tocaron.
 //   3. El agente sobrevive a que un proveedor falle. Antes hablaba solo con
 //      DeepSeek y devolvia null al primer error, y Milo caia al catalogo de
-//      seis intents fijos sin que nada lo avisara.
+//      seis intents fijos sin que nada lo avisara. Ahora cambia de proveedor
+//      incluso a media conversacion.
+//   4. Un JSON invalido se repara con UN reintento, no con varios.
+//   5. Memoria por chat (6 vueltas, 30 min): "¿y la pasada?" sabe de que se
+//      hablaba, y un chat no ve la conversacion de otro.
+//   6. El prompt trae la fecha de hoy, la quincena y el glosario del dashboard.
 
 process.env.TZ = 'America/Mexico_City'
 process.env.DATABASE_URL = 'postgresql://x:x@localhost:0/x'
@@ -35,7 +40,30 @@ const CATEGORIAS = [
   { id: 1, nombre: 'Hogar', tipo: 'Gasto' },
   { id: 2, nombre: 'Familia', tipo: 'Gasto' },
 ]
-const QUINCENA = { id: 35, codigo: 'Q35', fechaInicio: new Date('2026-09-15'), fechaFin: new Date('2026-09-29') }
+// Fechas relativas a HOY (hora de Mexico): la quincena tiene que estar activa
+// de verdad, porque el doble de findFirst respeta el filtro de fechas. Asi
+// "Quincena activa: Q35" solo pasa si quincenaActual() filtra bien.
+const { fechaMexico: hoyMexico } = require(path.join(SRC, 'financeUtils'))
+const diaRelativo = dias => {
+  const d = new Date(`${hoyMexico()}T00:00:00.000Z`)
+  d.setUTCDate(d.getUTCDate() + dias)
+  return d
+}
+const QUINCENA = { id: 35, codigo: 'Q35', fechaInicio: diaRelativo(-3), fechaFin: diaRelativo(10) }
+
+// findFirst con los filtros de fecha que usa miloTools (lte/gte/lt/gt).
+function cumpleFechas(q, where = {}) {
+  for (const campo of ['fechaInicio', 'fechaFin']) {
+    const f = where[campo]
+    if (!f) continue
+    const v = q[campo].getTime()
+    if (f.lte && !(v <= f.lte.getTime())) return false
+    if (f.gte && !(v >= f.gte.getTime())) return false
+    if (f.lt && !(v < f.lt.getTime())) return false
+    if (f.gt && !(v > f.gt.getTime())) return false
+  }
+  return true
+}
 const TXS = [
   { id: 1, monto: 2850.40, descripcion: 'Super quincenal',  categoriaId: 2, tipo: 'Gasto', estatus: 'Pagado', fecha: new Date('2026-09-16') },
   { id: 2, monto: 12000.00, descripcion: 'Renta septiembre', categoriaId: 1, tipo: 'Gasto', estatus: 'Pagado', fecha: new Date('2026-09-17') },
@@ -66,7 +94,7 @@ function ordenar(lista, orderBy) {
 
 const prismaDoble = {
   quincena: {
-    findFirst: async () => QUINCENA,
+    findFirst: async ({ where } = {}) => (cumpleFechas(QUINCENA, where) ? QUINCENA : null),
     findUnique: async () => QUINCENA,
     findMany: async () => [QUINCENA],
   },
@@ -180,6 +208,167 @@ async function main() {
   impl.gemini = { isEnabled: () => false, complete: async () => null }
   const r3 = await answer('cual es el gasto mas alto?', { senderName: 'Rene' })
   check('devuelve null', r3 === null, JSON.stringify(r3))
+
+  console.log('\n=== F: JSON invalido -> un reintento pidiendo solo JSON ===')
+  {
+    let llamadas = 0
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async (messages) => {
+        llamadas++
+        if (llamadas === 1) return 'Claro, te digo: el gasto mas alto fue la renta'
+        const ultimo = messages[messages.length - 1].content
+        check('el reintento pide SOLO JSON', /SOLO con un objeto JSON/.test(ultimo), ultimo)
+        return JSON.stringify({ action: 'answer', answer: 'La renta.' })
+      },
+    }
+    impl.gemini = { isEnabled: () => false, complete: async () => null }
+    const r = await answer('cual es el gasto mas alto?', { senderName: 'Rene' })
+    check('contesta despues de reparar', r?.reply === 'La renta.', JSON.stringify(r))
+    check('solo hizo dos llamadas', llamadas === 2, llamadas)
+
+    llamadas = 0
+    impl.deepseek = { isEnabled: () => true, complete: async () => { llamadas++; return 'nunca json' } }
+    const r2 = await answer('cual es el gasto mas alto?', { senderName: 'Rene' })
+    check('si tampoco repara, null (un solo reintento)', r2 === null && llamadas === 2, `${JSON.stringify(r2)} llamadas=${llamadas}`)
+  }
+
+  console.log('\n=== G: el proveedor falla a media conversacion -> cambia al otro ===')
+  {
+    let pasoDeepseek = 0
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async () => {
+        pasoDeepseek++
+        // Pide la herramienta y despues se cae (timeout, saldo, lo que sea).
+        if (pasoDeepseek === 1) return JSON.stringify({ action: 'tool', tool: 'search_transactions', args: { period: 'current', type: 'Gasto', sort: 'amount_desc', limit: 1 } })
+        return null
+      },
+    }
+    impl.gemini = proveedorQueConsulta('gemini')
+    const r = await answer('cual es el gasto mas alto de esta Q?', { senderName: 'Rene' })
+    check('Gemini termina la respuesta con el historial', r?.reply?.includes('Renta septiembre'), JSON.stringify(r))
+    check('reporta gemini-agent', r?.provider === 'gemini-agent', r?.provider)
+    check('la herramienta se ejecuto una sola vez', r?.trace?.length === 1, JSON.stringify(r?.trace))
+  }
+
+  console.log('\n=== H: memoria por chat: "¿y la pasada?" ve la pregunta anterior ===')
+  {
+    const { olvidar, _interno } = require(path.join(SRC, 'financeAgent'))
+    olvidar(null)
+    const vistos = []
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async (messages) => {
+        vistos.push(messages.map(m => m.content))
+        return JSON.stringify({ action: 'answer', answer: `respuesta ${vistos.length}` })
+      },
+    }
+    impl.gemini = { isEnabled: () => false, complete: async () => null }
+    await answer('cuanto me queda?', { senderName: 'Rene', chatId: 'chat-1' })
+    await answer('y la quincena pasada?', { senderName: 'Rene', chatId: 'chat-1' })
+    const segunda = vistos[1].join('\n')
+    check('la segunda pregunta lleva la primera en el historial', segunda.includes('cuanto me queda?') && segunda.includes('respuesta 1'), segunda.slice(-300))
+
+    await answer('hola', { senderName: 'Rene', chatId: 'chat-2' })
+    check('otro chat no ve esa conversacion', !vistos[2].join('\n').includes('cuanto me queda?'))
+
+    for (let i = 0; i < 10; i++) await answer(`pregunta ${i}`, { senderName: 'Rene', chatId: 'chat-3' })
+    check(`guarda solo las ultimas ${_interno.MEMORIA_TURNOS} vueltas`, _interno.recordar('chat-3').length === _interno.MEMORIA_TURNOS, _interno.recordar('chat-3').length)
+
+    const viejo = Date.now() - _interno.MEMORIA_TTL_MS - 1000
+    _interno.guardarTurno('chat-4', 'vieja', 'respuesta vieja', viejo)
+    check('a los 30 min se olvida', _interno.recordar('chat-4').length === 0, _interno.recordar('chat-4').length)
+    check('MAX_STEPS es 6', _interno.MAX_STEPS === 6, _interno.MAX_STEPS)
+  }
+
+  console.log('\n=== I: el prompt sabe que dia es y en que quincena va ===')
+  {
+    let sistema = ''
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async (messages) => {
+        sistema = messages[0].content
+        return JSON.stringify({ action: 'answer', answer: 'ok' })
+      },
+    }
+    await answer('que dia es?', { senderName: 'Rene' })
+    const { fechaMexico } = require(path.join(SRC, 'financeUtils'))
+    check('incluye la fecha de hoy (hora de Mexico)', sistema.includes(fechaMexico()), sistema.slice(0, 200))
+    check('incluye la quincena activa', /Quincena activa: Q35/.test(sistema), sistema.slice(0, 300))
+    check('incluye el usuario', /Usuario: Rene/.test(sistema))
+    check('trae el glosario del dashboard', /Te sobran/.test(sistema) && /Vas \$X mejor\/peor/.test(sistema))
+    check('get_money_status esta entre las herramientas', sistema.includes('get_money_status'))
+  }
+
+  console.log('\n=== J: la respuesta sale como texto plano y con tope ===')
+  {
+    const { _interno } = require(path.join(SRC, 'financeAgent'))
+    const limpia = _interno.limpiarRespuesta('**Te faltan $9,075.39**\n- uno\n- dos\n\n\n\n__fin__')
+    check('sin asteriscos ni guiones bajos', !/[*_]/.test(limpia), limpia)
+    check('las viñetas quedan con •', /• uno/.test(limpia), limpia)
+    check('corta a 3500 caracteres', _interno.limpiarRespuesta('x'.repeat(5000)).length <= 3500)
+  }
+
+  console.log('\n=== K: entre dos quincenas usa la siguiente, como el dashboard ===')
+  {
+    // Hoy cae en un hueco: la unica quincena empieza en dos dias. El dashboard
+    // (getDefaultQuincenaId) abre esa; antes Milo decia "No encontré el
+    // periodo actual".
+    const original = { fechaInicio: QUINCENA.fechaInicio, fechaFin: QUINCENA.fechaFin }
+    QUINCENA.fechaInicio = diaRelativo(2)
+    QUINCENA.fechaFin = diaRelativo(15)
+    const periodo = await executeTool('get_current_period')
+    check('get_current_period devuelve la siguiente', periodo.ok && periodo.period.code === 'Q35' && periodo.period.isCurrent === false, JSON.stringify(periodo))
+    const busqueda = await executeTool('search_transactions', { period: 'current', type: 'Gasto', limit: 1 })
+    check('las herramientas no dicen "No encontré el periodo"', busqueda.ok && busqueda.period === 'Q35', JSON.stringify(busqueda).slice(0, 200))
+
+    let sistema = ''
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async (messages) => { sistema = messages[0].content; return JSON.stringify({ action: 'answer', answer: 'ok' }) },
+    }
+    await answer('que dia es?', { senderName: 'Rene' })
+    check('el prompt no la llama "activa" y dice que es la del dashboard',
+      !/Quincena activa/.test(sistema) && /ninguna quincena.*Q35/.test(sistema), sistema.slice(0, 400))
+
+    // Ya paso todo: la ultima.
+    QUINCENA.fechaInicio = diaRelativo(-30)
+    QUINCENA.fechaFin = diaRelativo(-16)
+    const ultima = await executeTool('get_current_period')
+    check('si ya no hay siguiente, la ultima', ultima.ok && ultima.period.code === 'Q35', JSON.stringify(ultima))
+    Object.assign(QUINCENA, original)
+  }
+
+  console.log('\n=== L: tope de tiempo total para una respuesta ===')
+  {
+    const { _interno } = require(path.join(SRC, 'financeAgent'))
+    check('el tope por default es 45 s', _interno.TOPE_MS === 45000, _interno.TOPE_MS)
+
+    // Los dos proveedores cuelgan mas que el tope: no se espera a sus timeouts.
+    const colgado = { isEnabled: () => true, complete: () => new Promise(resolve => setTimeout(() => resolve(null), 3000)) }
+    impl.deepseek = colgado
+    impl.gemini = colgado
+    let t0 = Date.now()
+    const r1 = await answer('cuanto me queda?', { senderName: 'Rene', deadlineMs: 200 })
+    check('proveedores colgados: null dentro del tope', r1 === null && Date.now() - t0 < 1000, `${Date.now() - t0} ms`)
+
+    // Un proveedor que contesta rapido pero nunca termina (pide herramientas
+    // distintas paso tras paso): el tope corta antes de MAX_STEPS.
+    let pasos = 0
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async () => {
+        pasos++
+        await new Promise(resolve => setTimeout(resolve, 80))
+        return JSON.stringify({ action: 'tool', tool: 'search_transactions', args: { period: 'current', limit: pasos } })
+      },
+    }
+    impl.gemini = { isEnabled: () => false, complete: async () => null }
+    t0 = Date.now()
+    const r2 = await answer('cuanto me queda?', { senderName: 'Rene', deadlineMs: 200 })
+    check('pasos lentos: corta por tiempo, no por MAX_STEPS', r2 === null && pasos < _interno.MAX_STEPS && Date.now() - t0 < 1000, `pasos=${pasos} ${Date.now() - t0} ms`)
+  }
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

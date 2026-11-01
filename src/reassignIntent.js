@@ -2,9 +2,8 @@
 // dos referencias difusas: QUE movimiento y A QUE linea.
 //
 // Detector LOCAL por regex, sin red. DeepSeek queda como respaldo en
-// src/deepseek.js para frases raras, mismo patron que usa
-// classifyQuestionLocally() en src/telegramBrain.js: lo comun se resuelve sin
-// depender de que un proveedor externo este vivo.
+// src/deepseek.js para frases raras: lo comun se resuelve sin depender de que
+// un proveedor externo este vivo.
 //
 // Solo interpreta texto. No toca la base ni decide nada: lo que devuelve son dos
 // cadenas que alguien mas tiene que resolver contra datos reales y poner en un
@@ -27,13 +26,17 @@ const VERBOS = [
 ].join('|')
 
 // Ruido que la gente pone alrededor de la referencia y que no ayuda a buscarla.
-const RUIDO_REFERENCIA = /^(?:el|la|los|las|lo|ese|esa|este|esta|mi|un|una)\s+|^(?:gasto|movimiento|cargo|compra|pago)\s+|^(?:de|del)\s+/
+// Incluye un monto y un verbo de registro al inicio: en "30 suerox mandalo a
+// diversion" o "gaste 350 en gasolina, ponlo en transporte" lo que se busca en
+// la descripcion es "suerox" o "gasolina", no "30 suerox".
+const RUIDO_REFERENCIA = /^(?:el|la|los|las|lo|ese|esa|este|esta|mi|un|una)\s+|^(?:gasto|movimiento|cargo|compra|pago)\s+|^(?:de|del|en)\s+|^\d+(?:\s\d{3})*(?:\s(?:pesos|mxn))?\s+|^(?:me gaste|gaste|gastamos|pague|pagamos|compre|compramos)\s+/
 const RUIDO_DESTINO = /^(?:la\s+)?(?:linea|partida|categoria|presupuesto)\s+(?:de\s+)?|^(?:el\s+)?presupuesto\s+(?:de\s+)?/
 
 function limpiar(texto, ruido) {
   let out = String(texto || '').trim().replace(/[.,;!?¡¿]+$/g, '').trim()
-  // Se aplica varias veces: "el gasto de suerox" necesita tres pasadas.
-  for (let i = 0; i < 4; i++) {
+  // Se aplica varias veces: "el gasto de suerox" necesita tres pasadas, y
+  // "gaste 350 en gasolina" otras tres.
+  for (let i = 0; i < 6; i++) {
     const antes = out
     out = out.replace(ruido, '').trim()
     if (out === antes) break
@@ -80,4 +83,4 @@ function detectReassign(texto) {
   return { referencia, destino }
 }
 
-module.exports = { detectReassign }
+module.exports = { detectReassign, VERBOS_REASIGNAR: VERBOS }

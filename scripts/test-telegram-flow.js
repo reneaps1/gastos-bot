@@ -188,6 +188,7 @@ const realTelegram = require(path.join(SRC, 'telegram.js'))
 const enviados = []
 const editados = []
 const contestados = []
+const acciones = []
 const fakeTelegram = {
   ...realTelegram,
   sendTelegramMessage: async (chatId, message, replyToMessageId, opts = {}) => {
@@ -200,6 +201,11 @@ const fakeTelegram = {
   },
   answerCallbackQuery: async callbackId => {
     contestados.push(callbackId)
+    return { ok: true, data: {} }
+  },
+  // "Escribiendo...": se registra en vez de salir a la red.
+  sendChatAction: async (chatId, action = 'typing') => {
+    acciones.push({ chatId, action })
     return { ok: true, data: {} }
   },
   registerWebhook: async () => ({ ok: true, skipped: true }),
@@ -298,12 +304,30 @@ async function main() {
   check('la respuesta confirma el registro', /registrado/i.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
   check('dejo traza de entrada', logsIncluyen('TELEGRAM_UPDATE_IN'), 'falta TELEGRAM_UPDATE_IN')
 
+  check('mando "escribiendo..." al chat', acciones.some(a => String(a.chatId) === CHAT_PERMITIDO && a.action === 'typing'), JSON.stringify(acciones))
+  check('dejo la linea TELEGRAM_QA con la ruta', logsIncluyen('TELEGRAM_QA') && logsIncluyen('"route":"gasto"'), 'falta TELEGRAM_QA')
+
   console.log('\n=== B: una pregunta SIEMPRE recibe respuesta (nunca silencio) ===')
+  // Sin proveedor de IA el agente no puede contestar. Lo que importa: lo dice,
+  // y la pregunta NO se registra como gasto (antes caia al parser).
   const antesB = enviados.length
   const creadasB = creadas.length
   await post(textUpdate('Cuánto queda en súper?'))
   check('contesto algo', enviados.length > antesB, `enviados=${enviados.length} antes=${antesB}`)
   check('no registro un gasto fantasma', creadas.length === creadasB, creadas.length)
+  check('dice que no pudo, en vez de inventar', /No pude contestar eso ahora/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+
+  console.log('\n=== B2: una pregunta con monto NUNCA se registra como gasto ===')
+  const creadasB2 = creadas.length
+  await post(textUpdate('me alcanza para los 5000 de la tarjeta?'))
+  check('no registro los 5000', creadas.length === creadasB2, JSON.stringify(creadas.at(-1)))
+  check('contesto algo', /No pude contestar/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+
+  console.log('\n=== B3: numero sin formato claro y sin IA -> pide el formato, no adivina ===')
+  const creadasB3 = creadas.length
+  await post(textUpdate('super 200 ayer'))
+  check('no lo registro a ciegas', creadas.length === creadasB3, creadas.length)
+  check('explica como mandarlo', /empezando con el monto/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
 
   console.log('\n=== C: chat fuera de la lista blanca se descarta, pero deja log con el id ===')
   const antesC = enviados.length

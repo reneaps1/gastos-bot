@@ -91,7 +91,7 @@ async function main() {
     note(
       'WARN',
       'DATABASE_URL no esta configurada: el bot arranca y contesta, pero toda consulta a presupuesto, liquidez o movimientos truena.',
-      'Ponle la URL interna de gastos-db (el mismo valor que usa gastos-bot). telegramBrain, miloTools y financeAgent pegan a Postgres directo.',
+      'Ponle la URL interna de gastos-db (el mismo valor que usa gastos-bot). miloTools y financeAgent pegan a Postgres directo.',
     )
   }
 

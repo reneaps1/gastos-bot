@@ -1,13 +1,25 @@
 // Helpers de texto/fecha compartidos entre miloTools.js, budgetTracker.js y
-// telegramBrain.js. Antes vivian copiados y por separado en esos 3 archivos,
-// con diccionarios de alias distintos entre budgetTracker.js y telegramBrain.js
-// (uno no conocia "super->supermercado", el otro no conocia "nafta->gas"),
-// lo que hacia que la misma pregunta se resolviera distinto segun que codigo
-// la atendiera. Aqui queda un solo diccionario fusionado.
+// financeAgent.js. Antes vivian copiados y por separado en varios archivos,
+// con diccionarios de alias distintos (uno no conocia "super->supermercado",
+// otro no conocia "nafta->gas"), lo que hacia que la misma pregunta se
+// resolviera distinto segun que codigo la atendiera. Aqui queda un solo
+// diccionario fusionado.
+
+const ZONA_MEXICO = 'America/Mexico_City'
+
+// YYYY-MM-DD del dia en Mexico. Con la zona explicita y no con los getters
+// locales: src/index.js fija process.env.TZ, pero un modulo cargado por otro
+// camino (un script, una prueba) no tiene por que heredarlo, y en Render el
+// reloj del servidor esta en UTC -- despues de las 6pm de Mexico ya seria
+// "manana".
+function fechaMexico(fecha = new Date()) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_MEXICO, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(fecha)
+}
 
 function mexicoDateString() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  return fechaMexico()
 }
 
 function dbDate(dateString) {
@@ -56,4 +68,4 @@ function similarity(a, b) {
   return intersection / Math.max(aTokens.size, bTokens.size)
 }
 
-module.exports = { mexicoDateString, dbDate, normalize, similarity }
+module.exports = { ZONA_MEXICO, fechaMexico, mexicoDateString, dbDate, normalize, similarity }

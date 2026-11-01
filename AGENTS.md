@@ -215,7 +215,7 @@ Reglas para que no se peleen:
 
 - **Un token de Telegram admite UNA sola URL de webhook.** Cada instancia con `TELEGRAM_BOT_TOKEN` llama `setWebhook` al arrancar, asi que la ultima en reiniciar se queda con TODOS los mensajes. El sintoma es el peor de todos: "el bot funciona a veces".
 - El servicio que **no** deba quedarse con Telegram va con `TELEGRAM_REGISTER_WEBHOOK=false` (o directamente sin `TELEGRAM_BOT_TOKEN`). Al arrancar, cada instancia loguea su rol: `Telegram role: DUENO del webhook` o `solo responde`.
-- `milo-telegram-bot` necesita `DATABASE_URL` (la URL **interna** de gastos-db, el mismo valor que `gastos-bot`). Sin eso arranca y contesta, pero cada consulta a presupuesto, liquidez o movimientos truena: `telegramBrain`, `miloTools` y `financeAgent` pegan a Postgres directo.
+- `milo-telegram-bot` necesita `DATABASE_URL` (la URL **interna** de gastos-db, el mismo valor que `gastos-bot`). Sin eso arranca y contesta, pero cada consulta a presupuesto, liquidez o movimientos truena: `miloTools` y `financeAgent` pegan a Postgres directo.
 - Si el start command de un servicio apunta a un script que no existe en `package.json`, Render entra en crash loop y **deja viva la version anterior** hasta el siguiente deploy — se ve "Failed deploy" mientras el bot sigue respondiendo, y el silencio real llega con el deploy siguiente. Ver el post-mortem de arriba.
 - `npm start` existe en **todas** las versiones del `package.json` de este repo. Si hay que revivir un servicio sin saber que commit despliega, `npm start` arranca en cualquiera.
 - `TELEGRAM_ALLOWED_CHAT_IDS` es fail-closed: vacia, el bot recibe los mensajes y los descarta **en silencio**. Al arrancar avisa con `TELEGRAM_ALLOWED_CHAT_IDS is empty`, y cada mensaje descartado deja `TELEGRAM_UNAUTHORIZED_CHAT` con el chat id exacto que hay que agregar. Esa es la forma mas rapida de averiguar el id de un chat: mandarle un mensaje al bot y leer el log.
@@ -361,7 +361,7 @@ El canal de WhatsApp **no cambia**: ahi la regla sigue siendo que el bot nunca p
 
 Como se resuelve la frase:
 
-1. `detectReassign()` en `src/reassignIntent.js` — detector **local por regex**, sin red. Saca `{ referencia, destino }`. DeepSeek (tipo `reassign` en `classify`) es el respaldo para frases que la regex no cubre, mismo patron que `classifyQuestionLocally()`: lo comun no depende de que un proveedor externo este vivo.
+1. `detectReassign()` en `src/reassignIntent.js` — detector **local por regex**, sin red. Saca `{ referencia, destino }` (sin el monto ni el verbo de registro del inicio: "30 suerox mandalo a diversion" busca "suerox"). Se revisa **antes** que el gasto con formato claro (`clasificarMensaje` en `src/telegramRouting.js` devuelve la ruta `reasignar`), asi que una frase de mover que empieza con monto nunca se registra como gasto nuevo. DeepSeek (tipo `reassign` en `classify`) es el respaldo para frases que la regex no cubre, pero solo las ve si traen un verbo de mover con destino (ruta `quiza-reasignar`, por ejemplo "pon el uber en transporte") o un numero sin formato claro (ruta `ambiguo`); el resto va directo al agente, que es de solo lectura. Lo comun no depende de que un proveedor externo este vivo.
 2. `findTransactionsByReference()` en `src/budgetActions.js` — busca el gasto. **Acotado a la quincena activa** y ordenado por fecha descendente: sin eso "super" podria traer un gasto de hace tres meses y nadie lo notaria al confirmar.
 3. `resolveBudgetLineByName()` resuelve el destino, con los mismos umbrales conservadores de siempre pero buscando en **toda la quincena**, no solo en la categoria del gasto. Aqui el usuario ESCRIBIO el destino: no lo estamos adivinando, y el resultado se confirma con un boton antes de escribir. Acotarlo a la categoria era justo el problema — nombrabas la linea que querias y el bot no la encontraba porque vivia en otra.
 4. Se propone con boton. El `callback_data` es el **mismo `pl:<txId>:<lineaId>`** del flujo de botones, asi que la validacion y la escritura son exactamente las ya probadas.
@@ -373,7 +373,7 @@ Como se resuelve la frase:
 | Varios movimientos | Botones `ps:<txId>` para elegir cual, y luego los de linea |
 | Ninguno | Lo dice, sin proponer nada |
 
-**La regla que no se puede relajar**: la IA propone, nunca escribe. Las 11 herramientas del agente siguen siendo de solo lectura, y este flujo tampoco escribe — solo arma botones. Hay una prueba dedicada a eso (`escrituras.length` no cambia hasta que se toca el boton); si algun dia falla, es que se filtro una escritura al camino de la IA.
+**La regla que no se puede relajar**: la IA propone, nunca escribe. Las 14 herramientas del agente (`getToolDefinitions()` en `src/miloTools.js`) siguen siendo de solo lectura, y este flujo tampoco escribe — solo arma botones. Hay una prueba dedicada a eso (`escrituras.length` no cambia hasta que se toca el boton); si algun dia falla, es que se filtro una escritura al camino de la IA.
 
 Fuera de alcance por decision: cambiar monto o categoria, borrar movimientos, y varias operaciones en un mismo mensaje.
 

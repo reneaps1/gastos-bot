@@ -115,7 +115,7 @@ async function resolveBudgetLineByName({ quincenaId, destino, tipo = 'Gasto' }) 
 //
 // El ranking incluye el nombre de la categoria en el texto comparado, para que
 // "gas de casa" empate con la linea de Hogar aunque el parser haya adivinado
-// Transporte. Mismo criterio que budgetRemaining en src/telegramBrain.js.
+// Transporte.
 //
 // `limit = null` devuelve todas: quien pagina (los botones de Telegram) necesita
 // la lista completa para poder cortarla.

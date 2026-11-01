@@ -203,15 +203,22 @@ async function main() {
     { id: 13, quincenaId: 35, categoriaId: 1, tipo: 'Gasto', estadoLinea: 'Abierta',
       descripcion: 'Despensa', montoPresupuestado: 5446.65, montoRevisado: null,
       categoria: { tipo: 'Gasto', nombre: 'Familia' } },
+    // Una Cancelada "nunca paso": tampoco puede inflar el total.
+    { id: 14, quincenaId: 35, categoriaId: 1, tipo: 'Gasto', estadoLinea: 'Cancelada',
+      descripcion: 'Viaje cancelado', montoPresupuestado: 9000, montoRevisado: null,
+      categoria: { tipo: 'Gasto', nombre: 'Personal' } },
   ]
   transacciones = []
 
-  const { answerQuestion } = require(path.join(SRC, 'telegramBrain'))
-  const respuesta = await answerQuestion('cuanto queda de presupuesto?', null)
+  // Antes esto lo contestaba src/telegramBrain.js (ya no existe); ahora la
+  // misma pregunta la contesta el agente con get_budget_summary.
+  const { executeTool } = require(path.join(SRC, 'miloTools'))
+  const resumen = await executeTool('get_budget_summary', { period: 'current' })
   check('suma solo el gasto (17,446.65), no los sueldos',
-    respuesta.includes('17,446.65'), respuesta)
+    Math.abs(resumen.totals?.budget - 17446.65) < 0.005, JSON.stringify(resumen.totals))
   check('ya no reporta la suma de todo (40,881.65)',
-    !respuesta.includes('40,881.65'), respuesta)
+    Math.abs(resumen.totals?.budget - 40881.65) > 1, JSON.stringify(resumen.totals))
+  check('la linea Cancelada no cuenta', resumen.count === 2, resumen.count)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

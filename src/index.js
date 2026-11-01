@@ -47,9 +47,9 @@ const prisma = require('./lib/prisma')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
 const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
 const telegram = require('./telegram')
-const telegramBrain = require('./telegramBrain')
 const aiRouter = require('./aiRouter')
 const financeAgent = require('./financeAgent')
+const { clasificarMensaje } = require('./telegramRouting')
 const {
   TIPOS_CON_LINEA,
   resolveBudgetLine,
@@ -171,19 +171,11 @@ function normalizeSimpleText(text) {
     .replace(/\s+/g, ' ')
 }
 
-function expandFinanceShorthand(text) {
-  return String(text || '')
-    .replace(/\bx\b/gi, 'por')
-    .replace(/\bppto\b/gi, 'presupuesto')
-    .replace(/\bqna\b/gi, 'quincena')
-    .replace(/\bgastos?\s+(?:pendientes?\s+)?por\s+asignar\b/gi, 'gastos sin asignar')
-}
-
 function getSimpleConversationReply(text) {
   const normalized = normalizeSimpleText(text)
 
   if (/^(hola+|holi+|hi+|hey+|buenas+|buenos dias+|buenas tardes+|buenas noches+|que onda)$/.test(normalized)) {
-    return '¡Hola! Soy Milo 👋\n\nPuedo registrar gastos y consultar tus datos de Milo. Prueba: “¿cuánto gasté hoy?” o “¿qué gastos tenemos sin asignar?”.'
+    return '¡Hola! Soy Milo 👋\n\nPuedo registrar gastos y contestar preguntas de tu dinero. Prueba: “200 super” o “¿cuánto me queda?”.'
   }
 
   if (/^(gracias+|muchas gracias+|thanks+)$/.test(normalized)) {
@@ -192,27 +184,56 @@ function getSimpleConversationReply(text) {
 
   if (/^(ayuda|help|\/help|que puedes hacer)$/.test(normalized)) {
     return [
-      'Puedo entender preguntas en lenguaje natural, por ejemplo:',
+      'Para registrar, empieza con el monto:',
+      '• “200 super” o “$150, uber”',
       '',
-      '• “gasté 350 en gasolina”',
-      '• “¿cuánto gasté hoy?”',
-      '• “¿qué gastos tengo sin asignar?”',
-      '• “¿cuánto queda del presupuesto de gasolina?”',
-      '• “¿cuánto dinero tenemos realmente?”',
-      '• “¿cómo vamos esta quincena?”',
+      'Y pregúntame lo que quieras, por ejemplo:',
+      '• “¿cuánto me queda?”',
+      '• “¿me alcanza para 5000 de la tarjeta?”',
+      '• “¿cuánto puedo gastar al día?”',
+      '• “¿qué pagos vienen?”',
+      '• “¿cómo voy contra la quincena pasada?”',
+      '• “¿en qué gasté más?”',
     ].join('\n')
   }
 
   if (/^(\/start|start)$/.test(normalized)) {
-    return '¡Hola! Soy Milo. Puedo registrar movimientos y responder preguntas sobre tus finanzas. Prueba: “gasté 150 en gasolina” o “¿cómo vamos esta quincena?”.'
+    return '¡Hola! Soy Milo. Puedo registrar movimientos y responder preguntas sobre tus finanzas. Prueba: “200 super” o “¿cuánto me queda?”.'
   }
 
   return null
 }
 
-function looksLikeFinanceQuestion(text) {
-  const normalized = normalizeSimpleText(text)
-  return /\b(cuanto|cuanta|cuantos|cuantas|que gastos|cuales|como vamos|como voy|resumen|saldo|liquidez|presupuesto|sin asignar|sin linea|sueltos|ultimos movimientos|movimientos recientes)\b/.test(normalized)
+const NO_PUDE_CONTESTAR = 'No pude contestar eso ahora, ¿lo intentas otra vez?'
+const NO_SE_SI_ES_GASTO = 'No supe si es un gasto o una pregunta. Si es un gasto, escríbelo empezando con el monto, por ejemplo: “200 super”.'
+
+// Una linea de log por mensaje de Telegram: que ruta tomo, que herramientas
+// uso el agente, con que proveedor y cuanto tardo, mas el principio de la
+// pregunta y de la respuesta. Antes las preguntas no dejaban rastro y era
+// imposible saber que fallo. No agrega datos sensibles: el texto ya viaja a la
+// IA, y se corta a 200 caracteres.
+function logTelegramQA({ chatId, ruta, inicio, pregunta, respuesta = null, herramientas = [], proveedor = null }) {
+  const corto = t => (t == null ? null : String(t).replace(/\s+/g, ' ').slice(0, 200))
+  console.log(`TELEGRAM_QA ${JSON.stringify({
+    chat: chatId,
+    route: ruta,
+    tools: herramientas,
+    provider: proveedor,
+    ms: Date.now() - inicio,
+    q: corto(pregunta),
+    a: corto(respuesta),
+  })}`)
+}
+
+// "Escribiendo..." desde que entra el update hasta que se contesta. Telegram
+// borra la senal a los ~5 s, asi que se repite; y se manda una vez de
+// inmediato, antes de la base (lenta al despertar el plan gratis) y de
+// cualquier llamada a la IA (classify o el agente). Devuelve con que apagarla.
+function empezarEscribiendo(chatId) {
+  const enviar = () => { telegram.sendChatAction(chatId).catch(() => {}) }
+  enviar()
+  const intervalo = setInterval(enviar, 4500)
+  return () => clearInterval(intervalo)
 }
 
 function formatTelegramDate(date) {
@@ -1202,6 +1223,67 @@ async function handleBudgetCallback(callback) {
   }
 }
 
+// Registra un movimiento de Telegram y contesta con la confirmacion y los
+// botones de linea. Solo la llaman las rutas de gasto (formato claro o
+// clasificado como expense por la IA): una pregunta nunca llega aqui.
+async function registrarGastoTelegram(message, user, senderName, expenseData) {
+  const parsed = parseMessage(
+    message.text,
+    senderName,
+    null,
+    `tg:${message.chatId}:${message.messageId}`,
+    expenseData,
+  )
+
+  if (!parsed.monto || parsed.monto <= 0) {
+    await telegram.sendTelegramMessage(message.chatId, 'No encontré un monto válido. Escríbelo empezando con el monto, por ejemplo: “200 super”.', message.messageId)
+    return null
+  }
+
+  const categoria = await db.findCategoria(parsed.categoria)
+  const metodoPago = await db.findMetodoPago(parsed.formaPago)
+  const quincena = await db.findQuincenaByCodigo(parsed.quincena)
+
+  if (!categoria || !quincena) {
+    await telegram.sendTelegramMessage(message.chatId, 'No pude identificar la categoría o el periodo presupuestal.', message.messageId)
+    return null
+  }
+
+  // EL MOVIMIENTO NACE SIN LINEA, SIEMPRE.
+  //
+  // Antes, cuando resolveBudgetLine acertaba con confianza, el enlace se
+  // escribia aqui mismo y el mensaje salia sin un solo boton. Dos problemas en
+  // uno: asignaba sin preguntar, y cuando se equivocaba no habia forma de
+  // verlo ni de corregirlo desde Telegram, porque las opciones ni se
+  // mostraban. La sugerencia sigue existiendo -- va primera y marcada con una
+  // estrella -- pero ahora es una propuesta de un toque, no un hecho
+  // consumado. Quien escribe el enlace es siempre el boton `pl:`, o sea
+  // linkTransactionToBudget, que es el unico camino validado.
+  const tx = await saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena)
+
+  let confirmation = formatTelegramConfirmation(parsed)
+  let buttons = null
+  let sugeridaId = null
+
+  if (TIPOS_CON_LINEA.has(parsed.tipo)) {
+    const contexto = await budgetPickerContext(tx.id)
+    const candidatas = contexto?.candidatas ?? []
+    sugeridaId = contexto?.sugeridaId ?? null
+
+    if (candidatas.length > 0) {
+      confirmation += `\n\n${budgetPrompt(candidatas, sugeridaId)}`
+      buttons = budgetButtons(tx.id, candidatas, { sugeridaId })
+    } else {
+      confirmation += '\n\n⚠️ No hay líneas de presupuesto de este tipo en la quincena.'
+      buttons = [[{ text: '➕ Crear línea nueva', callback_data: `pd:${tx.id}:0` }]]
+    }
+  }
+
+  await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId, { buttons })
+  console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=none; sugerida=${sugeridaId ?? '-'}`)
+  return tx
+}
+
 app.post('/telegram/webhook', async (req, res) => {
   // Traza de entrada ANTES de cualquier puerta. Sin esto, un update rechazado
   // por el secreto o por la lista blanca no deja ni una linea en los logs: el
@@ -1270,186 +1352,118 @@ app.post('/telegram/webhook', async (req, res) => {
   if (processingUpdates.has(message.updateId)) return
   processingUpdates.add(message.updateId)
 
+  // "Escribiendo..." ANTES de cualquier llamada a la IA o a la base, y se
+  // repite hasta contestar. En el plan gratis de Render el primer mensaje al
+  // despertar tarda, y sin esta senal parece que Milo lo ignoro. No se espera:
+  // es cosmetica.
+  const dejarDeEscribir = empezarEscribiendo(message.chatId)
   try {
+    const inicio = Date.now()
+
     const simpleReply = getSimpleConversationReply(message.text)
     if (simpleReply) {
       await telegram.sendTelegramMessage(message.chatId, simpleReply, message.messageId)
-      console.log(`Telegram simple reply sent; chat=${message.chatId}; text=${message.text}`)
+      logTelegramQA({ chatId: message.chatId, ruta: 'saludo', inicio, pregunta: message.text, respuesta: simpleReply })
       return
     }
 
     await ensureFreshQuincenas()
     const user = await resolveMiloUser(message)
     const senderName = user?.nombre || message.senderName
-    const expandedText = expandFinanceShorthand(message.text)
 
-    // Antes de intentar leer el mensaje como un gasto NUEVO: puede estar
-    // hablando de uno que ya existe. Sin esto, "el gasto de suerox mandalo a
-    // diversion" no tiene monto y termina en el fallback de "no pude
-    // identificar una operacion".
-    const reasignacion = detectReassign(message.text)
-    if (reasignacion && await handleReassign(message, reasignacion)) return
+    // Ruteo simple (ver src/telegramRouting.js). Los regex solo deciden lo
+    // inequivoco; las preguntas las contesta el agente y NADA que tenga cara
+    // de pregunta puede terminar registrado como gasto.
+    const { ruta } = clasificarMensaje(message.text)
 
-    // Primero resolvemos localmente las preguntas conocidas. Esto cubre lenguaje
-    // cotidiano como "x asignar" sin depender de ningún proveedor externo.
-    if (looksLikeFinanceQuestion(expandedText)) {
-      const localAnswer = await telegramBrain.answerQuestion(expandedText, user)
-      if (localAnswer) {
-        await telegram.sendTelegramMessage(message.chatId, localAnswer, message.messageId)
-        console.log(`Telegram finance brain answered; chat=${message.chatId}`)
+    // 1. "el gasto de suerox mandalo a diversion" (o "30 suerox mandalo a
+    // diversion"): habla de un gasto que ya existe. Va ANTES que el gasto, como
+    // en main: si no, un monto al inicio lo registraba como gasto nuevo. Solo
+    // PROPONE con un boton; escribe el toque. handleReassign solo devuelve
+    // false si no hay quincena activa, y entonces contesta el agente: jamas se
+    // registra.
+    if (ruta === 'reasignar') {
+      if (await handleReassign(message, detectReassign(message.text))) {
+        logTelegramQA({ chatId: message.chatId, ruta: 'reasignar', inicio, pregunta: message.text })
         return
       }
     }
 
-    // Para lenguaje ambiguo: DeepSeek es principal y Gemini queda como fallback.
-    let aiData = null
-    let systemContext = null
-    if (aiRouter.isEnabled()) {
-      try {
-        systemContext = await aiRouter.getSystemContext(prisma)
-        aiData = await aiRouter.classify(message.text, systemContext)
-
-        if (aiData?.type === 'question') {
-          // Antes del viejo mapa de intents, damos la pregunta al agente de
-          // herramientas. El agente puede navegar presupuesto, movimientos,
-          // liquidez, cuentas, deudas, créditos y ahorros de forma segura.
-          const agentResult = await financeAgent.answer(message.text, { senderName })
-          if (agentResult?.reply) {
-            await telegram.sendTelegramMessage(message.chatId, agentResult.reply, message.messageId)
-            console.log(`Telegram finance agent answered; chat=${message.chatId}; tools=${JSON.stringify(agentResult.trace || [])}`)
-            return
-          }
-
-          // Fallback conservador: mantenemos los intents anteriores si el agente
-          // no pudo responder por disponibilidad del proveedor o error temporal.
-          if (aiData.intent && aiData.intent !== 'generic_finance') {
-            const canonicalPrompts = {
-              expenses_today: '¿cuánto gasté hoy?',
-              unassigned_expenses: '¿qué gastos tenemos sin asignar?',
-              budget_remaining: aiData.subject ? `¿cuánto queda del presupuesto de ${aiData.subject}?` : '¿cuánto queda del presupuesto?',
-              liquidity: '¿cuánto dinero tenemos realmente?',
-              quincena_summary: '¿cómo vamos esta quincena?',
-              recent_transactions: 'últimos movimientos',
-            }
-            const canonical = canonicalPrompts[aiData.intent]
-            if (canonical) {
-              const answer = await telegramBrain.answerQuestion(canonical, user)
-              if (answer) {
-                await telegram.sendTelegramMessage(message.chatId, answer, message.messageId)
-                console.log(`Telegram ${aiData._provider} intent answered deterministically; chat=${message.chatId}`)
-                return
-              }
-            }
-          }
-
-          const data = await getData()
-          const result = await aiRouter.answer(message.text, data, senderName, systemContext)
-          if (result?.reply) {
-            await telegram.sendTelegramMessage(message.chatId, result.reply, message.messageId)
-            console.log(`Telegram ${result.provider} question answered; chat=${message.chatId}`)
-            return
-          }
+    // 2. Lo que necesita al clasificador:
+    //   - 'gasto' (formato claro): classify solo ENRIQUECE tipo y categoria,
+    //     como en main ("200 suerox" -> Salud). Si no dice expense o no
+    //     contesta, se registra con el parser local: el formato claro no
+    //     depende de que la IA este viva.
+    //   - 'ambiguo' ("super 200 ayer", "me pagaron 5000"): se registra SOLO si
+    //     dice expense. Sin IA no se adivina: se pide el formato claro.
+    //   - 'quiza-reasignar' ("pon el uber en transporte"): solo se actua si
+    //     dice reassign; si no, contesta el agente.
+    if (ruta === 'gasto' || ruta === 'ambiguo' || ruta === 'quiza-reasignar') {
+      let aiData = null
+      if (aiRouter.isEnabled()) {
+        try {
+          aiData = await aiRouter.classify(message.text, null)
+        } catch (error) {
+          console.error('Telegram AI classify error:', error.message)
         }
-
-        // Respaldo del detector local de src/reassignIntent.js, para frases que
-        // la regex no cubre. Igual que el local: solo PROPONE con un boton.
-        if (aiData?.type === 'reassign' && aiData.referencia && aiData.destino) {
-          if (await handleReassign(message, { referencia: aiData.referencia, destino: aiData.destino })) return
-        }
-
-        if (aiData?.type === 'chat') {
-          const result = await aiRouter.chat(message.text, senderName, systemContext)
-          if (result?.reply) {
-            await telegram.sendTelegramMessage(message.chatId, result.reply, message.messageId)
-            console.log(`Telegram ${result.provider} chat replied; chat=${message.chatId}`)
-            return
-          }
-        }
-
-        if (aiData?.type === 'task') {
-          await telegram.sendTelegramMessage(
-            message.chatId,
-            'Entendí que quieres crear una tarea. Por ahora en Telegram estoy enfocado en gastos y consultas financieras.',
-            message.messageId,
-          )
-          return
-        }
-      } catch (error) {
-        console.error('Telegram AI routing error:', error)
       }
+
+      if (ruta !== 'quiza-reasignar' && aiData?.type === 'expense') {
+        const tx = await registrarGastoTelegram(message, user, senderName, aiData)
+        logTelegramQA({ chatId: message.chatId, ruta: `${ruta}-clasificado`, inicio, pregunta: message.text, respuesta: tx ? `registrado #${tx.id}` : 'sin registrar', proveedor: aiData._provider || null })
+        return
+      }
+
+      if (ruta === 'gasto') {
+        const tx = await registrarGastoTelegram(message, user, senderName, null)
+        logTelegramQA({ chatId: message.chatId, ruta: 'gasto', inicio, pregunta: message.text, respuesta: tx ? `registrado #${tx.id}` : 'sin registrar', proveedor: aiData?._provider || null })
+        return
+      }
+
+      // Respaldo del detector local de reasignacion. Igual que el local: solo
+      // PROPONE con un boton.
+      if (aiData?.type === 'reassign' && aiData.referencia && aiData.destino &&
+          await handleReassign(message, { referencia: aiData.referencia, destino: aiData.destino })) {
+        logTelegramQA({ chatId: message.chatId, ruta: 'reasignar-clasificado', inicio, pregunta: message.text, proveedor: aiData._provider || null })
+        return
+      }
+
+      if (ruta === 'ambiguo' && !aiData) {
+        await telegram.sendTelegramMessage(message.chatId, NO_SE_SI_ES_GASTO, message.messageId)
+        logTelegramQA({ chatId: message.chatId, ruta: 'ambiguo-sin-ia', inicio, pregunta: message.text, respuesta: NO_SE_SI_ES_GASTO })
+        return
+      }
+      // question / chat / task, o quiza-reasignar sin reassign: lo contesta el
+      // agente, abajo.
     }
 
-    const expenseData = aiData?.type === 'expense' ? aiData : null
-    const parsed = parseMessage(
-      message.text,
-      senderName,
-      null,
-      `tg:${message.chatId}:${message.messageId}`,
-      expenseData,
-    )
+    // 3. Todo lo demas: el agente. Si falla, se dice; JAMAS se cae al parser.
+    let agentResult = null
+    try {
+      agentResult = await financeAgent.answer(message.text, { senderName, chatId: message.chatId })
+    } catch (error) {
+      console.error('Telegram finance agent error:', error)
+    }
 
-    if (!parsed.monto || parsed.monto <= 0) {
-      const fallback = aiRouter.isEnabled()
-        ? 'No pude identificar una operación o pregunta financiera clara. Puedes escribirme algo como “gasté 350 en gasolina” o “¿cuánto gasté hoy?”.'
-        : 'No encontré un monto válido. Ejemplo: “gasté 350 en gasolina”.'
-      await telegram.sendTelegramMessage(message.chatId, fallback, message.messageId)
+    if (agentResult?.reply) {
+      // Texto plano: la respuesta la redacto la IA y un "*" suelto no es formato.
+      await telegram.sendTelegramMessage(message.chatId, agentResult.reply, message.messageId, { plain: true })
+      logTelegramQA({
+        chatId: message.chatId, ruta: 'agente', inicio, pregunta: message.text, respuesta: agentResult.reply,
+        herramientas: (agentResult.trace || []).map(t => t.tool), proveedor: agentResult.provider,
+      })
       return
     }
 
-    const categoria = await db.findCategoria(parsed.categoria)
-    const metodoPago = await db.findMetodoPago(parsed.formaPago)
-    const quincena = await db.findQuincenaByCodigo(parsed.quincena)
-
-    if (!categoria || !quincena) {
-      await telegram.sendTelegramMessage(message.chatId, 'No pude identificar la categoría o el periodo presupuestal.', message.messageId)
-      return
-    }
-
-    const budgetLookup = {
-      quincenaId: quincena.id,
-      categoriaId: categoria.id,
-      descripcion: parsed.descripcion,
-      tipo: parsed.tipo,
-    }
-
-    // EL MOVIMIENTO NACE SIN LINEA, SIEMPRE.
-    //
-    // Antes, cuando resolveBudgetLine acertaba con confianza, el enlace se
-    // escribia aqui mismo y el mensaje salia sin un solo boton. Dos problemas en
-    // uno: asignaba sin preguntar, y cuando se equivocaba no habia forma de
-    // verlo ni de corregirlo desde Telegram, porque las opciones ni se
-    // mostraban. La sugerencia sigue existiendo -- va primera y marcada con una
-    // estrella -- pero ahora es una propuesta de un toque, no un hecho
-    // consumado. Quien escribe el enlace es siempre el boton `pl:`, o sea
-    // linkTransactionToBudget, que es el unico camino validado.
-    const tx = await saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena)
-
-    let confirmation = formatTelegramConfirmation(parsed)
-    let buttons = null
-    let sugeridaId = null
-
-    if (TIPOS_CON_LINEA.has(parsed.tipo)) {
-      const contexto = await budgetPickerContext(tx.id)
-      const candidatas = contexto?.candidatas ?? []
-      sugeridaId = contexto?.sugeridaId ?? null
-
-      if (candidatas.length > 0) {
-        confirmation += `\n\n${budgetPrompt(candidatas, sugeridaId)}`
-        buttons = budgetButtons(tx.id, candidatas, { sugeridaId })
-      } else {
-        confirmation += '\n\n⚠️ No hay líneas de presupuesto de este tipo en la quincena.'
-        buttons = [[{ text: '➕ Crear línea nueva', callback_data: `pd:${tx.id}:0` }]]
-      }
-    }
-
-    await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId, { buttons })
-    console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=none; sugerida=${sugeridaId ?? '-'}`)
+    await telegram.sendTelegramMessage(message.chatId, NO_PUDE_CONTESTAR, message.messageId)
+    logTelegramQA({ chatId: message.chatId, ruta: 'agente-fallo', inicio, pregunta: message.text, respuesta: NO_PUDE_CONTESTAR })
   } catch (error) {
     console.error('Telegram webhook error:', error)
     try {
       await telegram.sendTelegramMessage(message.chatId, '❌ Ocurrió un error al procesar el mensaje.', message.messageId)
     } catch {}
   } finally {
+    dejarDeEscribir()
     processingUpdates.delete(message.updateId)
   }
 })
@@ -1464,7 +1478,6 @@ app.get('/', async (req, res) => {
     whatsapp: whatsappStatus(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
-    financeBrainEnabled: telegramBrain.isEnabled(),
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
     financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
     telegramWebhookUrl: telegram.getWebhookUrl(),
@@ -1523,7 +1536,7 @@ app.get('/telegram/status', async (req, res) => {
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, async () => {
-  console.log('GEMINI_ENABLED:', gemini.isEnabled(), 'GEMINI_MODEL:', process.env.GEMINI_MODEL || 'gemini-2.0-flash')
+  console.log('GEMINI_ENABLED:', gemini.isEnabled(), 'GEMINI_MODEL:', gemini.GEMINI_MODEL)
   console.log(`Bot de Gastos running on port ${PORT}`)
   console.log(`Webhook URL: http://localhost:${PORT}/webhook`)
 
