@@ -4,12 +4,18 @@ export function KpiCard({ label, value, icon, color, bg, subtitle, subtitleColor
 }) {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4 flex items-center gap-3 hover:border-indigo-200 hover:shadow-sm transition-all">
-      <div className={`w-10 h-10 rounded-lg ${bg} flex items-center justify-center shrink-0`}>
+      {/* En el telefono las tarjetas van de dos en dos (~165px) y la caja del
+          icono (40px + gap) dejaba al monto sin espacio: "$11,33...". Debajo de
+          sm el icono se oculta y el monto usa todo el ancho; en escritorio se
+          ve igual que siempre. */}
+      <div className={`hidden sm:flex w-10 h-10 rounded-lg ${bg} items-center justify-center shrink-0`}>
         {icon}
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 w-full sm:w-auto">
         <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{label}</p>
-        <p className={`text-lg font-bold ${color} truncate tabular-nums`}>{value}</p>
+        {/* Un monto nunca se recorta en el telefono: si de verdad no cabe,
+            salta de linea. Desde sm vuelve al truncate de siempre. */}
+        <p className={`text-lg font-bold ${color} tabular-nums [overflow-wrap:anywhere] sm:truncate`}>{value}</p>
         {/* Dos lineas antes de recortar: el subtitulo suele llevar el "por que" del
             numero ("te faltan · comprometiste mas de lo que ingreso"), y con
             una sola linea justo esa parte era la que se perdia. */}

@@ -68,3 +68,78 @@ export function calcularLibreSinAsignar(
   const totalComprometido = presupTotal + gastosNoCubiertos + totalExcedido + ahorroComprometido
   return ingresos - totalComprometido
 }
+
+export interface PresupuestoParaCuadre extends PresupuestoParaTotales {
+  excedido: number
+}
+
+export interface CuadreEntrada {
+  // totales.Ingreso y totales.Gasto de GET /api/transacciones?quincenaId: el
+  // real completo de la quincena, asignado o no a una linea. No dependen de
+  // `limit` (son agregados del servidor), asi que el fetch de 5 filas del
+  // Inicio sirve igual que el de Tabla.
+  ingresosTotales: number
+  gastoTotal: number
+  // Las lineas de la quincena SIN filtros de tabla. Ingreso/Ahorro/Canceladas
+  // pueden venir mezcladas: cada calculo descarta lo que no le toca.
+  presupuestos: PresupuestoParaCuadre[]
+  // Suma del corte de liquidez de la quincena, o null si no hay corte. Un
+  // corte que suma $0 SI es un corte: no se confunde con "sin corte".
+  liquidezTotal: number | null
+}
+
+export interface Cuadre {
+  ingresos: number
+  comprometido: number
+  // Lo que deberia sobrarte segun el presupuesto (calcularLibreSinAsignar).
+  teorico: number
+  // Lo que de verdad te sobra segun tus cuentas: corte - por pagar.
+  real: number
+  // real - teorico. Positivo = vas mejor que el presupuesto.
+  delta: number
+  enCuentas: number
+  porPagar: number
+  cuadra: boolean
+  mejor: boolean
+}
+
+// "Libre / sin asignar" de una quincena: la mitad "segun tu presupuesto" del
+// cuadre. El gasto sin linea sale de restar al gasto total lo ya contado en
+// lineas de Gasto, para no necesitar un segundo fetch con asignado=no.
+export function calcularLibreDeQuincena({ ingresosTotales, gastoTotal, presupuestos }: Omit<CuadreEntrada, 'liquidezTotal'>): number {
+  const realEnLineas = presupuestos
+    .filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+    .reduce((s, p) => s + p.real, 0)
+  return calcularLibreSinAsignar(ingresosTotales, presupuestos, Math.max(gastoTotal - realEnLineas, 0))
+}
+
+// "¿Cuadra tu dinero?": lo que deberia sobrarte segun el presupuesto contra
+// lo que de verdad te sobra segun el corte de cuentas. Ambos lados descuentan
+// lo comprometido, asi que la diferencia es solo dinero que el sistema no
+// conoce: saldo arrastrado de quincenas anteriores, movimientos sin registrar
+// o un corte desactualizado.
+//
+// Fuente unica para Presupuesto > Tabla y para el Inicio: si las dos pantallas
+// llaman a esta funcion con los mismos datos, no pueden contradecirse. El
+// "por pagar" sale de TODAS las lineas de la quincena (no de las filas que
+// deja ver un filtro de la tabla): el veredicto no debe moverse al filtrar.
+//
+// Devuelve null sin corte de liquidez: sin esa foto no hay lado "real".
+export function calcularCuadre(entrada: CuadreEntrada): Cuadre | null {
+  if (entrada.liquidezTotal == null) return null
+  const teorico = calcularLibreDeQuincena(entrada)
+  const porPagar = calcularFaltaPorPagar(entrada.presupuestos)
+  const real = entrada.liquidezTotal - porPagar
+  const delta = real - teorico
+  return {
+    ingresos: entrada.ingresosTotales,
+    comprometido: entrada.ingresosTotales - teorico,
+    teorico,
+    real,
+    delta,
+    enCuentas: entrada.liquidezTotal,
+    porPagar,
+    cuadra: Math.abs(delta) < 1,
+    mejor: delta > 0,
+  }
+}
