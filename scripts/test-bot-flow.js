@@ -130,6 +130,7 @@ let nextTxId = 1, nextMsgId = 1
 let dbCaida = false
 
 const fakeDb = {
+  checkDatabase: async () => ({ ok: !dbCaida, error: dbCaida ? 'caida simulada' : null }),
   findUserByPhone: async () => {
     if (dbCaida) throw new Error('Connection refused: la base de datos no responde')
     return null
@@ -165,7 +166,13 @@ const fakeDb = {
 const enviados = []
 const reacciones = []
 
+// El chequeo de estado se usa real: con META_* sin definir nunca sale a la
+// red, y asi el test cubre lo que /health reporta de verdad.
+const realWa = require(path.join(SRC, 'whatsapp.js'))
+
 const fakeWa = {
+  checkWhatsApp: realWa.checkWhatsApp,
+  whatsappStatus: realWa.whatsappStatus,
   sendWhatsAppMessage: async (to, message) => { enviados.push({ to, message }); return { ok: true, data: {} } },
   extractPhoneNumber: (value) => (value ? String(value).replace(/\D/g, '') : null),
   markAsRead: async () => true,
@@ -285,6 +292,15 @@ async function main() {
   check('volvio a registrar', transacciones.length === 4, transacciones.length)
   check('monto = 300', Number(transacciones.at(-1)?.monto) === 300, transacciones.at(-1)?.monto)
   check('confirmo el registro', ultimaConfirmacion().includes('Gasto registrado'), ultimaConfirmacion())
+
+  console.log('\n=== H: /health dice si WhatsApp puede enviar (no mas fallos mudos) ===')
+  const health = await fetch(`http://localhost:${process.env.PORT}/health`).then(r => r.json())
+  check('/health trae el estado de WhatsApp', health.whatsapp && typeof health.whatsapp.ok === 'boolean', JSON.stringify(health.whatsapp))
+  check('sin credenciales, WhatsApp sale como NO listo', health.whatsapp?.ok === false, JSON.stringify(health.whatsapp))
+  const hint133010 = realWa.describeWhatsAppError({ error: { code: 133010, message: '(#133010) Account not registered' } })
+  check('el error 133010 explica que hay que registrar el numero', /no esta registrado/.test(hint133010 || ''), hint133010)
+  const hint190 = realWa.describeWhatsAppError({ error: { code: 190 } })
+  check('el error 190 explica que el token caduco', /token/i.test(hint190 || ''), hint190)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
