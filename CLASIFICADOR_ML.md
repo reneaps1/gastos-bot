@@ -4,36 +4,34 @@ Parte de la Fase 8 (Inteligencia y Automatización): *"Este gasto parece Super, 
 
 ## Qué hace
 
-Cuando llega un gasto por Telegram, el bot propone una categoría y pregunta si es correcta. Cada respuesta se convierte en un ejemplo etiquetado y el modelo aprende de él en ese momento (aprendizaje supervisado).
+Cuando llega un gasto por Telegram, el bot propone la categoría y la línea de presupuesto. **No pregunta nada aparte**: aprende de lo que el usuario ya hace al elegir la línea (aprendizaje supervisado).
 
 ```
-Tú:   95 convivio
-Milo: ✅ Gasto registrado … 🏷️ Familia …
-      🤖 ¿Es correcta la categoría Familia? (87 % seguro)
-      [✅ Sí] [✏️ No, cambiarla]
-      ¿A cuál línea lo mando?
-      [⭐ Convivios · Familia] …
+Tú:   100, croquetas
+Milo: Gasto registrado ... Familia ...
+      ¿Lo mando a Super? (99 % seguro) Toca la que corresponda:
+      [* Super · Super — $3600.00]   <- primera y marcada
+      [Ballet Dalia · Familia — $550.00] ...
 ```
 
-| Respuesta | Qué pasa | Feedback |
-|---|---|---|
-| ✅ Sí | Muestra las líneas de presupuesto | `aceptada` |
-| ✏️ No → elige otra categoría | Cambia la categoría del gasto y muestra las líneas | `corregida` (pesa ×2) |
-| Elige directamente una línea de la **misma** categoría | La enlaza (como hoy) | `aceptada`: vio la categoría y no la objetó |
-| Elige una línea de **otra** categoría → «Sí, moverlo» | Como hoy (`pk`) | `corregida` |
-| … → «No, dejarlo en X» | Como hoy (`pm`) | `aceptada` |
-| No contesta | El gasto **se queda guardado** con la categoría propuesta | `pendiente` (no entra al entrenamiento) |
-| «Dejar sin asignar» la línea | Como hoy (`pn`) | sigue `pendiente`: no dice nada de la categoría |
+La pregunta «¿Es correcta la categoría?» con botones Sí/No existió en la Fase A y **se quitó el 1/11/2026** a pedido del usuario: si la categoría ya está, preguntar sobra. El feedback se sigue registrando y se resuelve así:
 
-El gasto se guarda **antes** de la respuesta (decisión del 1/11/2026): si no contestas, el gasto no se pierde.
+| Lo que hace el usuario | Feedback de la categoría |
+|---|---|
+| Elige una línea de la **misma** categoría | `aceptada`: vio la categoría y no la objetó |
+| Elige una línea de **otra** categoría y el bot pregunta «¿Muevo también la categoría?» → «Sí, moverlo» (`pk`) | `corregida` (pesa ×2) |
+| … → «No, dejarlo en X» (`pm`) | `aceptada` |
+| No elige línea, o «Dejar sin asignar» (`pn`) | sigue `pendiente`: no entra al entrenamiento |
 
-Solo pregunta en los gastos (tipo `Gasto`). Ingresos y ahorros tienen una sola categoría y se quedan como estaban.
+El gasto se guarda **antes** de cualquier toque (decisión del 1/11/2026): si no se toca nada, el gasto no se pierde.
+
+Los botones viejos `ka`/`kn`/`kc`/`kb` siguen funcionando para los mensajes que todavía los tengan, pero ya no se dibujan.
 
 ## Cómo decide la categoría
 
 1. Las reglas de siempre: palabras clave de `src/parser.js` y, en los mensajes ambiguos, la IA (DeepSeek/Gemini).
 2. Si las reglas dicen que es un gasto, el modelo opina. **Solo reemplaza a las reglas si está muy seguro**: probabilidad ≥ 80 % **y** cobertura ≥ 50 % (la cobertura es qué parte del texto ya había visto alguna vez). Si no, se queda lo de las reglas.
-3. En los dos casos se pregunta, y la respuesta enseña al modelo.
+3. En los dos casos se registra la propuesta, y la línea que se elija la confirma o la corrige.
 
 ### El modelo
 
@@ -46,7 +44,7 @@ Naive Bayes multinomial sobre **palabras + fragmentos de 3 y 4 letras** (`src/cl
 
 ### Con qué se entrena la categoría
 
-**Solo con tus respuestas** en Telegram (feedback `aceptada` o `corregida`), no con el historial. Se carga al primer gasto después de arrancar, se recarga cada 6 horas y cada respuesta se aprende en ese momento.
+**Solo con las respuestas** en Telegram (feedback `aceptada` o `corregida`, ver la tabla de arriba), no con el historial. Se carga al primer gasto después de arrancar, se recarga cada 6 horas y cada respuesta se aprende en ese momento.
 
 - Las `corregida` pesan ×2. Con ×3, una sola corrección de «uber eats» arrastraba también a «uber» solo.
 - Las `pendiente` (nadie contestó) no cuentan.
@@ -54,19 +52,19 @@ Naive Bayes multinomial sobre **palabras + fragmentos de 3 y 4 letras** (`src/cl
 
 **Por qué no el historial (decisión de la Fase B, medida con datos reales):** en la Fase A se entrenaba con la categoría de todas las transacciones. Medido con los 545 movimientos de producción, ese modelo acertaba **menos** que las palabras clave (60–65 % contra 68 %). Las categorías históricas casi nunca las confirmó nadie, porque las puso el mismo parser, y son inconsistentes: «tacos» aparece como Familia, Personal y Diversión. El modelo aprendía ruido.
 
-## Fase B: la línea de presupuesto (la ⭐)
+## Fase B: la línea de presupuesto (la )
 
 Las líneas se repiten cada quincena con el mismo nombre («Super», «Gasolina Spark») pero con otro id, así que **el modelo aprende el nombre de la línea**. Se entrena con todos los gastos que ya tienen línea: 430 en producción, y cada una la eligió una persona con un toque, así que son etiquetas confiables.
 
-La ⭐ se decide así:
+La se decide así:
 
 1. **Primero la regla de siempre** (`resolveBudgetLine`: parecido de texto dentro de la categoría). Cuando opina acierta 94 %, pero solo opina en 1 de cada 3 gastos.
-2. **Si no opina, el modelo**, elegido **solo entre las líneas de la quincena** y del tipo del movimiento, con probabilidad ≥ 40 % y cobertura ≥ 50 %. El mensaje dice qué tan seguro está: «¿Lo mando a *Super*? (72 % seguro)».
+2. **Si no opina, el modelo**, elegido **solo entre las líneas de la quincena** y del tipo del movimiento, con probabilidad ≥ 40 % y cobertura ≥ 50 %. El mensaje dice qué tan seguro está: «¿Lo mando a *Super*? (72 % seguro)», con tope de 99 %: un modelo estadístico nunca está «100 % seguro».
 3. Cada toque de línea (`pl`) y cada línea creada desde Telegram (`pd`) se aprende al momento.
 
 Medido con los datos reales (60 % más viejo para entrenar, 178 gastos más nuevos para probar, aprendiendo en línea como el bot):
 
-| | ⭐ correcta | Pone ⭐ en | Cuando la pone, acierta |
+| | correcta | Pone en | Cuando la pone, acierta |
 |---|---|---|---|
 | Solo la regla (antes) | **34 %** | 36 % | 94 % |
 | Solo el modelo | 60 % | 78 % | 70 % |
@@ -112,7 +110,7 @@ En los logs de Render: `CLASIFICADOR_ENTRENADO`, `CLASIFICADOR_DIFIERE` (el mode
 ## Pruebas
 
 - `scripts/test-clasificador.js` (54): modelo y servicio. Normalización, tolerancia a errores de dedo, «no sé» con texto desconocido, que una corrección cambie la opinión, exclusión de las pendientes, pesos, idempotencia, que nunca truene y el apagado.
-- `scripts/test-telegram-flow.js`, casos CL11–CL12 (Fase B): la ⭐ la pone el modelo cuando la regla no opina, la paginación la conserva y dos toques le enseñan una línea nueva.
+- `scripts/test-telegram-flow.js`, casos CL11–CL12 (Fase B): la la pone el modelo cuando la regla no opina, la paginación la conserva y dos toques le enseñan una línea nueva.
 - `scripts/test-telegram-flow.js`, casos CL1–CL10: la pregunta, Sí, No, Volver, Corregir, `kc` forjado hacia otro tipo, línea de la misma categoría = sí, cruce = corrección, que un ingreso no pregunte, que el modelo entrenado le gane a las reglas y que una falla de la tabla no impida el registro.
 
 ## Siguientes fases

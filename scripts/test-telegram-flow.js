@@ -572,9 +572,9 @@ async function main() {
   check('el gasto nace SIN linea', txT?.presupuestoId == null, txT?.presupuestoId)
   const botonesT = enviados.at(-1)?.buttons || []
   check('pregunta con botones', botonesT.length > 0, JSON.stringify(botonesT))
-  // Arriba de todo va la pregunta del clasificador ("¿Es correcta la
-  // categoria?"); la sugerida tiene que ser la primera de las LINEAS.
-  check('la pregunta de categoria va arriba', botonesT[0]?.[0]?.callback_data === `ka:${txT.id}`, botonesT[0]?.[0]?.callback_data)
+  // Sin la pregunta de categoria (se quito el 2026-11-01): las lineas van
+  // directo, y la sugerida es la primera.
+  check('no hay fila de pregunta de categoria', !botonesT.flat().some(b => /^k[abnc]:/.test(b.callback_data || '')), JSON.stringify(botonesT[0]))
   const filasLineaT = botonesT.filter(f => f[0]?.callback_data?.startsWith('pl:'))
   check('la sugerida va primera y marcada', /^⭐ /.test(filasLineaT[0]?.[0]?.text || ''), filasLineaT[0]?.[0]?.text)
   check('la sugerida es Niñera', filasLineaT[0]?.[0]?.callback_data === `pl:${txT.id}:11`, filasLineaT[0]?.[0]?.callback_data)
@@ -746,19 +746,21 @@ async function main() {
   const fbDe = tx => feedbacks.find(f => f.transaccionId === tx.id)
   const cbsDe = msg => msg?.buttons?.flat().map(b => b.callback_data).filter(Boolean) || []
 
-  console.log('\n=== CL1: un gasto pregunta si la categoria es correcta ===')
+  console.log('\n=== CL1: un gasto NO pregunta la categoria, pero registra la propuesta ===')
   await post(textUpdate('250 croquetas'))
   const txCL1 = creadas.at(-1)
   const msgCL1 = enviados.at(-1)
   check('registro el gasto con la categoria de las reglas', txCL1?.categoriaId === 3, txCL1?.categoriaId)
-  check('pregunta por la categoria', /¿Es correcta la categoría \*Familia\*\?/.test(msgCL1?.message || ''), msgCL1?.message)
-  check('la primera fila es Si / No', msgCL1?.buttons?.[0]?.map(b => b.callback_data).join() === `ka:${txCL1.id},kn:${txCL1.id}`, JSON.stringify(msgCL1?.buttons?.[0]))
-  check('las lineas siguen ahi, debajo', cbsDe(msgCL1).some(cb => cb.startsWith(`pl:${txCL1.id}:`)), JSON.stringify(cbsDe(msgCL1)))
+  check('no pregunta por la categoria', !/¿Es correcta la categoría/.test(msgCL1?.message || ''), msgCL1?.message)
+  check('sin botones Si / No', !cbsDe(msgCL1).some(cb => /^k[abnc]:/.test(cb)), JSON.stringify(cbsDe(msgCL1)))
+  check('la primera fila es una linea', msgCL1?.buttons?.[0]?.[0]?.callback_data?.startsWith(`pl:${txCL1.id}:`), JSON.stringify(msgCL1?.buttons?.[0]))
   check('guardo la propuesta pendiente', fbDe(txCL1)?.estado === 'pendiente' && fbDe(txCL1)?.categoriaPropuestaId === 3, JSON.stringify(fbDe(txCL1)))
   check('sin modelo entrenado, la fuente son las reglas', fbDe(txCL1)?.fuente === 'reglas' && fbDe(txCL1)?.confianza == null, JSON.stringify(fbDe(txCL1)))
   check('callback_data cabe en 64 bytes', cbsDe(msgCL1).every(cb => Buffer.byteLength(cb) <= 64))
 
-  console.log('\n=== CL2: "Si" la marca aceptada y pasa a las lineas ===')
+  // CL2-CL4: los botones ka/kn/kc/kb ya no se dibujan, pero siguen
+  // funcionando para los mensajes viejos que todavia los tienen.
+  console.log('\n=== CL2: "Si" (mensaje viejo) la marca aceptada y pasa a las lineas ===')
   const escriturasCL2 = escrituras.length
   await post(callbackUpdate(`ka:${txCL1.id}`))
   check('feedback aceptada', fbDe(txCL1)?.estado === 'aceptada' && fbDe(txCL1)?.categoriaFinalId === 3, JSON.stringify(fbDe(txCL1)))
@@ -838,9 +840,8 @@ async function main() {
   const txCL9 = creadas.at(-1)
   check('lo registro en Familia', txCL9?.categoriaId === 3, txCL9?.categoriaId)
   check('la fuente es el modelo', fbDe(txCL9)?.fuente === 'modelo' && fbDe(txCL9)?.confianza > 0.6, JSON.stringify(fbDe(txCL9)))
-  check('dice que tan seguro esta', /% seguro/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
   check('dejo traza de que difirio de las reglas', logsIncluyen('CLASIFICADOR_DIFIERE: reglas=Personal; modelo=Familia'), 'falta CLASIFICADOR_DIFIERE')
-  check('sigue preguntando', cbsDe(enviados.at(-1))[0] === `ka:${txCL9.id}`, JSON.stringify(cbsDe(enviados.at(-1))))
+  check('tampoco pregunta', !cbsDe(enviados.at(-1)).some(cb => cb.startsWith('ka:')), JSON.stringify(cbsDe(enviados.at(-1))))
 
   console.log('\n=== CL10: si la tabla de feedback falla, el gasto se registra igual ===')
   feedbackFalla = true
@@ -864,6 +865,7 @@ async function main() {
   const filasLineaCL11 = (msgCL11?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
   check('la ⭐ es Colegiatura', filasLineaCL11[0]?.[0]?.callback_data === `pl:${txCL11.id}:12` && /^⭐ /.test(filasLineaCL11[0]?.[0]?.text || ''), JSON.stringify(filasLineaCL11[0]))
   check('el texto la propone con su confianza', /¿Lo mando a \*Colegiatura\*\? _\(\d+ % seguro\)_/.test(msgCL11?.message || ''), msgCL11?.message)
+  check('nunca dice "100 % seguro"', !/100 % seguro/.test(msgCL11?.message || '') && /99 % seguro/.test(msgCL11?.message || ''), msgCL11?.message)
   await post(callbackUpdate(`pp:${txCL11.id}:0`))
   check('paginar conserva la misma ⭐ (orden determinista)', editados.at(-1)?.buttons?.find(f => f[0]?.callback_data?.startsWith('pl:'))?.[0]?.callback_data === `pl:${txCL11.id}:12`, JSON.stringify(editados.at(-1)?.buttons?.[0]))
 

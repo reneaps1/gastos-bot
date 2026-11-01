@@ -347,11 +347,17 @@ function budgetButtons(transaccionId, candidates, { pagina = 0, sugeridaId = nul
 // numero, ver seis botones se lee como "estas son las que hay" y la salida
 // ("Ver más", "Buscar por categoría") parece decoracion en vez de la forma de
 // llegar a las otras veinte.
+// Un modelo estadistico nunca esta "100 % seguro"; redondear 0.997 a 100
+// suena a certeza que no hay. Tope de 99.
+function porcentajeSeguro(confianza) {
+  return Math.min(99, Math.round(confianza * 100))
+}
+
 function budgetPrompt(candidates, sugeridaId = null, confianza = null) {
   const sugerida = sugeridaId ? candidates.find(c => c.id === sugeridaId) : null
   const cabeTodo = candidates.length <= PAGE_SIZE
   // La confianza solo existe cuando la ⭐ la puso el modelo de lineas.
-  const seguro = confianza == null ? '' : ` _(${Math.round(confianza * 100)} % seguro)_`
+  const seguro = confianza == null ? '' : ` _(${porcentajeSeguro(confianza)} % seguro)_`
 
   const pregunta = sugerida
     ? `¿Lo mando a *${telegram.escapeMarkdown(sugerida.descripcion)}*?${seguro} Toca la que corresponda:`
@@ -428,7 +434,7 @@ function crossCategoryButtons(transaccionId, lineaId, nombreCatLinea, nombreCatT
 // "si" (ver `pl`): quien la elige ya vio la categoria y no la objeto. Asi el
 // caso normal sigue costando un solo toque.
 function preguntaCategoriaTexto(nombreCategoria, confianza = null) {
-  const seguro = confianza == null ? '' : ` _(${Math.round(confianza * 100)} % seguro)_`
+  const seguro = confianza == null ? '' : ` _(${porcentajeSeguro(confianza)} % seguro)_`
   return `🤖 ¿Es correcta la categoría *${telegram.escapeMarkdown(nombreCategoria || '')}*?${seguro}`
 }
 
@@ -1452,24 +1458,26 @@ async function registrarGastoTelegram(message, user, senderName, expenseData) {
   // linkTransactionToBudget, que es el unico camino validado.
   const tx = await saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena)
 
-  // El gasto ya quedo guardado con la categoria propuesta; la pregunta solo la
-  // confirma o la corrige. Si nadie contesta, el gasto no se pierde: se queda
-  // con esa categoria y su feedback sigue `pendiente` (y por eso fuera del
-  // entrenamiento). Si el registro del feedback falla, no se pregunta.
-  let pregunta = null
+  // El gasto ya quedo guardado con la categoria propuesta. Si nunca se elige
+  // linea, su feedback sigue `pendiente` y queda fuera del entrenamiento.
+  // SIN PREGUNTA en el chat (decision del usuario, 2026-11-01: "no me gustan
+  // los botones para clasificar; si ya esta clasificado no es necesario"). La
+  // propuesta se registra igual, y la respuesta llega sola con lo que el
+  // usuario ya hace: elegir una linea de la misma categoria = aceptada (`pl`);
+  // de otra categoria -> "¿Muevo tambien la categoria?" -> `pk` corregida /
+  // `pm` aceptada. Los botones ka/kn/kc/kb siguen funcionando para los
+  // mensajes viejos que todavia los tengan.
   if (tx.tipo === 'Gasto') {
-    const fb = await clasificador.registrarPropuesta({
+    await clasificador.registrarPropuesta({
       transaccionId: tx.id,
       texto: parsed.descripcion,
       categoriaPropuestaId: categoria.id,
       fuente: propuesta ? 'modelo' : 'reglas',
       confianza: propuesta?.confianza ?? null,
     })
-    if (fb) pregunta = preguntaCategoriaTexto(categoria.nombre, propuesta?.confianza ?? null)
   }
 
   let confirmation = formatTelegramConfirmation(parsed)
-  if (pregunta) confirmation += `\n\n${pregunta}`
   let buttons = null
   let sugeridaId = null
 
@@ -1486,7 +1494,6 @@ async function registrarGastoTelegram(message, user, senderName, expenseData) {
       buttons = [[{ text: '➕ Crear línea nueva', callback_data: `pd:${tx.id}:0` }]]
     }
   }
-  if (pregunta) buttons = [preguntaCategoriaFila(tx.id), ...(buttons || [])]
 
   await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId, { buttons })
   console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=none; sugerida=${sugeridaId ?? '-'}`)
