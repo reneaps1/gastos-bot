@@ -36,7 +36,7 @@ if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
 const express = require('express')
 const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
 const { parseMessage, formatConfirmation, cleanDescription, isShorthandExpense } = require('./parser')
-const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedia } = require('./whatsapp')
+const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedia, checkWhatsApp, whatsappStatus } = require('./whatsapp')
 const { handleQuestion, detectIntent, getData } = require('./analytics')
 const { getCurrentQuincena, ensureFreshQuincenas } = require('./quincenas')
 const gemini = require('./gemini')
@@ -1461,6 +1461,7 @@ app.get('/', async (req, res) => {
     service: 'gastos-bot',
     version: '2.0',
     telegramEnabled: telegram.isEnabled(),
+    whatsapp: whatsappStatus(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
     financeBrainEnabled: telegramBrain.isEnabled(),
@@ -1483,6 +1484,9 @@ app.get('/health', async (req, res) => {
   res.json({
     status: database.ok ? 'ok' : 'degraded',
     telegramEnabled: telegram.isEnabled(),
+    // WhatsApp caido no degrada el status (Telegram y el dashboard siguen
+    // sirviendo); el watchdog y quien lea /health ven el motivo aqui.
+    whatsapp: whatsappStatus(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
@@ -1522,6 +1526,10 @@ app.listen(PORT, async () => {
   console.log('GEMINI_ENABLED:', gemini.isEnabled(), 'GEMINI_MODEL:', process.env.GEMINI_MODEL || 'gemini-2.0-flash')
   console.log(`Bot de Gastos running on port ${PORT}`)
   console.log(`Webhook URL: http://localhost:${PORT}/webhook`)
+
+  const wa = await checkWhatsApp()
+  if (wa.ok) console.log(`WhatsApp OK: ${wa.phone || process.env.META_PHONE_NUMBER_ID}`)
+  else console.error(`WHATSAPP_NOT_READY: ${wa.error}${wa.hint ? ` -- ${wa.hint}` : ''}`)
 
   const ai = aiRouter.status()
   console.log(`Telegram AI providers: primary=${ai.primary || 'none'}; deepseek=${ai.deepseekEnabled}; gemini=${ai.geminiEnabled}`)
