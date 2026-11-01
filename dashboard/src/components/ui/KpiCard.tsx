@@ -10,7 +10,10 @@ export function KpiCard({ label, value, icon, color, bg, subtitle, subtitleColor
       <div className="min-w-0">
         <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{label}</p>
         <p className={`text-lg font-bold ${color} truncate tabular-nums`}>{value}</p>
-        {subtitle && <p className={`text-xs truncate tabular-nums mt-0.5 ${subtitleColor ?? 'text-slate-400 dark:text-slate-500'}`}>{subtitle}</p>}
+        {/* Dos lineas antes de recortar: el subtitulo suele llevar el "por que" del
+            numero ("te faltan · comprometiste mas de lo que ingreso"), y con
+            una sola linea justo esa parte era la que se perdia. */}
+        {subtitle && <p title={subtitle} className={`text-xs line-clamp-2 tabular-nums mt-0.5 ${subtitleColor ?? 'text-slate-400 dark:text-slate-500'}`}>{subtitle}</p>}
         {action}
       </div>
     </div>
