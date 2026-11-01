@@ -2077,7 +2077,6 @@ function PresupuestoTabla({
   const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
   const totalRealFijo = gastoFilasFijo.reduce((s, p) => s + p.real, 0)
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
-  const balanceReal = totalIngresoRealFijo - totalRealFijo
 
   const multiSelectTablaActivo = selectedTablaQuincenaIds.length > 1
 
@@ -2134,6 +2133,7 @@ function PresupuestoTabla({
         delta: (totalLiquidez - totalFaltaPorPagar) - libreSinAsignar,
       }
     : null
+  const mostrarLibreCard = tablaQuincenaId !== ALL_QUINCENAS && libreSinAsignar != null && !conciliacion
 
   // Movimientos sin partida asignada -- mismo panel que la vista Tarjetas,
   // pero acotado a la(s) quincena(s) elegidas aqui. Oculto en modo "Todas":
@@ -2232,7 +2232,11 @@ function PresupuestoTabla({
         </p>
       </div>
 
-      <div className={`grid grid-cols-2 gap-3 ${tablaQuincenaId !== ALL_QUINCENAS ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
+      {/* Cada tarjeta responde una pregunta: cuanto entro, cuanto llevo pagado,
+          si el plan alcanza y cuanto hay en cuentas. "Libre / sin asignar" solo
+          aparece cuando no hay panel "¿Cuadra tu dinero?" (sin corte o con
+          quincenas combinadas): si no, repetiria su lado "Según tu presupuesto". */}
+      <div className={`grid grid-cols-2 gap-3 ${{ 3: 'md:grid-cols-3', 4: 'md:grid-cols-4', 5: 'md:grid-cols-5' }[3 + (tablaQuincenaId !== ALL_QUINCENAS ? 1 : 0) + (mostrarLibreCard ? 1 : 0)]}`}>
         <KpiCard
           label="Ingresos" value={formatMXN(totalIngresoRealFijo)}
           subtitle={`de ${formatMXN(totalIngresoPresupuestadoFijo)} presupuestado`}
@@ -2253,7 +2257,7 @@ function PresupuestoTabla({
         />
         <KpiCard
           label="Gastos" value={formatMXN(totalReal)}
-          subtitle={`de ${formatMXN(totalPresupuestado)} presupuestado`}
+          subtitle={`pagado de ${formatMXN(totalPresupuestado)} · faltan ${formatMXN(totalFaltaPorPagar)} por pagar`}
           icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
           color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
           action={(() => {
@@ -2268,44 +2272,39 @@ function PresupuestoTabla({
             )
           })()}
         />
+        {/* Antes: "Ingresos - gastos" real. A media quincena casi siempre sale
+            positivo (aun no pagas casi nada) y se leia como "me sobra" junto a
+            tarjetas que decian "te faltan". Lo que si dice algo es el plan:
+            si el presupuesto ya nace en negativo, todo lo demas sale en falta. */}
         <KpiCard
-          label="Ingresos − gastos" value={formatMXN(balanceReal)}
-          subtitle={`real · plan ${formatMXN(balancePresupuestado)}`}
-          icon={<Scale size={20} className={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
-          color={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
-          bg={balanceReal >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
+          label="Tu plan" value={formatMXN(Math.abs(balancePresupuestado))}
+          subtitle={balancePresupuestado < 0
+            ? 'falta · presupuestaste gastar más de lo que planeas ganar'
+            : 'sobra · tu presupuesto deja margen'}
+          subtitleColor={balancePresupuestado < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
+          icon={<Scale size={20} className={balancePresupuestado >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'} />}
+          color={balancePresupuestado >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
+          bg={balancePresupuestado >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
         />
         {tablaQuincenaId !== ALL_QUINCENAS && (
           liquidezSnapshot ? (
             <KpiCard
-              label={multiSelectTablaActivo ? 'Liquidez (Q primaria)' : 'Liquidez'} value={formatMXN(totalLiquidez)}
-              subtitle={`falta por cubrir ${formatMXN(totalFaltaPorPagar)}`}
-              subtitleColor={totalFaltaPorPagar > totalLiquidez ? 'text-rose-500 dark:text-rose-400' : undefined}
+              label={multiSelectTablaActivo ? 'En cuentas (Q primaria)' : 'En cuentas'} value={formatMXN(totalLiquidez)}
+              subtitle={liquidezSnapshot.fechaCorte ? `corte del ${formatDate(liquidezSnapshot.fechaCorte)}` : 'según tu último corte'}
               icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
               color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
-              action={(() => {
-                const pct = totalLiquidez > 0 ? (totalFaltaPorPagar / totalLiquidez) * 100 : 0
-                return (
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
-                      <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                    </div>
-                    <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
-                  </div>
-                )
-              })()}
             />
           ) : (
             <Link href={`/configuracion/liquidez?quincenaId=${tablaQuincenaId}`}>
               <KpiCard
-                label="Liquidez" value="—" subtitle="Sin corte capturado"
+                label="En cuentas" value="—" subtitle="Sin corte capturado: captúralo"
                 icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
                 color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
               />
             </Link>
           )
         )}
-        {tablaQuincenaId !== ALL_QUINCENAS && libreSinAsignar != null && (
+        {mostrarLibreCard && libreSinAsignar != null && (
           <KpiCard
             label={multiSelectTablaActivo ? 'Libre / sin asignar (combinado)' : 'Libre / sin asignar'} value={formatMXN(Math.abs(libreSinAsignar))}
             subtitle={libreSinAsignar < 0 ? 'te faltan · comprometiste más de lo que ingresó' : 'te sobran de tus ingresos reales'}
