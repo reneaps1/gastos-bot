@@ -620,7 +620,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Sin destino en el presupuesto</p>
                   <p className="text-[10px] text-slate-400 dark:text-slate-500 leading-tight">de tus ingresos, esto no tiene partida asignada</p>
-                  <p className={`text-base font-bold tabular-nums mt-0.5 ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' de más' : ''}</p>
+                  <p className={`text-base font-bold tabular-nums mt-0.5 ${sinAsignar < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>{formatMXN(Math.abs(sinAsignar))}{sinAsignar < 0 ? ' te faltan' : ''}</p>
                   {metricas.gastosNoCubiertos > 0 && (
                     <p className="mt-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-md px-1.5 py-0.5 inline-block">
                       ⚠ incluye {formatMXN(metricas.gastosNoCubiertos)} sin presupuestar
@@ -635,7 +635,7 @@ export default function DashboardPage() {
                   {snapshot ? (
                     <>
                       <p className={`text-base font-bold tabular-nums mt-0.5 ${metricas.disponibleEfectivo < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                        {formatMXN(Math.abs(metricas.disponibleEfectivo))}{metricas.disponibleEfectivo < 0 ? ' de más' : ''}
+                        {formatMXN(Math.abs(metricas.disponibleEfectivo))}{metricas.disponibleEfectivo < 0 ? ' te faltan' : ''}
                       </p>
                       <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
                         {formatMXN(metricas.totalLiquido)} en cuentas − {formatMXN(metricas.pendientePorPagar)} comprometido
