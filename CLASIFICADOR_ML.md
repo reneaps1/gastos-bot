@@ -25,7 +25,29 @@ La pregunta «¿Es correcta la categoría?» con botones Sí/No existió en la F
 
 El gasto se guarda **antes** de cualquier toque (decisión del 1/11/2026): si no se toca nada, el gasto no se pierde.
 
-Los botones viejos `ka`/`kn`/`kc`/`kb` siguen funcionando para los mensajes que todavía los tengan, pero ya no se dibujan.
+Para corregir sin tanto botón, el mensaje trae **un solo** botón «Categoría» (`kn`), en la misma fila que «Dejar sin asignar»: abre el menú de categorías (`kc`), corrige (feedback `corregida`) y vuelve a las líneas. Solo aparece en gastos sin línea; con línea, la categoría se corrige con el cruce o en la sesión de entrenamiento. El botón `ka` («Sí» de la pregunta vieja) se sigue atendiendo para los mensajes que todavía lo tienen.
+
+## Sesión de entrenamiento
+
+El usuario escribe **«vamos a entrenar»** (también «entrenar», «/entrenar», «entrenemos»; el mensaje tiene que ser solo la frase, así que «entrenamiento de futbol 300» se registra como gasto). El bot muestra los gastos **uno por uno, del más reciente al más viejo**, con la categoría que cree, en **un solo mensaje que se va editando**:
+
+```
+Entrenamiento
+«tenis» -> Familia            <- lo que acaba de aprender
+$100.00 — croquetas
+1/11/2026
+¿Es de Familia? (87 % seguro)
+Ahora está en Personal.
+[Sí] [Otra]
+[Saltar] [Terminar]
+```
+
+- **Qué cree el bot:** la opinión del modelo de categoría, aunque no sea muy firme (en la sesión siempre se revisa), o, si no tiene, la categoría con la que se guardó el gasto.
+- **Sí / Otra:** guarda la respuesta (`aceptada` / `corregida`; la crea si el gasto es viejo y no tenía propuesta), corrige la categoría del gasto si hace falta y el modelo aprende en ese momento. Aquí **sí** se puede corregir un gasto que ya tiene línea: es una decisión explícita y deja un estado válido, el mismo que «No, dejarlo en X» del cruce.
+- **Saltar** no escribe nada. **Terminar** dice cuántos gastos lleva confirmados y en qué porcentaje acertó.
+- Se saltan los gastos que ya tienen respuesta y los que no tienen letras («$200»).
+- **Sin estado:** cada botón lleva el id del gasto, y «el siguiente» es el gasto anterior sin respuesta. La sesión sobrevive a que Render duerma o reinicie el servicio.
+- `callback_data`: `ea:<tx>:<cat>:<f>` sí, `eo:<tx>:<cat>:<f>` otra, `ec:<tx>:<cat>:<propuesta>:<f>` elegida, `eb:<tx>` volver, `es:<tx>` saltar, `ef:0` terminar (`f` = `m` modelo o `r` reglas). El cambio de categoría pasa por `correctTransactionCategory`, que revalida todo contra la base y nunca cruza tipos.
 
 ## Cómo decide la categoría
 
@@ -109,7 +131,9 @@ En los logs de Render: `CLASIFICADOR_ENTRENADO`, `CLASIFICADOR_DIFIERE` (el mode
 
 ## Pruebas
 
-- `scripts/test-clasificador.js` (54): modelo y servicio. Normalización, tolerancia a errores de dedo, «no sé» con texto desconocido, que una corrección cambie la opinión, exclusión de las pendientes, pesos, idempotencia, que nunca truene y el apagado.
+- `scripts/test-clasificador.js` (71): modelo y servicio. Normalización, tolerancia a errores de dedo, «no sé» con texto desconocido, que una corrección cambie la opinión, exclusión de las pendientes, pesos, idempotencia, que nunca truene y el apagado.
+- `scripts/test-telegram-flow.js`, casos E1–E7: la sesión de entrenamiento (orden, Sí, Otra con línea, `ec` forjado hacia otro tipo, Saltar sin escrituras, Terminar con marcador, nada por revisar).
+- `scripts/test-clasificador.js`, casos C1–C2: `confirmar`, `opinar`, `marcador` y qué frases abren la sesión.
 - `scripts/test-telegram-flow.js`, casos CL11–CL12 (Fase B): la la pone el modelo cuando la regla no opina, la paginación la conserva y dos toques le enseñan una línea nueva.
 - `scripts/test-telegram-flow.js`, casos CL1–CL10: la pregunta, Sí, No, Volver, Corregir, `kc` forjado hacia otro tipo, línea de la misma categoría = sí, cruce = corrección, que un ingreso no pregunte, que el modelo entrenado le gane a las reglas y que una falla de la tabla no impida el registro.
 

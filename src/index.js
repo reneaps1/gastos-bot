@@ -62,6 +62,7 @@ const { CLASIFICACION_POR_CATEGORIA } = require('./clasificacion')
 const telegram = require('./telegram')
 const aiRouter = require('./aiRouter')
 const clasificador = require('./clasificador')
+const entrenamiento = require('./entrenamiento')
 const financeAgent = require('./financeAgent')
 const { clasificarMensaje } = require('./telegramRouting')
 const {
@@ -423,26 +424,26 @@ function crossCategoryButtons(transaccionId, lineaId, nombreCatLinea, nombreCatT
   ]
 }
 
-// --- Pregunta del clasificador: "¿Es correcta la categoria?" ---
+// --- Correccion de categoria desde el chat ---
 //
-//   ka:<tx>         si, es correcta  -> feedback `aceptada`
-//   kn:<tx>         no               -> menu de categorias del mismo tipo
+//   kn:<tx>         "✏️ Categoría" -> menu de categorias del mismo tipo
 //   kc:<tx>:<cat>   esta es la buena -> cambia la categoria, feedback `corregida`
-//   kb:<tx>         volver a la pregunta
+//   kb:<tx>         volver a las lineas
+//   ka:<tx>         "Si" de la pregunta vieja (ya no se dibuja; se atiende
+//                   para los mensajes que todavia la tienen)
 //
-// Elegir directamente una linea de la MISMA categoria tambien cuenta como
-// "si" (ver `pl`): quien la elige ya vio la categoria y no la objeto. Asi el
-// caso normal sigue costando un solo toque.
-function preguntaCategoriaTexto(nombreCategoria, confianza = null) {
-  const seguro = confianza == null ? '' : ` _(${porcentajeSeguro(confianza)} % seguro)_`
-  return `🤖 ¿Es correcta la categoría *${telegram.escapeMarkdown(nombreCategoria || '')}*?${seguro}`
-}
-
-function preguntaCategoriaFila(transaccionId) {
-  return [
-    { text: '✅ Sí', callback_data: `ka:${transaccionId}` },
-    { text: '✏️ No, cambiarla', callback_data: `kn:${transaccionId}` },
-  ]
+// Elegir directamente una linea de la MISMA categoria cuenta como "si" (ver
+// `pl`): quien la elige ya vio la categoria y no la objeto.
+// El unico boton para corregir la categoria en el flujo normal: va en la
+// MISMA fila que "Dejar sin asignar" (o la ultima), sin agregar filas. Solo en
+// gastos sin linea: con linea, la categoria se corrige con el cruce de `pl`
+// o en la sesion de entrenamiento.
+function conBotonCategoria(buttons, tx) {
+  if (!buttons?.length || tx?.tipo !== 'Gasto' || tx.presupuestoId != null) return buttons
+  const boton = { text: '✏️ Categoría', callback_data: `kn:${tx.id}` }
+  const i = buttons.findIndex(f => f.some(b => b.callback_data === `pn:${tx.id}`))
+  const fila = i === -1 ? buttons.length - 1 : i
+  return buttons.map((f, j) => (j === fila ? [...f, boton] : f))
 }
 
 function categoriasCorreccionButtons(transaccionId, categorias, actualId) {
@@ -1074,10 +1075,9 @@ async function budgetPickerContext(txId) {
 }
 
 // Redibuja el mensaje con las lineas de presupuesto del movimiento, debajo de
-// `encabezado`. Si `conPregunta`, vuelve a poner arriba la pregunta de la
-// categoria (boton "Volver" del menu de correccion). Es lo que se ve despues de
-// contestar la pregunta: el siguiente paso natural es elegir la linea.
-async function mostrarLineas(callback, txId, encabezado, { conPregunta = false } = {}) {
+// `encabezado`, con el boton "✏️ Categoría". Es lo que se ve despues de
+// corregir la categoria: el siguiente paso natural es elegir la linea.
+async function mostrarLineas(callback, txId, encabezado) {
   const contexto = await budgetPickerContext(txId)
   if (!contexto) {
     await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
@@ -1096,7 +1096,7 @@ async function mostrarLineas(callback, txId, encabezado, { conPregunta = false }
     texto += '\n\n⚠️ No hay líneas de presupuesto de este tipo en la quincena.'
     buttons = [[{ text: '➕ Crear línea nueva', callback_data: `pd:${tx.id}:0` }]]
   }
-  if (conPregunta) buttons = [preguntaCategoriaFila(tx.id), ...buttons]
+  buttons = conBotonCategoria(buttons, tx)
 
   await telegram.editMessageText(callback.chatId, callback.messageId, texto, { buttons: buttons.length ? buttons : null })
 }
@@ -1120,9 +1120,7 @@ async function handleCategoriaCallback(callback, accion, txId, arg) {
   }
 
   if (accion === 'kb') {
-    const fb = await clasificador.pendiente(tx.id)
-    const encabezado = fb ? `${resumen}\n\n${preguntaCategoriaTexto(tx.categoria?.nombre)}` : resumen
-    await mostrarLineas(callback, tx.id, encabezado, { conPregunta: Boolean(fb) })
+    await mostrarLineas(callback, tx.id, resumen)
     return
   }
 
@@ -1173,6 +1171,11 @@ async function handleBudgetCallback(callback) {
   console.log(`TELEGRAM_CALLBACK: accion=${accion} tx=${txId} arg=${arg ?? '-'} chat=${callback.chatId}`)
 
   try {
+    if (entrenamiento.ACCIONES.has(accion)) {
+      await entrenamiento.handleCallback(callback)
+      return
+    }
+
     if (accion === 'ka' || accion === 'kn' || accion === 'kc' || accion === 'kb') {
       await handleCategoriaCallback(callback, accion, txId, arg)
       return
@@ -1234,7 +1237,7 @@ async function handleBudgetCallback(callback) {
         callback.chatId,
         callback.messageId,
         `${resumen}\n\n${budgetPrompt(candidatas, sugeridaId, sugeridaConfianza)}`,
-        { buttons: budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0, sugeridaId }) },
+        { buttons: conBotonCategoria(budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0, sugeridaId }), tx) },
       )
       return
     }
@@ -1494,6 +1497,7 @@ async function registrarGastoTelegram(message, user, senderName, expenseData) {
       buttons = [[{ text: '➕ Crear línea nueva', callback_data: `pd:${tx.id}:0` }]]
     }
   }
+  buttons = conBotonCategoria(buttons, tx)
 
   await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId, { buttons })
   console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=none; sugerida=${sugeridaId ?? '-'}`)
@@ -1575,6 +1579,14 @@ app.post('/telegram/webhook', async (req, res) => {
   const dejarDeEscribir = empezarEscribiendo(message.chatId)
   try {
     const inicio = Date.now()
+
+    // "vamos a entrenar": la sesion de entrenamiento del clasificador
+    // (src/entrenamiento.js). Va antes que todo: no es un gasto ni una pregunta.
+    if (entrenamiento.esPedidoDeEntrenar(message.text)) {
+      await entrenamiento.iniciar(message)
+      logTelegramQA({ chatId: message.chatId, ruta: 'entrenamiento', inicio, pregunta: message.text })
+      return
+    }
 
     const simpleReply = getSimpleConversationReply(message.text)
     if (simpleReply) {

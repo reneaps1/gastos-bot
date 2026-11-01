@@ -129,6 +129,7 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 |------------|--------|---------|
 | Clasificador ML (Naive Bayes) de categoria | cerrado (#126, #127); pregunta Si/No retirada el 2026-11-01 | `CLASIFICADOR_ML.md`, `src/clasificador/`, migracion `20261101120000_clasificacion_feedback` |
 | Fase B: que aprenda la linea de presupuesto (sugerida correcta 34 % -> 62 %) | cerrado (#128) | `CLASIFICADOR_ML.md` |
+| Sesion de entrenamiento por Telegram ("vamos a entrenar") + un solo boton para corregir categoria | en revision (#129) | `CLASIFICADOR_ML.md`, `src/entrenamiento.js` |
 | Fase C (opcional): embeddings para sinonimos | pendiente | |
 
 ### Fase 9 — Issues

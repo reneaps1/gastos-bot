@@ -229,6 +229,24 @@ async function main() {
   clasificador.aprenderLinea('kermes', 'Colegiatura')
   check('despues de dos toques -> Colegiatura', (await clasificador.sugerirLinea('kermes', CANDIDATAS))?.id === 34)
 
+  console.log('\n=== C1: confirmar (sesion de entrenamiento) ===')
+  const sinFila = await clasificador.confirmar({ transaccionId: 7000, texto: 'kermes', categoriaPropuestaId: PERSONAL, categoriaFinalId: FAMILIA, fuente: 'reglas' })
+  const f7000 = () => feedbacks.find(f => f.transaccionId === 7000)
+  check('sin propuesta previa crea la fila ya resuelta', sinFila?.estado === 'corregida' && f7000()?.categoriaFinalId === FAMILIA && f7000()?.resueltaEn instanceof Date, JSON.stringify(f7000()))
+  await clasificador.confirmar({ transaccionId: 7000, texto: 'kermes', categoriaPropuestaId: FAMILIA, categoriaFinalId: FAMILIA, fuente: 'modelo' })
+  check('una respuesta nueva reemplaza a la anterior (sin duplicar)', feedbacks.filter(f => f.transaccionId === 7000).length === 1 && f7000().estado === 'aceptada', JSON.stringify(f7000()))
+  const op = await clasificador.opinar('kermes')
+  check('opinar: ya opina Familia de "kermes" (aprendio al confirmar)', op?.categoriaId === FAMILIA, JSON.stringify(op))
+  check('opinar: texto desconocido -> null', (await clasificador.opinar('xqzw')) === null)
+  const mk = await clasificador.marcador()
+  const resueltas = feedbacks.filter(f => f.estado === 'aceptada' || f.estado === 'corregida')
+  check('marcador cuenta respuestas y aciertos', mk?.respuestas === resueltas.length && mk?.aceptadas === resueltas.filter(f => f.estado === 'aceptada').length, JSON.stringify(mk))
+
+  console.log('\n=== C2: que frases abren el entrenamiento ===')
+  const { esPedidoDeEntrenar } = require(path.join(SRC, 'entrenamiento.js'))
+  for (const t of ['vamos a entrenar', 'Vamos a entrenar!', 'entrenar', '/entrenar', 'entrenemos', 'quiero entrenar', 'entrenamiento']) check(`"${t}" -> si`, esPedidoDeEntrenar(t))
+  for (const t of ['entrenador 200', '200 entrenador', 'entrenamiento de futbol 300', 'clase de entrenamiento 200', 'hola']) check(`"${t}" -> no`, !esPedidoDeEntrenar(t))
+
   console.log('\n=== S6: nunca truena hacia el llamador ===')
   falla = true
   clasificador._reiniciar()
