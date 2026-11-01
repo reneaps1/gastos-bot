@@ -1,7 +1,10 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai')
 
+const { GEMINI_MODEL } = require('./gemini')
+
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY
-const GEMINI_MODEL_MEDIA = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+// El mismo modelo que el resto del bot: el default vive solo en gemini.js.
+const GEMINI_MODEL_MEDIA = GEMINI_MODEL
 
 function getModel() {
   if (!GEMINI_API_KEY) return null

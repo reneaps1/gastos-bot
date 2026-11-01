@@ -1,13 +1,13 @@
 const deepseek = require('./deepseek')
 const gemini = require('./gemini')
 
-async function getSystemContext(prisma) {
-  // El constructor de contexto actual vive en gemini.js, pero es agnóstico al
-  // proveedor: solo consulta PostgreSQL y arma un snapshot financiero.
-  return gemini.getSystemContext(prisma)
-}
-
-async function classify(text, context) {
+// Router de proveedores para la UNICA decision que la IA toma fuera del
+// agente: si un mensaje ambiguo de Telegram ("super 200 ayer") es un gasto,
+// una pregunta o una reasignacion. Las respuestas a preguntas ya no pasan por
+// aqui: las da src/financeAgent.js con herramientas. El viejo `answer` (que
+// pegaba 50 movimientos al prompt y dejaba que el modelo sumara) y `chat` se
+// quitaron con el ruteo nuevo.
+async function classify(text, context = null) {
   if (deepseek.isEnabled()) {
     const data = await deepseek.classify(text, context)
     if (data) return { ...data, _provider: 'deepseek' }
@@ -16,34 +16,6 @@ async function classify(text, context) {
   if (gemini.isEnabled()) {
     const data = await gemini.classify(text, context)
     if (data) return { ...data, _provider: 'gemini' }
-  }
-
-  return null
-}
-
-async function answer(text, transactions, senderName, context) {
-  if (deepseek.isEnabled()) {
-    const reply = await deepseek.answer(text, transactions, senderName, context)
-    if (reply) return { reply, provider: 'deepseek' }
-  }
-
-  if (gemini.isEnabled()) {
-    const reply = await gemini.answer(text, transactions, senderName, context)
-    if (reply) return { reply, provider: 'gemini' }
-  }
-
-  return null
-}
-
-async function chat(text, senderName, context) {
-  if (deepseek.isEnabled()) {
-    const reply = await deepseek.chat(text, senderName, context)
-    if (reply) return { reply, provider: 'deepseek' }
-  }
-
-  if (gemini.isEnabled()) {
-    const reply = await gemini.chat(text, senderName, context)
-    if (reply) return { reply, provider: 'gemini' }
   }
 
   return null
@@ -61,4 +33,4 @@ function isEnabled() {
   return deepseek.isEnabled() || gemini.isEnabled()
 }
 
-module.exports = { getSystemContext, classify, answer, chat, status, isEnabled }
+module.exports = { classify, status, isEnabled }

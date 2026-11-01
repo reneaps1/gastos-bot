@@ -155,53 +155,7 @@ Para chat: {"type":"chat"}`
   }
 }
 
-async function answer(text, transactions, senderName, context) {
-  const rows = (transactions || []).slice(0, 50).map(t =>
-    `${t.fecha}|${t.tipo}|$${t.monto}|${t.descripcion}|${t.categoria}|${t.formaPago}|${t.quincena || ''}`
-  ).join('\n')
+// answer() y chat() se quitaron: las preguntas de Telegram las contesta
+// src/financeAgent.js con herramientas, no un prompt con movimientos pegados.
 
-  const prompt = `Eres Milo, el asistente financiero familiar de ${senderName}. Responde en español mexicano, breve y útil.
-Usa solamente los datos proporcionados. Nunca inventes montos.
-Si preguntan por gastos "pendientes por registrar", explica que no puedes conocer gastos que nunca se han registrado y pregunta si se refiere a gastos registrados sin línea de presupuesto.
-
-CONTEXTO:\n${systemSummary(context) || 'sin contexto'}
-
-MOVIMIENTOS:\n${rows || 'sin movimientos'}
-
-Pregunta: ${JSON.stringify(text)}
-
-Máximo 6 líneas.`
-
-  const reply = await complete(
-    [
-      { role: 'system', content: 'Eres Milo. Los números financieros deben salir únicamente del contexto recibido.' },
-      { role: 'user', content: prompt },
-    ],
-    { maxTokens: 500 },
-  )
-
-  if (reply) console.log('DEEPSEEK_ANSWER_REPLY:', reply.substring(0, 120))
-  return reply
-}
-
-async function chat(text, senderName, context) {
-  const prompt = `Eres Milo, un asistente familiar de finanzas amigable y práctico. El usuario es ${senderName}.
-Responde en español mexicano, natural y breve. No digas que registraste algo si no se ejecutó una operación real.
-
-Contexto:\n${systemSummary(context) || 'sin contexto'}
-
-Mensaje: ${JSON.stringify(text)}`
-
-  const reply = await complete(
-    [
-      { role: 'system', content: 'Eres Milo, un asistente financiero conciso y natural.' },
-      { role: 'user', content: prompt },
-    ],
-    { maxTokens: 250 },
-  )
-
-  if (reply) console.log('DEEPSEEK_CHAT_REPLY:', reply.substring(0, 120))
-  return reply
-}
-
-module.exports = { isEnabled, complete, classify, answer, chat }
+module.exports = { isEnabled, complete, classify }
