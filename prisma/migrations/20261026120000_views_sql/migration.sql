@@ -102,37 +102,13 @@ JOIN quincenas q ON q.id = cp.quincena_id
 JOIN categorias c ON c.id = cp.categoria_id
 ORDER BY cp.fecha_pago_programada, cr.nombre;
 
-CREATE OR REPLACE VIEW v_corte_liquidez AS
-SELECT
-    q.codigo                                                            AS quincena,
-    q.fecha_fin                                                         AS fecha_corte_quincena,
-    ls.fecha_corte,
-    ls.bbva, ls.banamex, ls.uala, ls.uala_inversion,
-    ls.efectivo, ls.vales_despensa, ls.vales_gasolina,
-    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
-     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)             AS total_caja,
-    ls.falta_pagar,
-    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
-     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)
-      - ls.falta_pagar                                                  AS margen_real,
-    ls.teorico,
-    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
-     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)
-      - ls.teorico                                                       AS arqueo,
-    ls.validado, ls.notas
-FROM liquidez_snapshots ls
-JOIN quincenas q ON q.id = ls.quincena_id
-ORDER BY q.fecha_inicio;
-
-CREATE OR REPLACE VIEW v_liquidez AS
-SELECT
-    ls.*,
-    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
-     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)           AS total,
-    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
-     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)
-      - ls.falta_pagar                                                 AS margen,
-    (ls.bbva + ls.banamex + ls.uala + ls.uala_inversion
-     + ls.efectivo + ls.vales_despensa + ls.vales_gasolina)
-      - ls.teorico                                                      AS arqueo
-FROM liquidez_snapshots ls;
+-- v_corte_liquidez y v_liquidez se quitaron de esta migracion (2026-11-01).
+--
+-- Las dos sumaban ls.bbva, ls.banamex, ls.uala... columnas que la migracion
+-- 20260906180000_liquidez_cuentas_configurables ya habia movido a
+-- liquidez_snapshot_cuentas. Por eso esta migracion fallo en produccion el
+-- 2026-10-26 (42703, "column ls.bbva does not exist") y Prisma dejo de aplicar
+-- TODAS las migraciones posteriores (P3009). Ningun codigo las usa; si hacen
+-- falta, se reescriben sobre liquidez_snapshot_cuentas en una migracion nueva.
+-- src/index.js marca esta migracion como rolled-back al arrancar para que se
+-- vuelva a aplicar ya corregida (las 5 vistas de arriba son CREATE OR REPLACE).
