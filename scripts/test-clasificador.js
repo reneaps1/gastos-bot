@@ -21,6 +21,7 @@ function check(label, cond, extra) {
 // --- Doble de Prisma para el servicio ---
 
 let txs = []
+let conLinea = []
 let feedbacks = []
 let categorias = []
 let falla = false
@@ -36,7 +37,12 @@ function registrar(tabla, metodo) {
 
 const fakePrisma = {
   transaccion: {
-    findMany: async ({ where }) => { registrar('transaccion', 'findMany'); return txs.filter(t => cumple(t, where)) },
+    // La unica firma que usa el servicio: los gastos con linea (modelo de
+    // lineas). Si algun dia vuelve a leer otra cosa, el registro lo delata.
+    findMany: async ({ where }) => {
+      registrar('transaccion', where?.presupuestoId?.not === null ? 'findMany:lineas' : 'findMany:categoria')
+      return where?.presupuestoId?.not === null ? conLinea : txs
+    },
   },
   categoria: {
     findMany: async ({ where }) => { registrar('categoria', 'findMany'); return categorias.filter(c => cumple(c, where)) },
@@ -133,62 +139,95 @@ async function main() {
     { id: PERSONAL, nombre: 'Personal', tipo: 'Gasto', activo: true },
     { id: INGRESOS, nombre: 'Ingresos', tipo: 'Ingreso', activo: true },
   ]
-  let id = 1
-  const nuevaTx = (descripcion, categoriaId, tipo = 'Gasto') => { const t = { id: id++, descripcion, categoriaId, tipo }; txs.push(t); return t }
+  // El modelo de categoria aprende SOLO de respuestas confirmadas.
+  let fid = 1
+  const respuesta = (texto, categoriaFinalId, estado = 'aceptada') => {
+    const f = { id: fid, transaccionId: fid++, texto, categoriaPropuestaId: categoriaFinalId, categoriaFinalId, estado, fuente: 'reglas' }
+    feedbacks.push(f)
+    return f
+  }
+  const lecturas = () => llamadas.filter(l => l === 'feedback.findMany').length
 
-  console.log('\n=== S1: con pocos datos no opina ===')
-  for (const t of ['super', 'uber', 'gym']) nuevaTx(t, t === 'super' ? FAMILIA : t === 'uber' ? TRANSPORTE : PERSONAL)
+  console.log('\n=== S1: con pocas respuestas no opina ===')
+  for (const t of ['super', 'uber', 'gym']) respuesta(t, t === 'super' ? FAMILIA : t === 'uber' ? TRANSPORTE : PERSONAL)
   clasificador._reiniciar()
   check('menos de MIN_EJEMPLOS -> null', (await clasificador.proponer('super')) === null)
 
-  console.log('\n=== S2: con datos, propone con su confianza ===')
-  txs = []
-  for (const [cat, textos] of Object.entries(DATOS)) for (const t of textos) nuevaTx(t, Number(cat))
-  nuevaTx('sueldo', INGRESOS, 'Ingreso')
+  console.log('\n=== S2: con respuestas, propone con su confianza ===')
+  feedbacks = []
+  for (const [cat, textos] of Object.entries(DATOS)) for (const t of textos) respuesta(t, Number(cat))
   clasificador._reiniciar()
   const p = await clasificador.proponer('super soriana')
   check('propone Familia', p?.categoriaId === FAMILIA && p?.nombre === 'Familia', JSON.stringify(p))
   check('con confianza sobre el umbral', p?.confianza >= clasificador.MIN_PROBABILIDAD, p?.confianza)
-  check('los ingresos no entran al modelo', logs.at(-1)?.includes('ejemplos=24'), logs.at(-1))
   check('texto desconocido -> null', (await clasificador.proponer('xqzw')) === null)
-  check('no reentrena en cada llamada', llamadas.filter(l => l === 'transaccion.findMany').length === 2, llamadas.filter(l => l === 'transaccion.findMany').length)
+  check('no reentrena en cada llamada', lecturas() === 2, lecturas())
 
-  console.log('\n=== S3: NO se entrena con sus propias adivinanzas sin confirmar ===')
-  const adivinada = nuevaTx('convivio', PERSONAL)
-  feedbacks.push({ id: 900, transaccionId: adivinada.id, texto: 'convivio', categoriaPropuestaId: PERSONAL, estado: 'pendiente', fuente: 'reglas' })
-  const cambiadaEnDashboard = nuevaTx('kermes', FAMILIA)
-  feedbacks.push({ id: 901, transaccionId: cambiadaEnDashboard.id, texto: 'kermes', categoriaPropuestaId: PERSONAL, estado: 'pendiente', fuente: 'reglas' })
-  const corregida = nuevaTx('uber eats', FAMILIA)
-  feedbacks.push({ id: 902, transaccionId: corregida.id, texto: 'uber eats', categoriaPropuestaId: TRANSPORTE, estado: 'corregida', fuente: 'modelo' })
+  console.log('\n=== S3: solo cuentan las respuestas, no el historial ===')
+  txs = [{ descripcion: 'historial ruidoso', categoriaId: PERSONAL, tipo: 'Gasto' }]
+  respuesta('convivio', PERSONAL, 'pendiente')   // sin contestar: no cuenta
+  respuesta('uber eats', FAMILIA, 'corregida')   // correccion: pesa 2
+  respuesta('sueldo', INGRESOS)                  // no es de gasto: no cuenta
   await clasificador.entrenar()
-  // 24 de antes + 0 (pendiente sin tocar) + 1 (cambiada en el dashboard) + 2 (corregida pesa 2)
-  check('pendiente sin confirmar: fuera; cambiada a mano: dentro; corregida: x2', logs.at(-1)?.includes('ejemplos=27'), logs.at(-1))
+  check('24 aceptadas + 0 pendiente + 2 (corregida) + 0 (ingreso) = 26', logs.at(-1)?.includes('categoria=26 respuestas'), logs.at(-1))
+  check('ni consulta las categorias de las transacciones', !llamadas.includes('transaccion.findMany:categoria'))
 
   console.log('\n=== S4: registrar y resolver ===')
-  feedbacks = []
-  const txA = nuevaTx('croquetas firulais', FAMILIA)
-  const fb = await clasificador.registrarPropuesta({ transaccionId: txA.id, texto: 'croquetas firulais', categoriaPropuestaId: FAMILIA, fuente: 'modelo', confianza: 0.87654 })
+  feedbacks = feedbacks.filter(f => f.estado !== 'pendiente')
+  const fb = await clasificador.registrarPropuesta({ transaccionId: 5000, texto: 'croquetas firulais', categoriaPropuestaId: FAMILIA, fuente: 'modelo', confianza: 0.87654 })
+  const fila = () => feedbacks.find(f => f.transaccionId === 5000)
   check('guarda la propuesta pendiente', fb?.estado === 'pendiente' && fb?.fuente === 'modelo', JSON.stringify(fb))
   check('redondea la confianza a 4 decimales', fb?.confianza === 0.8765, fb?.confianza)
-  check('pendiente() la encuentra', (await clasificador.pendiente(txA.id))?.id === fb.id)
-  const r1 = await clasificador.resolver({ transaccionId: txA.id, categoriaFinalId: FAMILIA })
-  check('misma categoria -> aceptada', r1?.estado === 'aceptada' && feedbacks[0].categoriaFinalId === FAMILIA && feedbacks[0].resueltaEn instanceof Date, JSON.stringify(r1))
-  check('pendiente() ya no la encuentra', (await clasificador.pendiente(txA.id)) === null)
-  check('resolver dos veces no hace nada', (await clasificador.resolver({ transaccionId: txA.id, categoriaFinalId: PERSONAL })) === null && feedbacks[0].estado === 'aceptada')
+  check('pendiente() la encuentra', (await clasificador.pendiente(5000))?.id === fb.id)
+  const r1 = await clasificador.resolver({ transaccionId: 5000, categoriaFinalId: FAMILIA })
+  check('misma categoria -> aceptada', r1?.estado === 'aceptada' && fila().categoriaFinalId === FAMILIA && fila().resueltaEn instanceof Date, JSON.stringify(r1))
+  check('pendiente() ya no la encuentra', (await clasificador.pendiente(5000)) === null)
+  check('resolver dos veces no hace nada', (await clasificador.resolver({ transaccionId: 5000, categoriaFinalId: PERSONAL })) === null && fila().estado === 'aceptada')
   check('sin propuesta, resolver no hace nada', (await clasificador.resolver({ transaccionId: 99999, categoriaFinalId: FAMILIA })) === null)
 
   console.log('\n=== S5: una correccion se aprende EN EL MOMENTO ===')
   await clasificador.entrenar()
   const antes = await clasificador.proponer('uber eats')
-  const txB = nuevaTx('didi food', TRANSPORTE)
-  await clasificador.registrarPropuesta({ transaccionId: txB.id, texto: 'didi food', categoriaPropuestaId: TRANSPORTE, fuente: 'modelo', confianza: 0.7 })
-  const lecturasAntes = llamadas.filter(l => l === 'transaccion.findMany').length
-  const r2 = await clasificador.resolver({ transaccionId: txB.id, categoriaFinalId: FAMILIA })
+  await clasificador.registrarPropuesta({ transaccionId: 5001, texto: 'didi food', categoriaPropuestaId: TRANSPORTE, fuente: 'modelo', confianza: 0.7 })
+  const lecturasAntes = lecturas()
+  const r2 = await clasificador.resolver({ transaccionId: 5001, categoriaFinalId: FAMILIA })
   check('distinta categoria -> corregida', r2?.estado === 'corregida', JSON.stringify(r2))
+  await clasificador.resolver({ transaccionId: 5001, categoriaFinalId: FAMILIA })
   const despues = await clasificador.proponer('didi food')
-  check('sin reentrenar desde la base', llamadas.filter(l => l === 'transaccion.findMany').length === lecturasAntes)
+  check('sin reentrenar desde la base', lecturas() === lecturasAntes)
   check('"didi food" ya sale Familia', despues?.categoriaId === FAMILIA, JSON.stringify(despues))
-  check('(y "uber eats" seguia siendo Familia por la correccion de S3)', antes?.categoriaId === FAMILIA, JSON.stringify(antes))
+  check('(y "uber eats" ya era Familia por la correccion de S3)', antes?.categoriaId === FAMILIA, JSON.stringify(antes))
+
+  console.log('\n=== L1: linea -- con pocos ejemplos no opina ===')
+  const CANDIDATAS = [
+    { id: 31, descripcion: 'Super' },
+    { id: 32, descripcion: 'Diversión' },
+    { id: 33, descripcion: 'Gasolina Spark' },
+    { id: 34, descripcion: 'Colegiatura' },
+  ]
+  conLinea = [{ descripcion: 'croquetas', presupuesto: { descripcion: 'Super' } }]
+  clasificador._reiniciar()
+  check('null', (await clasificador.sugerirLinea('croquetas', CANDIDATAS)) === null)
+
+  console.log('\n=== L2: linea -- aprende el NOMBRE de la linea, no el id ===')
+  conLinea = []
+  const hist = { Super: ['croquetas', 'tortillas', 'mercado', '3b', 'pañales', 'coca'], Diversion: ['tacos', 'helado', 'pizza', 'cine', 'tortas'], 'Gasolina Spark': ['gasolina spark', 'gasolina', 'gas spark'] }
+  for (let i = 0; i < 2; i++) for (const [linea, textos] of Object.entries(hist)) for (const t of textos) conLinea.push({ descripcion: t, presupuesto: { descripcion: linea } })
+  clasificador._reiniciar()
+  const s1 = await clasificador.sugerirLinea('croquetas gatos', CANDIDATAS)
+  check('"croquetas gatos" -> la linea Super de ESTA quincena (id 31)', s1?.id === 31, JSON.stringify(s1))
+  check('trae su confianza', s1?.confianza >= clasificador.MIN_PROBABILIDAD_LINEA && s1?.confianza <= 1, s1?.confianza)
+  const s2 = await clasificador.sugerirLinea('helado', CANDIDATAS)
+  check('"Diversion" aprendida empata con "Diversión" (sin acento) de esta quincena', s2?.id === 32, JSON.stringify(s2))
+  check('solo elige entre las candidatas', (await clasificador.sugerirLinea('croquetas', CANDIDATAS.filter(c => c.id !== 31)))?.id !== 31)
+  check('texto desconocido -> null', (await clasificador.sugerirLinea('xqzw', CANDIDATAS)) === null)
+  check('sin candidatas -> null', (await clasificador.sugerirLinea('croquetas', [])) === null)
+
+  console.log('\n=== L3: linea -- un toque se aprende en el momento ===')
+  check('antes: "kermes" no se conoce', (await clasificador.sugerirLinea('kermes', CANDIDATAS)) === null)
+  clasificador.aprenderLinea('kermes', 'Colegiatura')
+  clasificador.aprenderLinea('kermes', 'Colegiatura')
+  check('despues de dos toques -> Colegiatura', (await clasificador.sugerirLinea('kermes', CANDIDATAS))?.id === 34)
 
   console.log('\n=== S6: nunca truena hacia el llamador ===')
   falla = true
