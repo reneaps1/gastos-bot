@@ -499,7 +499,7 @@ function LiquidezConfigContent() {
                     Resolver déficit
                   </button>
                 )}
-                <Link href="/" className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+                <Link href={`/configuracion/liquidez/reconciliar?quincenaId=${quincenaId}`} className="flex items-center gap-1 text-[11px] text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
                   reconciliar con el plan <ArrowRight size={10} />
                 </Link>
               </div>

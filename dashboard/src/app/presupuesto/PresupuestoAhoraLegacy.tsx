@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, TrendingDown, Scale, ArrowRight, ArrowRightLeft, Coins } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, ArrowRight, ArrowRightLeft } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
@@ -17,7 +17,10 @@ import { FilterChip } from '@/components/ui/FilterChip'
 import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
 import { useColumnVisibility } from '@/lib/use-column-visibility'
 import { useSearchShortcut } from '@/lib/use-search-shortcut'
-import { calcularFaltaPorPagar, calcularLibreSinAsignar } from '@/lib/presupuesto-totales'
+import { calcularFaltaPorPagar, calcularCuadre, calcularLibreDeQuincena } from '@/lib/presupuesto-totales'
+import { pctColor, pctTextColor } from '@/lib/presupuesto-colores'
+import { ResumenKpis } from '@/components/resumen/ResumenKpis'
+import { CuadraTuDinero } from '@/components/resumen/CuadraTuDinero'
 import { quincenasPendientesDeCierre, cuentaParaAgregados } from '@/lib/cierre-quincena'
 import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
 import { sumLiquidez, normalizeMontos, type LiquidezMontos } from '@/lib/liquidez'
@@ -187,12 +190,6 @@ function getSortValue(p: Presupuesto, key: SortKey): string | number {
   }
 }
 
-function pctColor(pct: number) {
-  return pct > 90 ? 'bg-rose-500' : pct > 70 ? 'bg-amber-500' : 'bg-emerald-500'
-}
-function pctTextColor(pct: number) {
-  return pct > 90 ? 'text-rose-600 dark:text-rose-400' : pct > 70 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'
-}
 function montoTipoColor(tipo: string) {
   if (tipo === 'Ingreso') return 'text-emerald-600 dark:text-emerald-400'
   if (tipo === 'Ahorro') return 'text-blue-600 dark:text-blue-400'
@@ -2075,7 +2072,6 @@ function PresupuestoTabla({
   const totalIngresoRealFijo = ingresoFilasFijo.reduce((s, p) => s + p.real, 0)
   const gastoFilasFijo = presupuestosTabla.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
   const totalPresupuestadoFijo = gastoFilasFijo.reduce((s, p) => s + p.montoEfectivo, 0)
-  const totalRealFijo = gastoFilasFijo.reduce((s, p) => s + p.real, 0)
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
 
   const multiSelectTablaActivo = selectedTablaQuincenaIds.length > 1
@@ -2084,16 +2080,28 @@ function PresupuestoTabla({
   // tiempo), no un flujo -- sumar el snapshot de varias quincenas no
   // significaria nada (no es "cuanto dinero tuviste en total"). Se queda
   // atada solo a tablaQuincenaId (la primaria), igual que en Tarjetas.
-  const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number; fechaCorte: string | null }) | null>(null)
+  //
+  // El estado guarda para que quincena se cargo (igual que useResumenQuincena):
+  // al cambiar de quincena el corte anterior deja de contar de inmediato, y una
+  // respuesta lenta de la quincena vieja se descarta. Sin eso el cuadre podia
+  // mezclar el corte de una quincena con las lineas de otra.
+  const [liquidezCargada, setLiquidezCargada] = useState<{ id: string; snap: (LiquidezMontos & { faltaPagar: number; fechaCorte: string | null }) | null } | null>(null)
   useEffect(() => {
-    if (tablaQuincenaId === ALL_QUINCENAS) { setLiquidezSnapshot(null); return }
+    if (tablaQuincenaId === ALL_QUINCENAS) return
+    let cancelado = false
     fetch(`/api/liquidez?quincenaId=${tablaQuincenaId}`)
       .then(r => r.json())
       .then(data => {
+        if (cancelado) return
         const raw = Array.isArray(data) && data.length > 0 ? data[0] : null
-        setLiquidezSnapshot(raw ? { ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0, fechaCorte: raw.fechaCorte ?? null } : null)
+        setLiquidezCargada({ id: tablaQuincenaId, snap: raw ? { ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0, fechaCorte: raw.fechaCorte ?? null } : null })
       })
+      .catch(() => {
+        if (!cancelado) setLiquidezCargada({ id: tablaQuincenaId, snap: null })
+      })
+    return () => { cancelado = true }
   }, [tablaQuincenaId])
+  const liquidezSnapshot = tablaQuincenaId !== ALL_QUINCENAS && liquidezCargada?.id === tablaQuincenaId ? liquidezCargada.snap : null
   const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
 
   // Ingreso real total (asignado o no) y gasto sin presupuestar, agregados no
@@ -2101,37 +2109,43 @@ function PresupuestoTabla({
   // "Disponible real"/"según presupuesto", ver calcularLibreSinAsignar. A
   // diferencia de Liquidez, esto SI es un flujo y se puede sumar entre las
   // quincenas combinadas.
-  const [totalesTx, setTotalesTx] = useState<{ ingreso: number; gasto: number } | null>(null)
+  // Mismo resguardo que Liquidez: el estado lleva la seleccion para la que se
+  // cargo, y solo cuenta si coincide con la actual.
+  const totalesTxClave = tablaQuincenaId === ALL_QUINCENAS ? '' : selectedTablaQuincenaIds.join(',')
+  const [totalesTxCargados, setTotalesTxCargados] = useState<{ clave: string; totales: { ingreso: number; gasto: number } } | null>(null)
   useEffect(() => {
-    if (tablaQuincenaId === ALL_QUINCENAS) { setTotalesTx(null); return }
-    Promise.all(selectedTablaQuincenaIds.map(id => fetch(`/api/transacciones?quincenaId=${id}&limit=1`).then(r => r.json())))
-      .then(datas => setTotalesTx(datas.reduce((acc, data) => ({
-        ingreso: acc.ingreso + Number(data?.totales?.Ingreso ?? 0),
-        gasto: acc.gasto + Number(data?.totales?.Gasto ?? 0),
-      }), { ingreso: 0, gasto: 0 })))
-  }, [tablaQuincenaId, selectedTablaQuincenaIds])
-  // gastoTotal (todo el Gasto real, asignado o no) menos totalRealFijo (el ya
-  // contabilizado en lineas de Gasto) = lo que quedo sin presupuestoId -- evita
-  // un segundo fetch con asignado=no.
+    if (!totalesTxClave) return
+    let cancelado = false
+    Promise.all(totalesTxClave.split(',').map(id => fetch(`/api/transacciones?quincenaId=${id}&limit=1`).then(r => r.json())))
+      .then(datas => {
+        if (cancelado) return
+        setTotalesTxCargados({
+          clave: totalesTxClave,
+          totales: datas.reduce((acc, data) => ({
+            ingreso: acc.ingreso + Number(data?.totales?.Ingreso ?? 0),
+            gasto: acc.gasto + Number(data?.totales?.Gasto ?? 0),
+          }), { ingreso: 0, gasto: 0 }),
+        })
+      })
+      .catch(() => {})
+    return () => { cancelado = true }
+  }, [totalesTxClave])
+  const totalesTx = totalesTxClave && totalesTxCargados?.clave === totalesTxClave ? totalesTxCargados.totales : null
+  // Mismo "Libre / sin asignar" que el Inicio: el gasto sin linea sale de
+  // restar al gasto total lo ya contado en lineas de Gasto, sin un segundo
+  // fetch con asignado=no.
   const libreSinAsignar = totalesTx != null
-    ? calcularLibreSinAsignar(totalesTx.ingreso, presupuestosTabla, Math.max(totalesTx.gasto - totalRealFijo, 0))
+    ? calcularLibreDeQuincena({ ingresosTotales: totalesTx.ingreso, gastoTotal: totalesTx.gasto, presupuestos: presupuestosTabla })
     : null
 
-  // Conciliacion "¿cuadra tu dinero?": lo que deberia sobrarte segun el
-  // presupuesto (libreSinAsignar) contra lo que de verdad te sobra segun el
-  // corte de cuentas (liquidez - falta por cubrir). Ambos descuentan lo
-  // comprometido, asi que la diferencia es solo dinero que el sistema no
-  // conoce: saldo arrastrado de quincenas anteriores, movimientos sin
-  // registrar o un corte desactualizado. Solo con una quincena: Liquidez es
-  // una foto de la primaria y no se puede comparar con un flujo combinado.
-  const conciliacion = !multiSelectTablaActivo && liquidezSnapshot && libreSinAsignar != null && totalesTx != null
-    ? {
-        ingresos: totalesTx.ingreso,
-        comprometido: totalesTx.ingreso - libreSinAsignar,
-        teorico: libreSinAsignar,
-        real: totalLiquidez - totalFaltaPorPagar,
-        delta: (totalLiquidez - totalFaltaPorPagar) - libreSinAsignar,
-      }
+  // Conciliacion "¿cuadra tu dinero?" (ver calcularCuadre): la misma funcion
+  // que usa el Inicio, asi que las dos pantallas no pueden contradecirse. El
+  // "por pagar" sale de todas las lineas de la quincena, no de las filas que
+  // dejan ver los filtros: el veredicto no se mueve al filtrar la tabla (la
+  // tarjeta Gastos si sigue a los filtros). Solo con una quincena: Liquidez
+  // es una foto de la primaria y no se puede comparar con un flujo combinado.
+  const conciliacion = !multiSelectTablaActivo && liquidezSnapshot && totalesTx != null
+    ? calcularCuadre({ ingresosTotales: totalesTx.ingreso, gastoTotal: totalesTx.gasto, presupuestos: presupuestosTabla, liquidezTotal: totalLiquidez })
     : null
   const mostrarLibreCard = tablaQuincenaId !== ALL_QUINCENAS && libreSinAsignar != null && !conciliacion
 
@@ -2232,160 +2246,20 @@ function PresupuestoTabla({
         </p>
       </div>
 
-      {/* Cada tarjeta responde una pregunta: cuanto entro, cuanto llevo pagado,
-          si el plan alcanza y cuanto hay en cuentas. "Libre / sin asignar" solo
-          aparece cuando no hay panel "¿Cuadra tu dinero?" (sin corte o con
-          quincenas combinadas): si no, repetiria su lado "Según tu presupuesto". */}
-      <div className={`grid grid-cols-2 gap-3 ${{ 3: 'md:grid-cols-3', 4: 'md:grid-cols-4', 5: 'md:grid-cols-5' }[3 + (tablaQuincenaId !== ALL_QUINCENAS ? 1 : 0) + (mostrarLibreCard ? 1 : 0)]}`}>
-        <KpiCard
-          label="Ingresos" value={formatMXN(totalIngresoRealFijo)}
-          subtitle={`de ${formatMXN(totalIngresoPresupuestadoFijo)} presupuestado`}
-          icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
-          color="text-emerald-600 dark:text-emerald-400" bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
-          action={(() => {
-            const pct = totalIngresoPresupuestadoFijo > 0 ? (totalIngresoRealFijo / totalIngresoPresupuestadoFijo) * 100 : 0
-            const cumplido = pct >= 100
-            return (
-              <div className="mt-1.5 flex items-center gap-1.5">
-                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
-                  <div className={`h-1.5 rounded-full transition-all ${cumplido ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                </div>
-                <span className={`text-[10px] font-semibold tabular-nums ${cumplido ? 'text-emerald-600 dark:text-emerald-400' : 'text-indigo-600 dark:text-indigo-400'}`}>{pct.toFixed(0)}%</span>
-              </div>
-            )
-          })()}
-        />
-        <KpiCard
-          label="Gastos" value={formatMXN(totalReal)}
-          subtitle={`pagado de ${formatMXN(totalPresupuestado)} · faltan ${formatMXN(totalFaltaPorPagar)} por pagar`}
-          icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
-          color="text-rose-600 dark:text-rose-400" bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
-          action={(() => {
-            const pct = totalPresupuestado > 0 ? (totalReal / totalPresupuestado) * 100 : 0
-            return (
-              <div className="mt-1.5 flex items-center gap-1.5">
-                <div className="flex-1 bg-slate-100 dark:bg-slate-700 rounded-full h-1.5">
-                  <div className={`h-1.5 rounded-full transition-all ${pctColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} />
-                </div>
-                <span className={`text-[10px] font-semibold tabular-nums ${pctTextColor(pct)}`}>{pct.toFixed(0)}%</span>
-              </div>
-            )
-          })()}
-        />
-        {/* Antes: "Ingresos - gastos" real. A media quincena casi siempre sale
-            positivo (aun no pagas casi nada) y se leia como "me sobra" junto a
-            tarjetas que decian "te faltan". Lo que si dice algo es el plan:
-            si el presupuesto ya nace en negativo, todo lo demas sale en falta. */}
-        <KpiCard
-          label="Tu plan" value={formatMXN(Math.abs(balancePresupuestado))}
-          subtitle={balancePresupuestado < 0
-            ? 'falta · presupuestaste gastar más de lo que planeas ganar'
-            : 'sobra · tu presupuesto deja margen'}
-          subtitleColor={balancePresupuestado < 0 ? 'text-rose-500 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}
-          icon={<Scale size={20} className={balancePresupuestado >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'} />}
-          color={balancePresupuestado >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
-          bg={balancePresupuestado >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
-        />
-        {tablaQuincenaId !== ALL_QUINCENAS && (
-          liquidezSnapshot ? (
-            <KpiCard
-              label={multiSelectTablaActivo ? 'En cuentas (Q primaria)' : 'En cuentas'} value={formatMXN(totalLiquidez)}
-              subtitle={liquidezSnapshot.fechaCorte ? `corte del ${formatDate(liquidezSnapshot.fechaCorte)}` : 'según tu último corte'}
-              icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
-              color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
-            />
-          ) : (
-            <Link href={`/configuracion/liquidez?quincenaId=${tablaQuincenaId}`}>
-              <KpiCard
-                label="En cuentas" value="—" subtitle="Sin corte capturado: captúralo"
-                icon={<Droplets size={20} className="text-blue-600 dark:text-blue-300" />}
-                color="text-blue-600 dark:text-blue-400" bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
-              />
-            </Link>
-          )
-        )}
-        {mostrarLibreCard && libreSinAsignar != null && (
-          <KpiCard
-            label={multiSelectTablaActivo ? 'Libre / sin asignar (combinado)' : 'Libre / sin asignar'} value={formatMXN(Math.abs(libreSinAsignar))}
-            subtitle={libreSinAsignar < 0 ? 'te faltan · comprometiste más de lo que ingresó' : 'te sobran de tus ingresos reales'}
-            subtitleColor={libreSinAsignar < 0 ? 'text-rose-500 dark:text-rose-400' : undefined}
-            icon={<Coins size={20} className={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-rose-600 dark:text-rose-300'} />}
-            color={libreSinAsignar >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}
-            bg={libreSinAsignar >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
-          />
-        )}
-      </div>
+      <ResumenKpis
+        ingresoReal={totalIngresoRealFijo} ingresoPresupuestado={totalIngresoPresupuestadoFijo}
+        gastoReal={totalReal} gastoPresupuestado={totalPresupuestado} gastoFaltaPorPagar={totalFaltaPorPagar}
+        balancePresupuestado={balancePresupuestado}
+        mostrarEnCuentas={tablaQuincenaId !== ALL_QUINCENAS}
+        liquidez={liquidezSnapshot ? { total: totalLiquidez, fechaCorte: liquidezSnapshot.fechaCorte } : null}
+        enCuentasLabel={multiSelectTablaActivo ? 'En cuentas (Q primaria)' : 'En cuentas'}
+        capturarCorteHref={`/configuracion/liquidez?quincenaId=${tablaQuincenaId}`}
+        libre={mostrarLibreCard && libreSinAsignar != null
+          ? { valor: libreSinAsignar, label: multiSelectTablaActivo ? 'Libre / sin asignar (combinado)' : 'Libre / sin asignar' }
+          : null}
+      />
 
-      {conciliacion && (() => {
-        const { ingresos, comprometido, teorico, real, delta } = conciliacion
-        const cuadra = Math.abs(delta) < 1
-        const mejor = delta > 0
-        // Regla unica de saldo: el monto va sin signo y una palabra dice si
-        // sobra o falta. Con los dos lados en negativo, "+$50" o "debería
-        // faltarte" obligaban a comparar dos faltantes y adivinar el sentido.
-        const pill = (n: number) => (
-          <span className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium border ${n < 0
-            ? 'text-rose-700 bg-rose-50 border-rose-200 dark:text-rose-300 dark:bg-rose-950/30 dark:border-rose-800/40'
-            : 'text-emerald-700 bg-emerald-50 border-emerald-200 dark:text-emerald-300 dark:bg-emerald-950/30 dark:border-emerald-800/40'}`}>
-            {n < 0 ? 'Falta' : 'Sobra'}
-          </span>
-        )
-        const tone = (n: number) => n < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
-        return (
-          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
-            <div className="flex items-baseline justify-between gap-2 mb-2">
-              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">¿Cuadra tu dinero?</h3>
-              {liquidezSnapshot?.fechaCorte && (
-                <span className="text-[11px] text-slate-400 dark:text-slate-500">corte del {formatDate(liquidezSnapshot.fechaCorte)}</span>
-              )}
-            </div>
-            <p className="text-base md:text-lg text-slate-700 dark:text-slate-200 mb-3">
-              <span className={`font-bold tabular-nums ${tone(real)}`}>{real < 0 ? 'Te faltan' : 'Te sobran'} {formatMXN(Math.abs(real))}</span>{' '}
-              {real < 0 ? 'para cubrir lo que te queda por pagar esta quincena.' : 'después de pagar todo lo pendiente.'}
-            </p>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-900/40 p-3">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Según tus cuentas</p>
-                <p className="flex items-center gap-2 mt-0.5">
-                  {pill(real)}
-                  <span className={`text-xl font-bold tabular-nums ${tone(real)}`}>{formatMXN(Math.abs(real))}</span>
-                </p>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500 tabular-nums mt-0.5">{formatMXN(totalLiquidez)} en cuentas − {formatMXN(totalFaltaPorPagar)} por pagar</p>
-              </div>
-              <div className="rounded-xl bg-slate-50 dark:bg-slate-900/40 p-3">
-                <p className="text-xs text-slate-500 dark:text-slate-400">Según tu presupuesto</p>
-                <p className="flex items-center gap-2 mt-0.5">
-                  {pill(teorico)}
-                  <span className={`text-xl font-bold tabular-nums ${tone(teorico)}`}>{formatMXN(Math.abs(teorico))}</span>
-                </p>
-                <p className="text-[11px] text-slate-400 dark:text-slate-500 tabular-nums mt-0.5">{formatMXN(ingresos)} ingresos − {formatMXN(comprometido)} comprometido</p>
-              </div>
-              <div className={`rounded-xl p-3 ring-1 ${cuadra || mejor
-                ? 'bg-emerald-50 ring-emerald-200 dark:bg-emerald-950/40 dark:ring-emerald-800/50'
-                : 'bg-amber-50 ring-amber-200 dark:bg-amber-950/40 dark:ring-amber-800/50'}`}>
-                <p className="text-xs text-slate-500 dark:text-slate-400">Contra tu presupuesto</p>
-                <p className={`text-xl font-bold tabular-nums mt-0.5 ${cuadra || mejor ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
-                  {cuadra ? '✓ Cuadra' : `Vas ${formatMXN(Math.abs(delta))} ${mejor ? 'mejor' : 'peor'}`}
-                </p>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                  {cuadra
-                    ? 'Tus cuentas coinciden con el presupuesto.'
-                    : mejor
-                      ? 'Tienes más en cuentas de lo que el presupuesto calcula.'
-                      : 'Tienes menos en cuentas de lo que el presupuesto calcula.'}
-                </p>
-              </div>
-            </div>
-            {!cuadra && (
-              <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
-                {mejor
-                  ? 'Suele ser saldo que traías de quincenas anteriores o un ingreso sin registrar.'
-                  : 'Suele ser un gasto sin registrar, un cargo pendiente o un corte de liquidez desactualizado.'}
-              </p>
-            )}
-          </div>
-        )
-      })()}
+      <CuadraTuDinero variant="full" cuadre={conciliacion} fechaCorte={liquidezSnapshot?.fechaCorte ?? null} />
 
       {tablaQuincenaId !== ALL_QUINCENAS && (
         <TxSinPresupuestoPanel

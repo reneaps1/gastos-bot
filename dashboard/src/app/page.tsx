@@ -1,47 +1,42 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ChevronRight,
   CircleDollarSign,
-  Clock3,
+  CloudOff,
   Droplets,
   Gauge,
-  PiggyBank,
   ReceiptText,
-  ShieldCheck,
-  TrendingDown,
-  TrendingUp,
-  WalletCards,
 } from 'lucide-react'
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
 
-import { QuincenaChips } from '@/components/ui/QuincenaChips'
 import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
-import { KpiCard } from '@/components/ui/KpiCard'
-import { cuentaParaAgregados, quincenasPendientesDeCierre, type GrupoCierre } from '@/lib/cierre-quincena'
-import { calcularPosicionFinanciera } from '@/lib/financial-position'
-import { normalizeMontos, sumLiquidez, type LiquidezMontos } from '@/lib/liquidez'
-import { getInitialQuincenaId, getMexicoDateString, persistQuincenaId } from '@/lib/quincena-selection'
+import { CierreQuincenaWizard } from '@/components/ui/CierreQuincenaWizard'
+import { CuadraTuDinero, DIAS_CORTE_VIEJO } from '@/components/resumen/CuadraTuDinero'
+import { ResumenKpis } from '@/components/resumen/ResumenKpis'
+import { cuentaParaAgregados } from '@/lib/cierre-quincena'
+import { getDefaultQuincenaId, getMexicoDateString, getQuincenaIdForDate } from '@/lib/quincena-selection'
+import { useResumenQuincena, type ResumenQuincena } from '@/lib/useResumenQuincena'
 import { formatDate, formatDateStr, formatMXN } from '@/lib/utils'
+import type { GrupoCierre } from '@/lib/cierre-quincena'
 
-interface Categoria {
-  id: number
-  nombre: string
-  tipo: string
-}
+// Inicio "de un vistazo": un resumen de Presupuesto > Tabla. Misma quincena
+// (getDefaultQuincenaId, la regla de Tabla), mismas funciones y mismos
+// componentes, asi que ningun numero de aqui puede contradecir a Tabla.
+//
+//   0. Encabezado de la quincena + "Abrir en Tabla"
+//   1. ¿Cuadra tu dinero? (el veredicto)
+//   2. Las 4 tarjetas de Tabla
+//   3. Pendientes: solo lo que se puede resolver, cada fila lleva a resolverlo
+//   4. Actividad reciente
+//   5. Mas vistas
+//
+// Lo que antes vivia aqui y ya no (pastilla "Critico", "Caja proyectada",
+// "Reconciliacion plan vs caja", Tendencia) sigue alcanzable desde el pie.
 
 interface Quincena {
   id: number
@@ -50,867 +45,429 @@ interface Quincena {
   fechaFin: string
 }
 
-interface PresupuestoConQuincena {
-  id: number
-  descripcion: string
-  montoEfectivo: number
-  real: number
-  pendiente: number
-  estadoLinea: string
-  categoria: { tipo: string; nombre: string }
-  quincena: { id: number; codigo: string; fechaFin: string; fechaCierre: string | null }
-}
-
-interface Presupuesto {
-  id: number
-  descripcion: string
-  montoEfectivo: number
-  real: number
-  pendiente: number
-  excedido?: number
-  pct: number
-  estadoLinea: string
-  fechaVencimiento?: string | null
-  categoria: Categoria
-}
-
-interface Transaccion {
-  id: number
-  fecha: string
-  descripcion: string
-  tipo: string
-  monto: number
-  presupuestoId: number | null
-  categoria: Categoria
-}
-
-interface Snapshot extends LiquidezMontos {
-  id: number
-  fechaCorte?: string
-}
-
-interface TendenciaPoint {
-  quincenaId: number
-  codigo: string
-  ingresos: number
-  gastos: number
-  presupuestado: number
-  esCurrent: boolean
-}
-
-interface ReconciliacionPlanCaja {
-  snapshot: null | {
-    id: number
-    fechaCorte: string
-    saldoCorte: number
-    saldoEstimadoHoy: number
-  }
-  snapshotApertura?: null | {
-    fechaCorte: string
-    saldoAperturaEstimado: number | null
-  }
-  plan: {
-    ingresosRegistrados: number
-    ingresosPagados: number
-    ingresosPorCobrar: number
-    totalComprometido: number
-    margenPlan: number
-  }
-  pagos: {
-    pagosQuincena: number
-    ahorroPendiente: number
-    pagosPorSalir?: number
-  }
-  caja: null | {
-    saldoProyectadoCierre: number
-    resultadoCajaQuincena: number | null
-    diferenciaVsPlan: number | null
-    cuadraConPlan: boolean | null
-  }
-  diagnostico: null | {
-    ajustesTiming: number
-    residual: number | null
-    requiereAccion: boolean
-  }
-}
-
-interface DashboardData {
-  presupuestos: Presupuesto[]
-  transacciones: Transaccion[]
-  tendencia: TendenciaPoint[]
-  snapshot: Snapshot | null
-  ingresos: number
-  ingresosPagados: number
-  gastos: number
-  ahorroQuincena: number
-  gastosNoCubiertos: number
-  pagosQuincena: number
-  pendientesCierre: GrupoCierre[]
-  reconciliacion: ReconciliacionPlanCaja | null
-}
-
-const EMPTY_DATA: DashboardData = {
-  presupuestos: [],
-  transacciones: [],
-  tendencia: [],
-  snapshot: null,
-  ingresos: 0,
-  ingresosPagados: 0,
-  gastos: 0,
-  ahorroQuincena: 0,
-  gastosNoCubiertos: 0,
-  pagosQuincena: 0,
-  pendientesCierre: [],
-  reconciliacion: null,
-}
-
-function lineFalta(p: Presupuesto) {
-  if (p.categoria.tipo !== 'Gasto' || !cuentaParaAgregados(p)) return 0
-  return Number(p.pendiente) + Math.max(Number(p.montoEfectivo) - Number(p.real), 0)
-}
-
-function daysBetweenDateStrings(fromValue: string, toValue: string) {
-  const parseDate = (value: string) => {
-    const [year, month, day] = value.split('T')[0].split('-').map(Number)
-    return Date.UTC(year, month - 1, day)
-  }
-
-  return Math.max(Math.floor((parseDate(toValue) - parseDate(fromValue)) / 86_400_000), 0)
-}
-
-function statusFor({
-  ingresoSinAsignar,
-  ingresos,
-  vencidos,
-  excedidos,
-  gastosNoCubiertos,
-}: {
-  ingresoSinAsignar: number
-  ingresos: number
-  vencidos: number
-  excedidos: number
-  gastosNoCubiertos: number
-}) {
-  if (ingresoSinAsignar < 0) {
-    return {
-      label: 'Crítico',
-      dot: 'bg-rose-500',
-      text: 'text-rose-700 dark:text-rose-300',
-      bg: 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800/50',
-    }
-  }
-  if (vencidos > 0 || excedidos > 0 || gastosNoCubiertos > 0) {
-    return {
-      label: 'Atención',
-      dot: 'bg-amber-500',
-      text: 'text-amber-700 dark:text-amber-300',
-      bg: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50',
-    }
-  }
-  if (ingresos > 0 && ingresoSinAsignar / ingresos < 0.1) {
-    return {
-      label: 'Ajustado',
-      dot: 'bg-amber-500',
-      text: 'text-amber-700 dark:text-amber-300',
-      bg: 'bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/50',
-    }
-  }
-  return {
-    label: 'Saludable',
-    dot: 'bg-emerald-500',
-    text: 'text-emerald-700 dark:text-emerald-300',
-    bg: 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800/50',
-  }
-}
-
-function MetricBox({
-  label,
-  value,
-  hint,
-  tone = 'neutral',
-}: {
-  label: string
-  value: string
-  hint: string
-  tone?: 'neutral' | 'good' | 'warn' | 'bad'
-}) {
-  const toneClass = {
-    neutral: 'text-slate-900 dark:text-slate-100',
-    good: 'text-emerald-700 dark:text-emerald-300',
-    warn: 'text-amber-700 dark:text-amber-300',
-    bad: 'text-rose-700 dark:text-rose-300',
-  }[tone]
-
-  return (
-    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/40 px-4 py-3">
-      <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
-      <p className={`mt-1 text-xl font-bold tabular-nums ${toneClass}`}>{value}</p>
-      <p className="mt-1 text-[11px] leading-snug text-slate-400 dark:text-slate-500">{hint}</p>
-    </div>
-  )
+function plural(n: number, uno: string, varios: string) {
+  return `${n} ${n === 1 ? uno : varios}`
 }
 
 export default function DashboardPage() {
-  const [quincenas, setQuincenas] = useState<Quincena[]>([])
+  const [quincenasRaw, setQuincenas] = useState<Quincena[] | null>(null)
   const [quincenaId, setQuincenaId] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [data, setData] = useState<DashboardData>(EMPTY_DATA)
-
-  useEffect(() => {
-    fetch('/api/quincenas')
-      .then(r => r.json())
-      .then((items: Quincena[]) => {
-        setQuincenas(items)
-        setQuincenaId(getInitialQuincenaId(items))
-      })
-  }, [])
-
-  const qActual = quincenas.find(q => q.id.toString() === quincenaId) ?? null
+  const [quincenasError, setQuincenasError] = useState(false)
+  const [wizardCierreOpen, setWizardCierreOpen] = useState(false)
   const today = getMexicoDateString()
 
-  const fetchData = useCallback(async () => {
-    if (!quincenaId || !qActual) return
-    setLoading(true)
-    try {
-      const [txRes, presupRes, liqRes, tendRes, sinCubrirRes, pagosRes, allPresupRes, reconRes] = await Promise.all([
-        fetch(`/api/transacciones?quincenaId=${quincenaId}&limit=200`),
-        fetch(`/api/presupuestos?quincenaId=${quincenaId}`),
-        fetch(`/api/liquidez?quincenaId=${quincenaId}`),
-        fetch(`/api/tendencia?quincenaId=${quincenaId}&range=5`),
-        fetch(`/api/transacciones?quincenaId=${quincenaId}&asignado=no&limit=1`),
-        fetch(`/api/liquidez/pagos-quincena?quincenaId=${quincenaId}`),
-        fetch('/api/presupuestos'),
-        fetch(`/api/liquidez/reconciliacion-plan-caja?quincenaId=${quincenaId}`),
-      ])
-
-      const [txJson, presupuestos, liquidez, tendencia, sinCubrirJson, pagosJson, allPresupuestos, reconJson] = await Promise.all([
-        txRes.json(),
-        presupRes.json(),
-        liqRes.json(),
-        tendRes.json(),
-        sinCubrirRes.json(),
-        pagosRes.json(),
-        allPresupRes.json(),
-        reconRes.json(),
-      ])
-
-      const totales = txJson.totales ?? {}
-      setData({
-        presupuestos: Array.isArray(presupuestos) ? presupuestos : [],
-        transacciones: Array.isArray(txJson.data) ? txJson.data : [],
-        tendencia: Array.isArray(tendencia) ? tendencia : [],
-        snapshot: Array.isArray(liquidez) && liquidez.length > 0 ? liquidez[0] : null,
-        ingresos: Number(totales.Ingreso ?? 0),
-        ingresosPagados: Number(totales.IngresoPagado ?? 0),
-        gastos: Number(totales.Gasto ?? 0),
-        ahorroQuincena: Number(totales.Ahorro ?? 0),
-        gastosNoCubiertos: Number(sinCubrirJson?.totales?.Gasto ?? 0),
-        pagosQuincena: Number(pagosJson?.pagosQuincena ?? 0),
-        pendientesCierre: quincenasPendientesDeCierre(
-          Array.isArray(allPresupuestos) ? (allPresupuestos as PresupuestoConQuincena[]) : [],
-          today,
-        ),
-        reconciliacion: reconRes.ok && reconJson?.plan ? (reconJson as ReconciliacionPlanCaja) : null,
-      })
-    } finally {
-      setLoading(false)
-    }
-  }, [quincenaId, qActual, today])
-
   useEffect(() => {
-    void fetchData()
-  }, [fetchData])
+    let cancelado = false
+    fetch('/api/quincenas')
+      .then(r => {
+        if (!r.ok) throw new Error(String(r.status))
+        return r.json()
+      })
+      .then((items: Quincena[]) => {
+        if (cancelado) return
+        setQuincenas(items)
+        // La misma regla que Presupuesto > Tabla: la quincena de hoy, no la
+        // ultima elegida en otra pantalla.
+        setQuincenaId(getDefaultQuincenaId(items))
+      })
+      .catch(() => { if (!cancelado) setQuincenasError(true) })
+    return () => { cancelado = true }
+  }, [])
 
-  function selectQuincena(id: string) {
-    setQuincenaId(id)
-    persistQuincenaId(id)
-  }
+  const { cargando, error, resumen, gruposCierre, cierreError, recargar } = useResumenQuincena(quincenaId, today)
+  const quincenas = quincenasRaw ?? []
+  const sinQuincenas = quincenasRaw != null && !quincenaId
 
-  const snapshotMontos = data.snapshot ? normalizeMontos(data.snapshot) : null
-  const saldoEnCuentas = snapshotMontos ? sumLiquidez(snapshotMontos) : null
-  const presupuestosNormalizados = data.presupuestos.map(p => ({
-    ...p,
-    excedido: Number(p.excedido ?? 0),
-  }))
+  const qActual = quincenas.find(q => q.id.toString() === quincenaId) ?? null
+  const quincenaActualIdCierre = getQuincenaIdForDate(quincenas, today)
+  const quincenaActualCierre = quincenas.find(q => q.id.toString() === quincenaActualIdCierre)
 
-  const posicion = calcularPosicionFinanciera({
-    saldoEnCuentas,
-    ingresos: data.ingresos,
-    presupuestos: presupuestosNormalizados,
-    gastosNoCubiertos: data.gastosNoCubiertos,
-  })
-
-  // Fuente única para caja y conciliación. El dashboard ya no recalcula
-  // una versión simplificada distinta a Configuración → Liquidez.
-  const reconciliacion = data.reconciliacion
-  const margenPlan = reconciliacion?.plan.margenPlan ?? posicion.ingresoSinAsignar
-  const totalComprometido = reconciliacion?.plan.totalComprometido ?? (data.ingresos - margenPlan)
-  const ingresosPorCobrar = reconciliacion?.plan.ingresosPorCobrar ?? Math.max(data.ingresos - data.ingresosPagados, 0)
-  const pagosPorSalir = reconciliacion?.pagos.pagosPorSalir ?? data.pagosQuincena
-  const saldoProyectado = reconciliacion?.caja?.saldoProyectadoCierre ?? null
-  const resultadoCajaQuincena = reconciliacion?.caja?.resultadoCajaQuincena ?? null
-  const diferenciaVsPlan = reconciliacion?.caja?.diferenciaVsPlan ?? null
-  const cuadraConPlan = reconciliacion?.caja?.cuadraConPlan === true
-  const saldoApertura = reconciliacion?.snapshotApertura?.saldoAperturaEstimado ?? null
-  const saldoEstimadoHoy = reconciliacion?.snapshot?.saldoEstimadoHoy ?? saldoEnCuentas
-  const residualConciliacion = reconciliacion?.diagnostico?.residual ?? null
-  const requiereAccionConciliacion = reconciliacion?.diagnostico?.requiereAccion ?? false
-
-  const presupuestosGasto = data.presupuestos.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
-  const totalPresupuesto = presupuestosGasto.reduce((s, p) => s + Number(p.montoEfectivo), 0)
-  const gastadoPresupuesto = presupuestosGasto.reduce((s, p) => s + Number(p.real), 0)
-  const pctPresupuesto = totalPresupuesto > 0 ? (gastadoPresupuesto / totalPresupuesto) * 100 : 0
-
-  const vencidos = useMemo(() => presupuestosGasto.filter(p => {
-    if (!p.fechaVencimiento || lineFalta(p) <= 0) return false
-    return p.fechaVencimiento.split('T')[0] < today
-  }), [presupuestosGasto, today])
-  const excedidos = presupuestosGasto.filter(p => Number(p.excedido ?? 0) > 0)
-  const vigilando = presupuestosGasto.filter(p => Number(p.excedido ?? 0) <= 0 && Number(p.pct ?? 0) > 80)
-
-  const snapshotDate = data.snapshot?.fechaCorte?.split('T')[0] ?? null
-  const liquidityAgeDays = snapshotDate ? daysBetweenDateStrings(snapshotDate, today) : null
-  const liquidityIsStale = liquidityAgeDays != null && liquidityAgeDays >= 3
-
-  const status = statusFor({
-    ingresoSinAsignar: margenPlan,
-    ingresos: data.ingresos,
-    vencidos: vencidos.length,
-    excedidos: excedidos.length,
-    gastosNoCubiertos: data.gastosNoCubiertos,
-  })
-
-  const totalPendienteCierre = data.pendientesCierre.reduce((s, g) => s + g.total, 0)
-  const attentionCount =
-    vencidos.length +
-    excedidos.length +
-    vigilando.length +
-    (data.gastosNoCubiertos > 0 ? 1 : 0) +
-    (data.pendientesCierre.length > 0 ? 1 : 0)
-
-  const planTone = margenPlan < 0 ? 'bad' : 'good'
-  const liquidityTone = saldoProyectado == null
-    ? 'neutral'
-    : saldoProyectado < 0
-      ? 'bad'
-      : 'good'
-
-  const planSummaryText = margenPlan >= 0
-    ? `${formatMXN(margenPlan)} de tus ingresos registrados aún no tiene destino en el plan. Es una referencia de presupuesto, no dinero disponible en cuentas.`
-    : `Tienes ${formatMXN(Math.abs(margenPlan))} comprometidos por encima del ingreso registrado.`
-
-  const liquiditySummaryText = !data.snapshot
-    ? 'No hay corte de liquidez. Sin una fotografía de cuentas no podemos proyectar cuánto te va a quedar.'
-    : saldoProyectado != null && saldoProyectado >= 0
-      ? `Con el corte actualizado por el ledger, lo que falta cobrar y lo que falta salir, proyectas cerrar con ${formatMXN(saldoProyectado)}.`
-      : `Con el corte actualizado por el ledger, lo que falta cobrar y lo que falta salir, proyectas un faltante de ${formatMXN(Math.abs(saldoProyectado ?? 0))}.`
-
-  const liquidityFreshnessText = liquidityAgeDays == null
-    ? 'Sin corte'
-    : liquidityAgeDays === 0
-      ? 'Actualizada hoy'
-      : liquidityAgeDays === 1
-        ? 'Corte de ayer'
-        : `Hace ${liquidityAgeDays} días`
-
-  const diferenciaAbs = Math.abs(diferenciaVsPlan ?? 0)
-  const diferenciaHint = diferenciaVsPlan == null
-    ? 'Falta un corte anterior al inicio de la quincena para comparar correctamente.'
-    : cuadraConPlan
-      ? 'El resultado de caja de la quincena coincide con el margen del plan.'
-      : requiereAccionConciliacion && residualConciliacion != null
-        ? `${formatMXN(Math.abs(residualConciliacion))} siguen sin explicación después de los ajustes detectados.`
-        : 'Hay una diferencia explicada total o parcialmente por timing, créditos o movimientos entre quincenas.'
-
-  if (!qActual && loading) {
-    return <DashboardSkeleton />
+  if (quincenasError) {
+    return <ErrorCarga onReintentar={() => window.location.reload()} />
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {qActual?.codigo ?? 'Dashboard'}
+    <div className="space-y-4 md:space-y-5">
+      {/* Bloque 0 — Encabezado de la quincena */}
+      <section className="space-y-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-slate-100">
+              {qActual ? (
+                <>
+                  {qActual.codigo}
+                  <span className="font-medium text-slate-400 dark:text-slate-500"> · </span>
+                  <span className="text-base md:text-lg font-semibold text-slate-500 dark:text-slate-400">
+                    {formatDateStr(qActual.fechaInicio, { day: '2-digit', month: 'short' })}
+                    {' – '}
+                    {formatDateStr(qActual.fechaFin, { day: '2-digit', month: 'short' })}
+                  </span>
+                </>
+              ) : 'Inicio'}
             </h1>
-            <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold ${status.bg} ${status.text}`}>
-              <span className={`h-2 w-2 rounded-full ${status.dot}`} />
-              {status.label}
-            </span>
           </div>
-          {qActual && (
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              {formatDateStr(qActual.fechaInicio, { day: '2-digit', month: 'long' })}
-              {' — '}
-              {formatDateStr(qActual.fechaFin, { day: '2-digit', month: 'long', year: 'numeric' })}
-            </p>
-          )}
+          <Link
+            href="/presupuesto"
+            className="hidden sm:inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
+          >
+            Abrir en Tabla <ArrowRight size={14} />
+          </Link>
         </div>
-        <Link
-          href="/detalle"
-          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm font-medium text-slate-600 dark:text-slate-300 hover:border-indigo-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-        >
-          Vista detallada <ArrowRight size={14} />
-        </Link>
-      </div>
+        {quincenas.length > 0 && <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />}
+      </section>
 
-      {quincenas.length > 0 && (
-        <div className="space-y-2">
-          <QuincenaChips quincenas={quincenas} quincenaId={quincenaId} today={today} onSelect={selectQuincena} />
-          <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />
-        </div>
-      )}
-
-      {loading ? (
-        <DashboardSkeleton />
+      {sinQuincenas ? (
+        <p className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5 text-sm text-slate-500 dark:text-slate-400">
+          No hay quincenas configuradas. Agrégalas en <Link href="/configuracion/quincenas" className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">Configuración → Períodos de pago</Link>.
+        </p>
+      ) : cargando ? (
+        <InicioSkeleton />
+      ) : error || !resumen ? (
+        <ErrorCarga onReintentar={recargar} />
       ) : (
         <>
-          <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-            <div className={`lg:col-span-2 overflow-hidden rounded-2xl border ${planTone === 'bad' ? 'border-rose-200 dark:border-rose-800/60' : 'border-slate-200 dark:border-slate-700'} bg-white dark:bg-slate-800`}>
-              <div className="p-5 md:p-6 border-b border-slate-100 dark:border-slate-700/80">
-                <div className="flex items-start justify-between gap-4 flex-wrap">
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Plan de la quincena</p>
-                      <span className="rounded-full border border-indigo-200 dark:border-indigo-800/60 bg-indigo-50 dark:bg-indigo-950/30 px-2 py-0.5 text-[10px] font-semibold text-indigo-700 dark:text-indigo-300">
-                        Referencia de presupuesto
-                      </span>
-                    </div>
-                    <div className="mt-2 flex items-end gap-2 flex-wrap">
-                      <p className={`text-2xl md:text-3xl font-bold tabular-nums ${planTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : 'text-indigo-700 dark:text-indigo-300'}`}>
-                        {formatMXN(margenPlan)}
-                      </p>
-                      <span className="pb-1 text-sm text-slate-500 dark:text-slate-400">ingreso aún sin destino</span>
-                    </div>
-                    <p className={`mt-2 max-w-2xl text-sm ${planTone === 'bad' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
-                      {planSummaryText}
-                    </p>
-                  </div>
-                </div>
-              </div>
+          {/* Bloque 1 — ¿Cuadra tu dinero? */}
+          <CuadraTuDinero
+            variant="hero"
+            cuadre={resumen.cuadre}
+            fechaCorte={resumen.liquidez?.fechaCorte ?? null}
+            teorico={resumen.teorico}
+            corteDias={resumen.corteDias}
+            quincenaId={quincenaId}
+          />
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 md:p-5 bg-slate-50/70 dark:bg-slate-900/30">
-                <MetricBox
-                  label="Ingreso registrado"
-                  value={formatMXN(data.ingresos)}
-                  hint="Todo el ingreso registrado, cobrado o pendiente."
-                  tone="neutral"
-                />
-                <MetricBox
-                  label="Comprometido"
-                  value={formatMXN(totalComprometido)}
-                  hint="Presupuesto, ahorro planificado, excedidos y gastos sin presupuesto."
-                  tone={totalComprometido > data.ingresos ? 'bad' : 'neutral'}
-                />
-                <MetricBox
-                  label="Pendiente del plan"
-                  value={formatMXN(posicion.pendientePorCubrir)}
-                  hint="Ejecución presupuestal pendiente; no necesariamente sale de caja en esta quincena."
-                  tone={posicion.pendientePorCubrir > 0 ? 'warn' : 'good'}
-                />
-              </div>
-            </div>
+          {/* Bloque 2 — Las 4 tarjetas de Tabla */}
+          <ResumenKpis
+            ingresoReal={resumen.ingresoReal}
+            ingresoPresupuestado={resumen.ingresoPresupuestado}
+            gastoReal={resumen.gastoReal}
+            gastoPresupuestado={resumen.gastoPresupuestado}
+            gastoFaltaPorPagar={resumen.gastoFaltaPorPagar}
+            balancePresupuestado={resumen.balancePresupuestado}
+            mostrarEnCuentas
+            liquidez={resumen.liquidez}
+            capturarCorteHref={`/configuracion/liquidez?quincenaId=${quincenaId}`}
+          />
 
-            <div className={`lg:col-span-3 overflow-hidden rounded-2xl border ${liquidityTone === 'bad' ? 'border-rose-200 dark:border-rose-800/60' : liquidityIsStale ? 'border-amber-200 dark:border-amber-800/60' : 'border-slate-200 dark:border-slate-700'} bg-white dark:bg-slate-800`}>
-              <div className="p-5 md:p-6 border-b border-slate-100 dark:border-slate-700/80">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400 dark:text-slate-500">Caja proyectada</p>
-                    <div className="mt-2 flex items-end gap-2 flex-wrap">
-                      <p className={`text-3xl md:text-4xl font-bold tabular-nums ${liquidityTone === 'bad' ? 'text-rose-600 dark:text-rose-400' : liquidityTone === 'good' ? 'text-emerald-700 dark:text-emerald-300' : 'text-slate-800 dark:text-slate-100'}`}>
-                        {saldoProyectado == null ? '—' : formatMXN(saldoProyectado)}
-                      </p>
-                      <span className="pb-0.5 text-xs text-slate-500 dark:text-slate-400">te va a quedar</span>
-                    </div>
-                  </div>
-                  <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-semibold ${liquidityAgeDays == null ? 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800/60 dark:bg-blue-950/30 dark:text-blue-300' : liquidityIsStale ? 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800/60 dark:bg-amber-950/30 dark:text-amber-300' : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-300'}`}>
-                    {liquidityFreshnessText}
-                  </span>
-                </div>
-                <p className={`mt-2 text-sm ${liquidityTone === 'bad' ? 'text-rose-700 dark:text-rose-300' : 'text-slate-600 dark:text-slate-300'}`}>
-                  {liquiditySummaryText}
-                </p>
-                {data.snapshot?.fechaCorte && (
-                  <p className={`mt-2 text-xs ${liquidityIsStale ? 'text-amber-700 dark:text-amber-300' : 'text-slate-400 dark:text-slate-500'}`}>
-                    Último corte: {formatDate(data.snapshot.fechaCorte)}{liquidityIsStale ? '. Actualízalo para una proyección más confiable.' : ''}
-                  </p>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 p-4 md:p-5 bg-slate-50/70 dark:bg-slate-900/30">
-                <MetricBox
-                  label="Saldo estimado hoy"
-                  value={saldoEstimadoHoy == null ? '—' : formatMXN(saldoEstimadoHoy)}
-                  hint="Último corte actualizado con movimientos pagados posteriores."
-                  tone={saldoEstimadoHoy != null && saldoEstimadoHoy < 0 ? 'bad' : 'neutral'}
-                />
-                <MetricBox
-                  label="Ingresos por cobrar"
-                  value={formatMXN(ingresosPorCobrar)}
-                  hint="Ingresos registrados que aún no están marcados como pagados."
-                  tone={ingresosPorCobrar > 0 ? 'good' : 'neutral'}
-                />
-                <MetricBox
-                  label="Pagos por salir"
-                  value={formatMXN(pagosPorSalir)}
-                  hint="Efectivo que todavía debe salir en esta quincena."
-                  tone={pagosPorSalir > 0 ? 'warn' : 'good'}
-                />
-                <MetricBox
-                  label="Resultado vs plan"
-                  value={diferenciaVsPlan == null ? '—' : formatMXN(diferenciaAbs)}
-                  hint={diferenciaHint}
-                  tone={cuadraConPlan ? 'good' : diferenciaVsPlan == null ? 'neutral' : 'warn'}
-                />
-                {qActual && (
-                  <div className="col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <Link
-                      href={`/configuracion/liquidez/reconciliar?quincenaId=${quincenaId}`}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
-                    >
-                      Explicar y corregir <ArrowRight size={13} />
-                    </Link>
-                    <Link
-                      href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
-                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:border-blue-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                    >
-                      <Droplets size={14} /> {data.snapshot ? 'Actualizar corte' : 'Capturar corte'}
-                    </Link>
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {saldoEnCuentas != null && (
-            <section className={`rounded-2xl border p-5 ${cuadraConPlan ? 'border-emerald-200 bg-emerald-50/40 dark:border-emerald-800/50 dark:bg-emerald-950/15' : 'border-amber-200 bg-amber-50/50 dark:border-amber-800/50 dark:bg-amber-950/15'}`}>
-              <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Reconciliación plan vs caja</h2>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                    Compara lo que realmente produjo esta quincena contra el margen del plan. No compara el saldo final absoluto contra el presupuesto.
-                  </p>
-                </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${cuadraConPlan ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300'}`}>
-                  {diferenciaVsPlan == null ? 'Falta base de apertura' : cuadraConPlan ? 'Cuadra' : `${formatMXN(diferenciaAbs)} por explicar`}
-                </span>
-              </div>
-
-              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-                <MetricBox
-                  label="Saldo al iniciar Q"
-                  value={saldoApertura == null ? '—' : formatMXN(saldoApertura)}
-                  hint="Saldo estimado justo antes de iniciar la quincena."
-                  tone="neutral"
-                />
-                <MetricBox
-                  label="Cierre proyectado"
-                  value={saldoProyectado == null ? '—' : formatMXN(saldoProyectado)}
-                  hint="Dinero físico estimado al cierre."
-                  tone={saldoProyectado != null && saldoProyectado < 0 ? 'bad' : 'good'}
-                />
-                <MetricBox
-                  label="Resultado de la Q"
-                  value={resultadoCajaQuincena == null ? '—' : formatMXN(resultadoCajaQuincena)}
-                  hint="Cierre proyectado menos lo que ya traías al iniciar."
-                  tone={resultadoCajaQuincena != null && resultadoCajaQuincena < 0 ? 'bad' : 'neutral'}
-                />
-                <MetricBox
-                  label="Margen del plan"
-                  value={formatMXN(margenPlan)}
-                  hint="Ingreso de esta Q que quedó sin destino presupuestal."
-                  tone={margenPlan < 0 ? 'bad' : 'neutral'}
-                />
-              </div>
-
-              <div className="mt-4 rounded-xl border border-slate-200/80 bg-white/70 px-4 py-3 text-sm dark:border-slate-700 dark:bg-slate-900/40">
-                {diferenciaVsPlan == null ? (
-                  <p className="text-slate-600 dark:text-slate-300">
-                    Falta un corte anterior al inicio de la quincena. Sin esa base Milo puede proyectar cuánto te va a quedar, pero no puede afirmar todavía si plan y caja cuadran.
-                  </p>
-                ) : cuadraConPlan ? (
-                  <p className="text-emerald-700 dark:text-emerald-300">
-                    El resultado de caja de esta quincena coincide con el margen del plan.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="text-amber-700 dark:text-amber-300">
-                      Hay {formatMXN(diferenciaAbs)} de diferencia entre lo que produjo la quincena en caja y lo que dice el plan.
-                    </p>
-                    {residualConciliacion != null && (
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Después de movimientos entre quincenas, timing y créditos detectados, quedan {formatMXN(Math.abs(residualConciliacion))} sin explicación directa.
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {qActual && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  <Link
-                    href={`/configuracion/liquidez/reconciliar?quincenaId=${quincenaId}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
-                  >
-                    Explicar y corregir <ArrowRight size={13} />
-                  </Link>
-                  <Link
-                    href={`/configuracion/liquidez?quincenaId=${quincenaId}`}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 hover:border-blue-300 hover:text-blue-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                  >
-                    <Droplets size={13} /> Actualizar corte
-                  </Link>
-                </div>
-              )}
-            </section>
-          )}
-
-          <section className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-            <div className="lg:col-span-3 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Requiere tu atención</h2>
-                  <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Solo lo que puede requerir una decisión o corrección.</p>
-                </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${attentionCount > 0 ? 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'}`}>
-                  {attentionCount}
-                </span>
-              </div>
-
-              {attentionCount === 0 ? (
-                <div className="flex items-center gap-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/25 border border-emerald-100 dark:border-emerald-800/40 px-4 py-3">
-                  <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-                  <div>
-                    <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">Sin pendientes relevantes</p>
-                    <p className="text-xs text-emerald-700/70 dark:text-emerald-400/70">No hay vencidos, excedidos ni gastos sin presupuesto detectados.</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100 dark:divide-slate-700/80">
-                  {vencidos.length > 0 && (
-                    <AttentionRow
-                      icon={<Clock3 size={16} />}
-                      tone="bad"
-                      title={`${vencidos.length} ${vencidos.length === 1 ? 'partida vencida' : 'partidas vencidas'}`}
-                      detail={formatMXN(vencidos.reduce((s, p) => s + lineFalta(p), 0))}
-                    />
-                  )}
-                  {data.gastosNoCubiertos > 0 && (
-                    <AttentionRow
-                      icon={<ReceiptText size={16} />}
-                      tone="warn"
-                      title="Gastos sin presupuesto"
-                      detail={formatMXN(data.gastosNoCubiertos)}
-                    />
-                  )}
-                  {excedidos.length > 0 && (
-                    <AttentionRow
-                      icon={<AlertTriangle size={16} />}
-                      tone="bad"
-                      title={`${excedidos.length} ${excedidos.length === 1 ? 'partida excedida' : 'partidas excedidas'}`}
-                      detail={formatMXN(excedidos.reduce((s, p) => s + Number(p.excedido ?? 0), 0))}
-                    />
-                  )}
-                  {vigilando.length > 0 && (
-                    <AttentionRow
-                      icon={<Gauge size={16} />}
-                      tone="warn"
-                      title={`${vigilando.length} ${vigilando.length === 1 ? 'partida arriba de 80%' : 'partidas arriba de 80%'}`}
-                      detail="Vigilar"
-                    />
-                  )}
-                  {data.pendientesCierre.length > 0 && (
-                    <AttentionRow
-                      icon={<CircleDollarSign size={16} />}
-                      tone="warn"
-                      title={`${data.pendientesCierre.length} ${data.pendientesCierre.length === 1 ? 'quincena pendiente de cierre' : 'quincenas pendientes de cierre'}`}
-                      detail={formatMXN(totalPendienteCierre)}
-                    />
-                  )}
-                </div>
-              )}
-
-              <div className="mt-4 flex gap-2 flex-wrap">
-                <Link href="/presupuesto" className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
-                  Revisar presupuesto <ArrowRight size={11} />
-                </Link>
-                <span className="text-slate-300 dark:text-slate-700">·</span>
-                <Link href="/detalle" className="inline-flex items-center gap-1 text-xs font-semibold text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400">
-                  Resolver en vista detallada <ArrowRight size={11} />
-                </Link>
-              </div>
-            </div>
-
-            <div className="lg:col-span-2 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Presupuesto</h2>
-                  <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Ejecución de partidas de gasto.</p>
-                </div>
-                <span className={`text-sm font-bold tabular-nums ${pctPresupuesto > 100 ? 'text-rose-600 dark:text-rose-400' : pctPresupuesto > 80 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
-                  {pctPresupuesto.toFixed(0)}%
-                </span>
-              </div>
-              <div className="mt-5 h-3 rounded-full bg-slate-100 dark:bg-slate-700 overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${pctPresupuesto > 100 ? 'bg-rose-500' : pctPresupuesto > 80 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                  style={{ width: `${Math.min(Math.max(pctPresupuesto, 0), 100)}%` }}
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-2 gap-3">
-                <div>
-                  <p className="text-xs text-slate-400 dark:text-slate-500">Gastado / registrado</p>
-                  <p className="mt-0.5 text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(gastadoPresupuesto)}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-slate-400 dark:text-slate-500">Presupuestado</p>
-                  <p className="mt-0.5 text-lg font-bold text-slate-800 dark:text-slate-100 tabular-nums">{formatMXN(totalPresupuesto)}</p>
-                </div>
-              </div>
-              <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
-                {margenPlan >= 0
-                  ? `${formatMXN(margenPlan)} de tus ingresos aún no tiene destino en el plan.`
-                  : `Tienes ${formatMXN(Math.abs(margenPlan))} comprometidos por encima del ingreso registrado.`}
-              </p>
-            </div>
-          </section>
-
-          <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <KpiCard
-              label="Ingresos"
-              value={formatMXN(data.ingresos)}
-              icon={<TrendingUp size={20} className="text-emerald-600 dark:text-emerald-300" />}
-              color="text-emerald-600 dark:text-emerald-400"
-              bg="bg-emerald-50 dark:bg-emerald-950/50 dark:ring-1 dark:ring-emerald-800/50"
+          {/* Bloques 3 y 4 comparten fila en escritorio */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Pendientes
+              resumen={resumen}
+              gruposCierre={gruposCierre}
+              cierreError={cierreError}
+              onReintentarCierre={recargar}
+              codigo={qActual?.codigo ?? ''}
+              quincenaId={quincenaId}
+              onCerrar={() => setWizardCierreOpen(true)}
             />
-            <KpiCard
-              label="Gastos"
-              value={formatMXN(data.gastos)}
-              icon={<TrendingDown size={20} className="text-rose-600 dark:text-rose-300" />}
-              color="text-rose-600 dark:text-rose-400"
-              bg="bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50"
-            />
-            <KpiCard
-              label="Ahorro de la Q"
-              value={formatMXN(data.ahorroQuincena)}
-              icon={<PiggyBank size={20} className="text-blue-600 dark:text-blue-300" />}
-              color="text-blue-600 dark:text-blue-400"
-              bg="bg-blue-50 dark:bg-blue-950/50 dark:ring-1 dark:ring-blue-800/50"
-            />
-            <KpiCard
-              label="Saldo en cuentas"
-              value={saldoEnCuentas == null ? '—' : formatMXN(saldoEnCuentas)}
-              subtitle={saldoEnCuentas == null ? 'sin corte de liquidez' : 'según último corte'}
-              icon={<WalletCards size={20} className="text-slate-600 dark:text-slate-300" />}
-              color="text-slate-700 dark:text-slate-200"
-              bg="bg-slate-100 dark:bg-slate-700/70"
-            />
-          </section>
-
-          {data.tendencia.length > 1 && (
-            <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-5">
-              <div className="flex items-center justify-between gap-3 mb-4">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Tendencia</h2>
-                  <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Ingresos y gastos de las últimas quincenas.</p>
-                </div>
-                <ShieldCheck size={18} className="text-slate-400 dark:text-slate-500" />
-              </div>
-              <ResponsiveContainer width="100%" height={210}>
-                <LineChart data={data.tendencia} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="codigo" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false} />
-                  <YAxis
-                    tickFormatter={(v) => `$${(Number(v) / 1000).toFixed(0)}k`}
-                    tick={{ fontSize: 11, fill: '#64748b' }}
-                    width={44}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <Tooltip formatter={(value) => [formatMXN(Number(value ?? 0))]} contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }} />
-                  <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                  <Line type="monotone" dataKey="ingresos" name="Ingresos" stroke="#10b981" strokeWidth={2} dot={{ r: 3, fill: '#10b981' }} activeDot={{ r: 5 }} />
-                  <Line type="monotone" dataKey="gastos" name="Gastos" stroke="#f43f5e" strokeWidth={2} dot={{ r: 3, fill: '#f43f5e' }} activeDot={{ r: 5 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </section>
-          )}
-
-          <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
-            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-slate-100 dark:border-slate-700/80">
-              <div>
-                <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Actividad reciente</h2>
-                <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">Últimos movimientos de la quincena.</p>
-              </div>
-              <Link href="/transacciones" className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
-                Ver todas <ArrowRight size={11} />
-              </Link>
-            </div>
-            {data.transacciones.length === 0 ? (
-              <p className="px-5 py-6 text-sm text-slate-400 dark:text-slate-500">Sin movimientos registrados.</p>
-            ) : (
-              <div className="divide-y divide-slate-100 dark:divide-slate-700/70">
-                {data.transacciones.slice(0, 6).map(tx => (
-                  <div key={tx.id} className="flex items-center justify-between gap-4 px-5 py-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">{tx.descripcion}</p>
-                      <p className="mt-0.5 text-xs text-slate-400 dark:text-slate-500">{tx.categoria.nombre} · {formatDate(tx.fecha)}</p>
-                    </div>
-                    <p className={`shrink-0 text-sm font-semibold tabular-nums ${tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'}`}>
-                      {tx.tipo === 'Ingreso' ? '+' : tx.tipo === 'Gasto' ? '−' : ''}{formatMXN(Number(tx.monto))}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
+            <ActividadReciente resumen={resumen} />
+          </div>
         </>
       )}
+
+      {/* Bloque 5 — Mas vistas */}
+      <MasVistas quincenaId={quincenaId} />
+
+      {/* El asistente abre aqui mismo: el boton de /presupuesto solo ve las
+          quincenas que tiene cargadas, no todo el historial. */}
+      <CierreQuincenaWizard
+        open={wizardCierreOpen}
+        onOpenChange={setWizardCierreOpen}
+        grupos={gruposCierre ?? []}
+        quincenaActualId={quincenaActualCierre ? quincenaActualCierre.id : null}
+        quincenaActualCodigo={quincenaActualCierre?.codigo}
+        onResuelto={recargar}
+      />
     </div>
   )
 }
 
-function AttentionRow({
+// ── Bloque 3 ────────────────────────────────────────────────────────────────
+
+function Pendientes({
+  resumen,
+  gruposCierre,
+  cierreError,
+  onReintentarCierre,
+  codigo,
+  quincenaId,
+  onCerrar,
+}: {
+  resumen: ResumenQuincena
+  gruposCierre: GrupoCierre[] | null
+  cierreError: boolean
+  onReintentarCierre: () => void
+  codigo: string
+  quincenaId: string
+  onCerrar: () => void
+}) {
+  const gastoLineas = resumen.presupuestos.filter(p => p.categoria.tipo === 'Gasto' && cuentaParaAgregados(p))
+  const pasadas = gastoLineas.filter(p => p.excedido > 0)
+  const arriba80 = gastoLineas.filter(p => p.excedido <= 0 && p.pct > 80)
+  const totalCierre = (gruposCierre ?? []).reduce((s, g) => s + g.total, 0)
+  const corteHref = `/configuracion/liquidez?quincenaId=${quincenaId}`
+
+  const filas: React.ReactNode[] = []
+
+  if (resumen.sinPartida.cantidad > 0) {
+    filas.push(
+      <FilaPendiente
+        key="sin-partida"
+        href="/presupuesto"
+        icon={<ReceiptText size={16} />}
+        tone="warn"
+        title={plural(resumen.sinPartida.cantidad, 'movimiento sin partida', 'movimientos sin partida')}
+        detail={resumen.sinPartida.monto > 0 ? `${formatMXN(resumen.sinPartida.monto)} fuera de plan` : undefined}
+        accion="Asignar"
+      />,
+    )
+  }
+
+  if (pasadas.length > 0 || arriba80.length > 0) {
+    filas.push(
+      <FilaPendiente
+        key="partidas"
+        href="/presupuesto"
+        icon={pasadas.length > 0 ? <AlertTriangle size={16} /> : <Gauge size={16} />}
+        tone={pasadas.length > 0 ? 'bad' : 'warn'}
+        title={pasadas.length > 0
+          ? plural(pasadas.length, 'partida se pasó', 'partidas se pasaron')
+          : `${plural(arriba80.length, 'partida va', 'partidas van')} arriba de 80%`}
+        detail={pasadas.length > 0
+          ? [
+              `por ${formatMXN(pasadas.reduce((s, p) => s + p.excedido, 0))} en total`,
+              arriba80.length > 0 ? `${arriba80.length} más arriba de 80%` : null,
+            ].filter(Boolean).join(' · ')
+          : undefined}
+        accion="Ver en Tabla"
+      />,
+    )
+  }
+
+  if (gruposCierre && gruposCierre.length > 0) {
+    filas.push(
+      <FilaPendiente
+        key="cierre"
+        onClick={onCerrar}
+        icon={<CircleDollarSign size={16} />}
+        tone="warn"
+        title={plural(gruposCierre.length, 'quincena sin cerrar', 'quincenas sin cerrar')}
+        detail={formatMXN(totalCierre)}
+        accion="Cerrar"
+      />,
+    )
+  }
+
+  // Si no se pudo revisar el historial no se puede afirmar "nada pendiente":
+  // fila neutra para reintentar en vez del aviso verde.
+  if (cierreError) {
+    filas.push(
+      <FilaPendiente
+        key="cierre-error"
+        onClick={onReintentarCierre}
+        icon={<CloudOff size={16} />}
+        tone="neutral"
+        title="No se pudo revisar quincenas anteriores"
+        accion="Reintentar"
+      />,
+    )
+  }
+
+  if (!resumen.liquidez) {
+    filas.push(
+      <FilaPendiente
+        key="corte"
+        href={corteHref}
+        icon={<Droplets size={16} />}
+        tone="warn"
+        title="Sin corte de cuentas"
+        detail="Captúralo para saber si te alcanza"
+        accion="Capturar corte"
+      />,
+    )
+  } else if (resumen.corteDias != null && resumen.corteDias >= DIAS_CORTE_VIEJO) {
+    filas.push(
+      <FilaPendiente
+        key="corte"
+        href={corteHref}
+        icon={<Droplets size={16} />}
+        tone="warn"
+        title={`Tu corte es de hace ${resumen.corteDias} días`}
+        detail="Actualízalo para que el veredicto sea real"
+        accion="Actualizar corte"
+      />,
+    )
+  }
+
+  return (
+    <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-4 md:p-5">
+      <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100 mb-2">Pendientes</h2>
+      {filas.length > 0 ? (
+        <div className="divide-y divide-slate-100 dark:divide-slate-700/80">
+          {filas}
+          {gruposCierre == null && !cierreError && (
+            <p className="py-3 text-xs text-slate-400 dark:text-slate-500">Revisando quincenas anteriores…</p>
+          )}
+        </div>
+      ) : gruposCierre == null ? (
+        <div className="h-11 rounded-xl bg-slate-100 dark:bg-slate-700/40 animate-pulse" />
+      ) : (
+        <div className="flex items-center gap-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/25 border border-emerald-100 dark:border-emerald-800/40 px-4 py-3">
+          <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">Nada pendiente{codigo ? ` en ${codigo}` : ''}.</p>
+            <p className="text-xs text-emerald-700/70 dark:text-emerald-400/70">Todo tiene partida, ninguna se pasó y el corte está al día.</p>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function FilaPendiente({
+  href,
+  onClick,
   icon,
   tone,
   title,
   detail,
+  accion,
 }: {
+  href?: string
+  onClick?: () => void
   icon: React.ReactNode
-  tone: 'warn' | 'bad'
+  tone: 'warn' | 'bad' | 'neutral'
   title: string
-  detail: string
+  detail?: string
+  accion: string
 }) {
   const toneClasses = tone === 'bad'
     ? 'text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/25'
-    : 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/25'
+    : tone === 'neutral'
+      ? 'text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-700/50'
+      : 'text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/25'
 
-  return (
-    <div className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
-      <div className="flex items-center gap-2.5 min-w-0">
+  const contenido = (
+    <>
+      <span className="flex items-center gap-2.5 min-w-0">
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${toneClasses}`}>{icon}</span>
-        <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">{title}</p>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-slate-700 dark:text-slate-200">{title}</span>
+          {detail && <span className="block text-xs text-slate-400 dark:text-slate-500 tabular-nums">{detail}</span>}
+        </span>
+      </span>
+      <span className="flex shrink-0 items-center gap-0.5 text-xs font-semibold text-indigo-600 dark:text-indigo-400 group-hover:underline">
+        {accion} <ChevronRight size={14} />
+      </span>
+    </>
+  )
+  const clase = 'group flex w-full min-h-[44px] items-center justify-between gap-3 py-2.5 text-left cursor-pointer'
+
+  return href ? (
+    <Link href={href} className={clase}>{contenido}</Link>
+  ) : (
+    <button type="button" onClick={onClick} className={clase}>{contenido}</button>
+  )
+}
+
+// ── Bloque 4 ────────────────────────────────────────────────────────────────
+
+function ActividadReciente({ resumen }: { resumen: ResumenQuincena }) {
+  return (
+    <section className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 overflow-hidden">
+      <div className="flex items-center justify-between gap-3 px-4 md:px-5 py-3 border-b border-slate-100 dark:border-slate-700/80">
+        <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-100">Actividad reciente</h2>
+        <Link href="/transacciones" className="inline-flex min-h-[44px] sm:min-h-0 items-center gap-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+          Ver todas <ArrowRight size={11} />
+        </Link>
       </div>
-      <span className="shrink-0 text-sm font-semibold tabular-nums text-slate-600 dark:text-slate-300">{detail}</span>
+      {resumen.transacciones.length === 0 ? (
+        <p className="px-4 md:px-5 py-6 text-sm text-slate-400 dark:text-slate-500">Sin movimientos registrados.</p>
+      ) : (
+        <div className="divide-y divide-slate-100 dark:divide-slate-700/70">
+          {resumen.transacciones.slice(0, 5).map(tx => (
+            <div key={tx.id} className="flex items-center justify-between gap-3 px-4 md:px-5 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-slate-700 dark:text-slate-200">{tx.descripcion}</p>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-400 dark:text-slate-500">
+                  <span>{tx.categoria.nombre} · {formatDate(tx.fecha)}</span>
+                  {tx.estatus === 'Pendiente' && (
+                    <span className="rounded-full bg-amber-50 dark:bg-amber-950/30 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">pendiente</span>
+                  )}
+                  {tx.presupuestoId == null && (
+                    <span className="rounded-full bg-slate-100 dark:bg-slate-700 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-300">sin partida</span>
+                  )}
+                </div>
+              </div>
+              <p className={`shrink-0 text-sm font-semibold tabular-nums ${tx.tipo === 'Ingreso' ? 'text-emerald-600 dark:text-emerald-400' : tx.tipo === 'Ahorro' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-700 dark:text-slate-200'}`}>
+                {tx.tipo === 'Ingreso' ? '+' : tx.tipo === 'Gasto' ? '−' : ''}{formatMXN(Number(tx.monto))}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ── Bloque 5 ────────────────────────────────────────────────────────────────
+
+function MasVistas({ quincenaId }: { quincenaId: string }) {
+  const links = [
+    { href: '/detalle', label: 'Vista detallada' },
+    { href: quincenaId ? `/configuracion/liquidez/reconciliar?quincenaId=${quincenaId}` : '/configuracion/liquidez/reconciliar', label: 'Conciliar plan y caja' },
+    { href: '/configuracion/liquidez', label: 'Liquidez y cierre proyectado' },
+    { href: '/presupuesto', label: 'Historial y tendencia' },
+    { href: '/ahorro', label: 'Ahorro' },
+  ]
+  return (
+    // El relleno extra cubre el area segura del iPhone, que la barra de
+    // pestanas suma a su propia altura.
+    <section className="pt-1 pb-[env(safe-area-inset-bottom)] md:pb-0">
+      <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500 mb-1">Más vistas</h2>
+      <div className="flex flex-wrap gap-x-4">
+        {links.map(l => (
+          <Link
+            key={l.label}
+            href={l.href}
+            className="inline-flex min-h-[44px] items-center gap-1 text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400"
+          >
+            {l.label} <ChevronRight size={14} className="text-slate-400 dark:text-slate-500" />
+          </Link>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+// ── Estados de carga ────────────────────────────────────────────────────────
+
+function ErrorCarga({ onReintentar }: { onReintentar: () => void }) {
+  return (
+    <div className="rounded-2xl border border-rose-200 dark:border-rose-800/50 bg-rose-50 dark:bg-rose-950/20 p-5">
+      <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">No se pudieron cargar los datos de la quincena.</p>
+      <p className="mt-1 text-xs text-rose-700/80 dark:text-rose-300/80">Revisa tu conexión. Si sigue fallando, la base de datos puede no estar respondiendo.</p>
+      <button
+        type="button"
+        onClick={onReintentar}
+        className="mt-3 inline-flex min-h-[44px] items-center rounded-lg border border-rose-200 dark:border-rose-800/60 bg-white dark:bg-slate-800 px-4 text-sm font-semibold text-rose-700 dark:text-rose-300 cursor-pointer"
+      >
+        Reintentar
+      </button>
     </div>
   )
 }
 
-function DashboardSkeleton() {
+function InicioSkeleton() {
   return (
-    <div className="space-y-5 animate-pulse">
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-3 h-60 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
-        <div className="lg:col-span-2 h-60 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
-      </div>
-      <div className="h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
-      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-        <div className="lg:col-span-3 h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
-        <div className="lg:col-span-2 h-56 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
-      </div>
+    <div className="space-y-4 animate-pulse">
+      <div className="h-48 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[0, 1, 2, 3].map(i => <div key={i} className="h-24 rounded-xl bg-slate-200/70 dark:bg-slate-800" />)}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="h-48 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
+        <div className="h-48 rounded-2xl bg-slate-200/70 dark:bg-slate-800" />
       </div>
     </div>
   )

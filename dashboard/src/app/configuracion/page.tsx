@@ -1,4 +1,4 @@
-import { Droplets, Tag, Users, Repeat, ClipboardList, CalendarRange, KeyRound, Wallet, SlidersHorizontal } from 'lucide-react'
+import { Droplets, Tag, Users, Repeat, ClipboardList, CalendarRange, KeyRound, Wallet, SlidersHorizontal, Scale } from 'lucide-react'
 
 const sections = [
   {
@@ -32,6 +32,17 @@ const sections = [
     icon: Droplets,
     color: 'text-blue-600',
     bg: 'bg-blue-50',
+  },
+  // La auditoria plan vs caja salio del Inicio y del banner global: aqui queda
+  // su unica entrada fija, tambien desde el telefono. Sin ?quincenaId abre la
+  // quincena de hoy.
+  {
+    href: '/configuracion/liquidez/reconciliar',
+    title: 'Conciliar plan y caja',
+    description: 'Compara lo que produjo la quincena en tus cuentas contra el margen del presupuesto, y explica la diferencia.',
+    icon: Scale,
+    color: 'text-sky-600',
+    bg: 'bg-sky-50',
   },
   {
     href: '/configuracion/lineas-recurrentes',

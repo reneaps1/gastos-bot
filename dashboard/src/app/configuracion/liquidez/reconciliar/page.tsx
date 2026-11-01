@@ -19,7 +19,7 @@ import {
 import { FormModal } from '@/components/ui/FormModal'
 import { useToast } from '@/components/Toast'
 import { formatDate, formatMXN } from '@/lib/utils'
-import { getMexicoDateString } from '@/lib/quincena-selection'
+import { getDefaultQuincenaId, getMexicoDateString } from '@/lib/quincena-selection'
 
 interface Categoria {
   id: number
@@ -141,7 +141,22 @@ function MiniCard({ label, value, hint, tone = 'neutral' }: {
 function ConciliarContent() {
   const { toast } = useToast()
   const searchParams = useSearchParams()
-  const quincenaId = searchParams.get('quincenaId') ?? ''
+  const quincenaIdParam = searchParams.get('quincenaId') ?? ''
+  // Sin ?quincenaId (entrada desde el hub de Configuracion) se abre la
+  // quincena de hoy, con la misma regla que Presupuesto > Tabla y el Inicio.
+  // null = todavia no se resuelve.
+  const [quincenaHoy, setQuincenaHoy] = useState<string | null>(null)
+  useEffect(() => {
+    if (quincenaIdParam) return
+    let cancelado = false
+    fetch('/api/quincenas')
+      .then(r => r.json())
+      .then(items => { if (!cancelado) setQuincenaHoy(getDefaultQuincenaId(Array.isArray(items) ? items : [])) })
+      .catch(() => { if (!cancelado) setQuincenaHoy('') })
+    return () => { cancelado = true }
+  }, [quincenaIdParam])
+  const quincenaId = quincenaIdParam || quincenaHoy || ''
+  const quincenaResuelta = quincenaIdParam !== '' || quincenaHoy !== null
   const [data, setData] = useState<ReconciliacionData | null>(null)
   const [categorias, setCategorias] = useState<Categoria[]>([])
   const [loading, setLoading] = useState(true)
@@ -152,7 +167,7 @@ function ConciliarContent() {
   const [ajusteSaving, setAjusteSaving] = useState(false)
 
   const fetchData = useCallback(async () => {
-    if (!quincenaId) { setLoading(false); return }
+    if (!quincenaId) { if (quincenaResuelta) setLoading(false); return }
     setLoading(true)
     try {
       const [res, catRes] = await Promise.all([
@@ -168,7 +183,7 @@ function ConciliarContent() {
     } finally {
       setLoading(false)
     }
-  }, [quincenaId, toast])
+  }, [quincenaId, quincenaResuelta, toast])
 
   useEffect(() => { void fetchData() }, [fetchData])
 

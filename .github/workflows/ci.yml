@@ -43,9 +43,11 @@ jobs:
       - name: Generar Prisma Client
         run: DATABASE_URL="postgresql://x:x@localhost:0/x" npx prisma generate
 
-      # Las cinco suites: WhatsApp, Telegram, watchdog, reglas de calculo y el
-      # agente de herramientas
+      # Las seis suites: WhatsApp, Telegram, watchdog, reglas de calculo, el
+      # agente de herramientas y el "¿Cuadra tu dinero?" del dashboard
       # (test-calculos.js, que vigila el neteo de retiros de ahorro y el
-      # Vigente vs Original). Ninguna toca la red ni Postgres -- usan dobles
-      # en memoria que imitan al motor real.
+      # Vigente vs Original; test-cuadre.js, que transpila
+      # dashboard/src/lib/presupuesto-totales.ts con el typescript de la raiz).
+      # Ninguna toca la red ni Postgres -- usan dobles en memoria que imitan al
+      # motor real.
       - run: npm test
