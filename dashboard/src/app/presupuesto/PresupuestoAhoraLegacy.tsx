@@ -2043,14 +2043,14 @@ function PresupuestoTabla({
   // tiempo), no un flujo -- sumar el snapshot de varias quincenas no
   // significaria nada (no es "cuanto dinero tuviste en total"). Se queda
   // atada solo a tablaQuincenaId (la primaria), igual que en Tarjetas.
-  const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number }) | null>(null)
+  const [liquidezSnapshot, setLiquidezSnapshot] = useState<(LiquidezMontos & { faltaPagar: number; fechaCorte: string | null }) | null>(null)
   useEffect(() => {
     if (tablaQuincenaId === ALL_QUINCENAS) { setLiquidezSnapshot(null); return }
     fetch(`/api/liquidez?quincenaId=${tablaQuincenaId}`)
       .then(r => r.json())
       .then(data => {
         const raw = Array.isArray(data) && data.length > 0 ? data[0] : null
-        setLiquidezSnapshot(raw ? { ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0 } : null)
+        setLiquidezSnapshot(raw ? { ...normalizeMontos(raw), faltaPagar: Number(raw.faltaPagar) || 0, fechaCorte: raw.fechaCorte ?? null } : null)
       })
   }, [tablaQuincenaId])
   const totalLiquidez = liquidezSnapshot ? sumLiquidez(liquidezSnapshot) : 0
@@ -2074,6 +2074,23 @@ function PresupuestoTabla({
   // un segundo fetch con asignado=no.
   const libreSinAsignar = totalesTx != null
     ? calcularLibreSinAsignar(totalesTx.ingreso, presupuestosTabla, Math.max(totalesTx.gasto - totalRealFijo, 0))
+    : null
+
+  // Conciliacion "¿cuadra tu dinero?": lo que deberia sobrarte segun el
+  // presupuesto (libreSinAsignar) contra lo que de verdad te sobra segun el
+  // corte de cuentas (liquidez - falta por cubrir). Ambos descuentan lo
+  // comprometido, asi que la diferencia es solo dinero que el sistema no
+  // conoce: saldo arrastrado de quincenas anteriores, movimientos sin
+  // registrar o un corte desactualizado. Solo con una quincena: Liquidez es
+  // una foto de la primaria y no se puede comparar con un flujo combinado.
+  const conciliacion = !multiSelectTablaActivo && liquidezSnapshot && libreSinAsignar != null && totalesTx != null
+    ? {
+        ingresos: totalesTx.ingreso,
+        comprometido: totalesTx.ingreso - libreSinAsignar,
+        teorico: libreSinAsignar,
+        real: totalLiquidez - totalFaltaPorPagar,
+        delta: (totalLiquidez - totalFaltaPorPagar) - libreSinAsignar,
+      }
     : null
 
   // Movimientos sin partida asignada -- mismo panel que la vista Tarjetas,
@@ -2195,8 +2212,8 @@ function PresupuestoTabla({
           })()}
         />
         <KpiCard
-          label="Balance (plan)" value={formatMXN(balanceReal)}
-          subtitle={`plan ${formatMXN(balancePresupuestado)}`}
+          label="Ingresos − gastos" value={formatMXN(balanceReal)}
+          subtitle={`real · plan ${formatMXN(balancePresupuestado)}`}
           icon={<Scale size={20} className={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-300' : 'text-rose-600 dark:text-rose-300'} />}
           color={balanceReal >= 0 ? 'text-indigo-600 dark:text-indigo-400' : 'text-rose-600 dark:text-rose-400'}
           bg={balanceReal >= 0 ? 'bg-indigo-50 dark:bg-indigo-950/50 dark:ring-1 dark:ring-indigo-800/50' : 'bg-rose-50 dark:bg-rose-950/50 dark:ring-1 dark:ring-rose-800/50'}
@@ -2242,6 +2259,61 @@ function PresupuestoTabla({
           />
         )}
       </div>
+
+      {conciliacion && (() => {
+        const { ingresos, comprometido, teorico, real, delta } = conciliacion
+        const cuadra = Math.abs(delta) < 1
+        const signed = (n: number) => `${n < 0 ? '−' : ''}${formatMXN(Math.abs(n))}`
+        const tone = (n: number) => n < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
+        return (
+          <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-4">
+            <div className="flex items-baseline justify-between gap-2 mb-3">
+              <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-200">¿Cuadra tu dinero?</h3>
+              {liquidezSnapshot?.fechaCorte && (
+                <span className="text-[11px] text-slate-400 dark:text-slate-500">corte del {formatDate(liquidezSnapshot.fechaCorte)}</span>
+              )}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-3">
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-900/40 p-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Debería sobrarte <span className="text-slate-400 dark:text-slate-500">(según presupuesto)</span></p>
+                <p className={`text-xl font-bold tabular-nums ${tone(teorico)}`}>{signed(teorico)}</p>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 tabular-nums">{formatMXN(ingresos)} ingresos − {formatMXN(comprometido)} comprometido</p>
+              </div>
+              <span className="hidden md:block text-slate-300 dark:text-slate-600 text-lg">vs</span>
+              <div className="rounded-xl bg-slate-50 dark:bg-slate-900/40 p-3">
+                <p className="text-xs text-slate-500 dark:text-slate-400">Te sobra de verdad <span className="text-slate-400 dark:text-slate-500">(según tus cuentas)</span></p>
+                <p className={`text-xl font-bold tabular-nums ${tone(real)}`}>{signed(real)}</p>
+                <p className="text-[11px] text-slate-400 dark:text-slate-500 tabular-nums">{formatMXN(totalLiquidez)} en cuentas − {formatMXN(totalFaltaPorPagar)} por pagar</p>
+              </div>
+              <span className="hidden md:block text-slate-300 dark:text-slate-600 text-lg">=</span>
+              <div className={`rounded-xl p-3 ring-1 ${cuadra
+                ? 'bg-emerald-50 ring-emerald-200 dark:bg-emerald-950/40 dark:ring-emerald-800/50'
+                : delta > 0
+                  ? 'bg-blue-50 ring-blue-200 dark:bg-blue-950/40 dark:ring-blue-800/50'
+                  : 'bg-amber-50 ring-amber-200 dark:bg-amber-950/40 dark:ring-amber-800/50'}`}>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Diferencia</p>
+                <p className={`text-xl font-bold tabular-nums ${cuadra ? 'text-emerald-600 dark:text-emerald-400' : delta > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                  {cuadra ? '✓ Cuadra' : `${delta > 0 ? '+' : '−'}${formatMXN(Math.abs(delta))}`}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {cuadra
+                    ? 'Tus cuentas coinciden con el presupuesto.'
+                    : delta > 0
+                      ? 'Tienes más en cuentas de lo que el presupuesto espera.'
+                      : 'Tienes menos en cuentas de lo que el presupuesto espera.'}
+                </p>
+              </div>
+            </div>
+            {!cuadra && (
+              <p className="mt-3 text-[11px] text-slate-400 dark:text-slate-500">
+                {delta > 0
+                  ? 'Suele ser saldo que traías de quincenas anteriores o un ingreso sin registrar.'
+                  : 'Suele ser un gasto sin registrar, un cargo pendiente o un corte de liquidez desactualizado.'}
+              </p>
+            )}
+          </div>
+        )
+      })()}
 
       {tablaQuincenaId !== ALL_QUINCENAS && (
         <TxSinPresupuestoPanel
