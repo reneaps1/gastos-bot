@@ -250,6 +250,7 @@ model Transaccion {
 
   whatsappMsgs WhatsappMessage[]
   creditoPagos CreditoPago[]
+  clasificacionFeedback ClasificacionFeedback?
 
   @@index([quincenaId], name: "idx_tx_quincena")
   @@index([quincenaConsumoId], name: "idx_tx_quincena_consumo")
@@ -515,6 +516,29 @@ model AuditLog {
   @@index([tabla, registroId], name: "idx_audit_tabla")
   @@index([fecha], name: "idx_audit_fecha")
   @@map("audit_log")
+}
+
+// Retroalimentacion del clasificador de categorias (src/clasificador/): que
+// categoria se le propuso al usuario para un gasto y que contesto. Ver la
+// migracion 20261101120000_clasificacion_feedback.
+model ClasificacionFeedback {
+  id                   Int       @id @default(autoincrement())
+  transaccionId        Int       @unique @map("transaccion_id")
+  texto                String    @db.VarChar(200)
+  categoriaPropuestaId Int       @map("categoria_propuesta_id")
+  categoriaFinalId     Int?      @map("categoria_final_id")
+  // 'modelo' | 'reglas'
+  fuente               String    @db.VarChar(20)
+  confianza            Decimal?  @db.Decimal(5, 4)
+  // 'pendiente' | 'aceptada' | 'corregida'
+  estado               String    @default("pendiente") @db.VarChar(15)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  resueltaEn           DateTime? @map("resuelta_en") @db.Timestamptz()
+
+  transaccion Transaccion @relation(fields: [transaccionId], references: [id], onDelete: Cascade)
+
+  @@index([estado], name: "idx_clasif_feedback_estado")
+  @@map("clasificacion_feedback")
 }
 
 model LiquidezSnapshot {

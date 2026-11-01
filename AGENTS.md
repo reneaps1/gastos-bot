@@ -123,6 +123,14 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 | Navegación con estado activo | cerrado | Indicador de página activa + menú hamburguesa móvil |
 | Páginas de configuración | cerrado | Categorías, usuarios, liquidez, conceptos recurrentes, audit log |
 
+### Fase 8 — Clasificador de categorias que aprende (Fase A)
+
+| Entregable | Estado | Detalle |
+|------------|--------|---------|
+| Clasificador ML (Naive Bayes) + pregunta Si/No en Telegram | en revision | `CLASIFICADOR_ML.md`, `src/clasificador/`, migracion `20261101120000_clasificacion_feedback` |
+| Fase B: que aprenda la linea de presupuesto | pendiente | |
+| Fase C (opcional): embeddings para sinonimos | pendiente | |
+
 ### Fase 9 — Issues
 
 | Issue | Estado | Titulo |
