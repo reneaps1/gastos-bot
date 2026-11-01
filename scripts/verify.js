@@ -15,7 +15,7 @@ const EXPECTED_TABLES = [
 
 const EXPECTED_VIEWS = [
   'v_resumen_quincenal', 'v_estado_deudas',
-  'v_ejecucion_presupuesto', 'v_corte_liquidez', 'v_liquidez',
+  'v_ejecucion_presupuesto',
   'v_consumo_quincenal', 'v_credito_pagos_quincena',
 ]
 

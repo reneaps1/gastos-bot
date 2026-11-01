@@ -23,6 +23,19 @@ if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
   if (!generated) process.exit(1)
   process.env.DATABASE_URL = realDbUrl
   if (realDbUrl) {
+    // 20261026120000_views_sql fallo en produccion el 2026-10-26 (creaba dos
+    // vistas sobre columnas que ya no existian) y con eso Prisma bloqueo todas
+    // las migraciones posteriores (P3009). El archivo ya esta corregido; aqui
+    // se marca como rolled-back para que migrate deploy la vuelva a aplicar.
+    // Una vez reaplicada es un no-op: Prisma solo vuelve a marcar la fila vieja
+    // del intento fallido (ya rolled-back) y no toca la aplicada; probado con
+    // `migrate status` contra Postgres real. Si no hay fila fallida, el resolve
+    // falla y se ignora. Mismo patron que el `start` de dashboard/package.json.
+    try {
+      execSync('node_modules/.bin/prisma migrate resolve --rolled-back 20261026120000_views_sql', { stdio: 'pipe' })
+    } catch {
+      // Nunca fallo en esta base: no hay nada que marcar.
+    }
     try {
       execSync('node_modules/.bin/prisma migrate deploy', { stdio: 'inherit' })
     } catch (e) {
