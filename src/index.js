@@ -347,12 +347,14 @@ function budgetButtons(transaccionId, candidates, { pagina = 0, sugeridaId = nul
 // numero, ver seis botones se lee como "estas son las que hay" y la salida
 // ("Ver más", "Buscar por categoría") parece decoracion en vez de la forma de
 // llegar a las otras veinte.
-function budgetPrompt(candidates, sugeridaId = null) {
+function budgetPrompt(candidates, sugeridaId = null, confianza = null) {
   const sugerida = sugeridaId ? candidates.find(c => c.id === sugeridaId) : null
   const cabeTodo = candidates.length <= PAGE_SIZE
+  // La confianza solo existe cuando la ⭐ la puso el modelo de lineas.
+  const seguro = confianza == null ? '' : ` _(${Math.round(confianza * 100)} % seguro)_`
 
   const pregunta = sugerida
-    ? `¿Lo mando a *${telegram.escapeMarkdown(sugerida.descripcion)}*? Toca la que corresponda:`
+    ? `¿Lo mando a *${telegram.escapeMarkdown(sugerida.descripcion)}*?${seguro} Toca la que corresponda:`
     : '¿A cuál línea lo mando?'
 
   if (cabeTodo) return pregunta
@@ -1042,12 +1044,27 @@ async function budgetPickerContext(txId) {
     resolveBudgetLine(lookup),
   ])
 
-  const sugeridaId = sugerida?.id ?? null
+  // Primero la regla (cuando opina acierta ~94 %, pero opina en 1 de cada 3
+  // gastos); si no opina, el modelo que aprende de las lineas que el usuario
+  // ya eligio. Ese orden fue el mejor con los datos reales: la ⭐ correcta
+  // pasa de 34 % a 62 % (ver CLASIFICADOR_ML.md). Determinista entre
+  // llamadas mientras no se aprenda nada nuevo, que es lo que la paginacion
+  // sin estado necesita.
+  let sugeridaId = sugerida?.id ?? null
+  let sugeridaConfianza = null
+  if (sugeridaId === null) {
+    const delModelo = await clasificador.sugerirLinea(tx.descripcion, candidatas)
+    if (delModelo) {
+      sugeridaId = delModelo.id
+      sugeridaConfianza = delModelo.confianza
+    }
+  }
+
   const ordenadas = sugeridaId === null ? candidatas : [
     ...candidatas.filter(c => c.id === sugeridaId),
     ...candidatas.filter(c => c.id !== sugeridaId),
   ]
-  return { tx, candidatas: ordenadas, sugeridaId }
+  return { tx, candidatas: ordenadas, sugeridaId, sugeridaConfianza }
 }
 
 // Redibuja el mensaje con las lineas de presupuesto del movimiento, debajo de
@@ -1060,14 +1077,14 @@ async function mostrarLineas(callback, txId, encabezado, { conPregunta = false }
     await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
     return
   }
-  const { tx, candidatas, sugeridaId } = contexto
+  const { tx, candidatas, sugeridaId, sugeridaConfianza } = contexto
 
   let texto = encabezado
   let buttons = []
   if (!TIPOS_CON_LINEA.has(tx.tipo) || tx.presupuestoId != null) {
     // Ya tiene linea (o no lleva): no hay nada mas que elegir.
   } else if (candidatas.length > 0) {
-    texto += `\n\n${budgetPrompt(candidatas, sugeridaId)}`
+    texto += `\n\n${budgetPrompt(candidatas, sugeridaId, sugeridaConfianza)}`
     buttons = budgetButtons(tx.id, candidatas, { sugeridaId })
   } else {
     texto += '\n\n⚠️ No hay líneas de presupuesto de este tipo en la quincena.'
@@ -1178,7 +1195,7 @@ async function handleBudgetCallback(callback) {
         await telegram.editMessageText(callback.chatId, callback.messageId, describeRechazo('TX_NO_EXISTE'))
         return
       }
-      const { tx, candidatas, sugeridaId } = contexto
+      const { tx, candidatas, sugeridaId, sugeridaConfianza } = contexto
       const resumen = `💡 *$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`
 
       if (candidatas.length === 0) {
@@ -1210,7 +1227,7 @@ async function handleBudgetCallback(callback) {
       await telegram.editMessageText(
         callback.chatId,
         callback.messageId,
-        `${resumen}\n\n${budgetPrompt(candidatas, sugeridaId)}`,
+        `${resumen}\n\n${budgetPrompt(candidatas, sugeridaId, sugeridaConfianza)}`,
         { buttons: budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0, sugeridaId }) },
       )
       return
@@ -1253,6 +1270,7 @@ async function handleBudgetCallback(callback) {
         await telegram.editMessageText(callback.chatId, callback.messageId, `⚠️ ${describeRechazo(creada.reason)}`)
         return
       }
+      clasificador.aprenderLinea(tx.descripcion, creada.linea.descripcion)
       const bloqueNueva = budgetStatusBlock(creada.status)
       const encabezadoNueva = `✅ Creé la línea *${telegram.escapeMarkdown(creada.linea.descripcion)}* en ${telegram.escapeMarkdown(creada.linea.categoria?.nombre || '')} y le asigné el movimiento.`
       await telegram.editMessageText(
@@ -1321,6 +1339,11 @@ async function handleBudgetCallback(callback) {
       // invitando a repetir algo que no va a funcionar.
       await telegram.editMessageText(callback.chatId, callback.messageId, `⚠️ ${describeRechazo(result.reason)}`)
       return
+    }
+
+    // El toque de linea es el ejemplo del modelo de lineas, con o sin cruce.
+    if (!result.yaEstaba && result.tx?.descripcion && result.linea?.descripcion) {
+      clasificador.aprenderLinea(result.tx.descripcion, result.linea.descripcion)
     }
 
     const bloque = budgetStatusBlock(result.status)
@@ -1456,7 +1479,7 @@ async function registrarGastoTelegram(message, user, senderName, expenseData) {
     sugeridaId = contexto?.sugeridaId ?? null
 
     if (candidatas.length > 0) {
-      confirmation += `\n\n${budgetPrompt(candidatas, sugeridaId)}`
+      confirmation += `\n\n${budgetPrompt(candidatas, sugeridaId, contexto?.sugeridaConfianza ?? null)}`
       buttons = budgetButtons(tx.id, candidatas, { sugeridaId })
     } else {
       confirmation += '\n\n⚠️ No hay líneas de presupuesto de este tipo en la quincena.'

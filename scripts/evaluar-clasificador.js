@@ -19,6 +19,14 @@
 //                     (es lo que hace el bot)
 //   4. Si la tabla clasificacion_feedback ya tiene respuestas, dice que
 //      porcentaje de propuestas acepto el usuario, por fuente.
+//   5. (Solo con base) LINEA: con los gastos que ya tienen linea, compara la
+//      ⭐ de la regla (resolveBudgetLine) contra regla + modelo, aprendiendo
+//      en linea como el bot.
+//
+// OJO CON LA CATEGORIA: casi todas las categorias guardadas las puso el
+// parser, no una persona, asi que "reglas" sale favorecida (se compara contra
+// si misma). Por eso el bot ya NO entrena la categoria con el historial, solo
+// con las respuestas Si/No; esta seccion queda como referencia.
 //
 // Solo hace SELECT. No toca la tabla de feedback ni las transacciones.
 
@@ -48,7 +56,6 @@ async function cargarDesdeBase() {
   } catch (error) {
     console.log(`(sin tabla clasificacion_feedback todavia: ${error.code || error.message.trim().split('\n')[0]})`)
   }
-  await prisma.$disconnect?.()
   return {
     ejemplos: txs.filter(t => t.categoria?.tipo === 'Gasto').map(t => ({ descripcion: t.descripcion, categoria: t.categoria.nombre })),
     feedback,
@@ -101,6 +108,53 @@ function evaluar(ejemplos) {
   return { res, entrenamiento: entrenamiento.length, porCategoria, errores }
 }
 
+// La ⭐ de linea: regla primero y, si no opina, el modelo (lo que hace el bot).
+async function evaluarLineas() {
+  const prisma = require('../src/lib/prisma')
+  const { resolveBudgetLine } = require('../src/budgetTracker')
+  const { normalizar } = require('../src/clasificador/modelo')
+  const { MIN_PROBABILIDAD_LINEA } = require('../src/clasificador')
+
+  const txs = await prisma.transaccion.findMany({
+    where: { presupuestoId: { not: null } },
+    select: { id: true, descripcion: true, quincenaId: true, categoriaId: true, tipo: true, presupuesto: { select: { descripcion: true, categoria: { select: { tipo: true } } } } },
+    orderBy: { id: 'asc' },
+  })
+  const lineas = await prisma.presupuesto.findMany({
+    where: { estadoLinea: { not: 'Cancelada' } },
+    select: { id: true, quincenaId: true, descripcion: true, categoria: { select: { tipo: true } } },
+  })
+  if (txs.length < 30) return
+
+  const corte = Math.floor(txs.length * 0.6)
+  const modelo = new Modelo()
+  for (const t of txs.slice(0, corte)) modelo.aprender(t.descripcion, normalizar(t.presupuesto.descripcion))
+
+  let n = 0, reglaOpina = 0, reglaOk = 0, combinadoOk = 0, combinadoOpina = 0
+  for (const t of txs.slice(corte)) {
+    const verdad = normalizar(t.presupuesto.descripcion)
+    const tipo = t.presupuesto.categoria?.tipo
+    const candidatas = lineas.filter(l => l.quincenaId === t.quincenaId && l.categoria?.tipo === tipo)
+    if (candidatas.length >= 2) {
+      n++
+      const regla = await resolveBudgetLine({ quincenaId: t.quincenaId, categoriaId: t.categoriaId, descripcion: t.descripcion, tipo })
+      let elegida = regla ? normalizar(regla.descripcion) : null
+      if (regla) { reglaOpina++; if (elegida === verdad) reglaOk++ }
+      if (!elegida) {
+        const { ranking, cobertura } = modelo.predecir(t.descripcion, new Set(candidatas.map(c => normalizar(c.descripcion))))
+        const top = ranking[0]
+        if (top && top.probabilidad >= MIN_PROBABILIDAD_LINEA && cobertura >= MIN_COBERTURA) elegida = top.etiqueta
+      }
+      if (elegida) { combinadoOpina++; if (elegida === verdad) combinadoOk++ }
+    }
+    modelo.aprender(t.descripcion, verdad)
+  }
+
+  console.log(`\nLINEA (${n} gastos mas nuevos con linea, aprendiendo en linea)`)
+  console.log(`  ⭐ correcta, solo la regla (antes):  ${pct(reglaOk, n)}  (opina en ${pct(reglaOpina, n)}, acierta ${pct(reglaOk, reglaOpina)})`)
+  console.log(`  ⭐ correcta, regla + modelo (bot):   ${pct(combinadoOk, n)}  (opina en ${pct(combinadoOpina, n)}, acierta ${pct(combinadoOk, combinadoOpina)})`)
+}
+
 async function main() {
   const i = process.argv.indexOf('--json')
   const { ejemplos, feedback } = i > -1 ? cargarDesdeJson(process.argv[i + 1]) : await cargarDesdeBase()
@@ -137,6 +191,11 @@ async function main() {
       const aceptadas = de.filter(f => f.estado === 'aceptada')
       console.log(`  ${fuente.padEnd(7)} propuestas=${de.length}; contestadas=${resueltas.length}; aceptadas=${pct(aceptadas.length, resueltas.length)}`)
     }
+  }
+
+  if (i === -1) {
+    await evaluarLineas()
+    await require('../src/lib/prisma').$disconnect?.()
   }
 }
 

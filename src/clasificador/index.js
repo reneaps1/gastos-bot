@@ -1,51 +1,58 @@
-// Servicio del clasificador de categorias: lo entrena con lo que ya hay en
-// Postgres, propone una categoria para cada gasto nuevo y aprende de la
-// respuesta del usuario (aprendizaje supervisado).
+// Servicio del clasificador: dos modelos que aprenden de lo que el usuario
+// decide en Telegram (aprendizaje supervisado).
+//
+//   - CATEGORIA: propone la categoria de un gasto nuevo y pregunta "¿Es
+//     correcta?". Aprende SOLO de las respuestas (feedback `aceptada` o
+//     `corregida`).
+//   - LINEA: sugiere la linea de presupuesto (la ⭐). Aprende de cada gasto
+//     que ya tiene linea: esas las eligio una persona con un toque.
+//
+// POR QUE LA CATEGORIA NO APRENDE DEL HISTORIAL (Fase B, 2026-11-01)
+//   Medido con los datos de produccion (CLASIFICADOR_ML.md): entrenado con
+//   la categoria de las transacciones viejas, el modelo ACERTABA MENOS que las
+//   palabras clave (60-65 % contra 68 %). Esas categorias casi nunca las
+//   confirmo nadie -- las puso el mismo parser -- y son inconsistentes
+//   ("tacos" esta en Familia, Personal y Diversion). Aprendia ruido. Las
+//   respuestas Si/No, en cambio, son decisiones del usuario.
+//   Las lineas si son confiables, y ahi el modelo casi duplica a la regla de
+//   texto: la ⭐ correcta pasa de 34 % a 62 % de los gastos.
 //
 // CICLO
-//   1. entrenar(): lee `transacciones` de tipo Gasto y arma el modelo. Corre
-//      perezoso en la primera propuesta y se repite cada REENTRENAR_MS, asi
-//      que lo que se corrija desde el dashboard tambien termina aprendido.
-//   2. proponer(descripcion): la categoria mas probable, SOLO si el modelo
-//      esta seguro. Si no, devuelve null y el llamador usa las reglas de
-//      siempre (palabras clave de src/parser.js y la IA).
-//   3. registrarPropuesta(): guarda en `clasificacion_feedback` que se
-//      propuso, con que confianza y de donde salio (modelo o reglas).
-//   4. resolver(): el usuario contesto. Se marca `aceptada` o `corregida`, y
-//      el ejemplo entra al modelo EN ESE MOMENTO, sin esperar al reentreno.
-//
-// QUE CUENTA COMO EJEMPLO AL ENTRENAR
-//   Toda transaccion de tipo Gasto, MENOS las que el bot propuso y nadie ha
-//   confirmado todavia (feedback `pendiente` con la misma categoria que se
-//   propuso). Sin esta exclusion el modelo se entrenaria con sus propias
-//   adivinanzas y un error se reforzaria solo. Si una pendiente se cambio
-//   desde el dashboard (su categoria ya no es la propuesta), eso SI es una
-//   decision humana y cuenta.
+//   1. entrenar(): arma los dos modelos desde Postgres. Corre perezoso en la
+//      primera llamada y se repite cada REENTRENAR_MS (asi tambien aprende lo
+//      que se corrija desde el dashboard).
+//   2. proponer() / sugerirLinea(): solo opinan si estan seguros; si no,
+//      devuelven null y manda la regla de siempre.
+//   3. registrarPropuesta() / resolver(): la pregunta de categoria y su
+//      respuesta, en `clasificacion_feedback`. aprenderLinea(): el toque de
+//      linea. Las dos aprenden EN ESE MOMENTO, sin esperar al reentreno.
 //
 // NADA DE ESTO PUEDE TIRAR EL REGISTRO DE UN GASTO: cada funcion publica
 // atrapa sus errores, los loguea y devuelve null. Si el clasificador falla,
 // el bot se comporta exactamente como antes de que existiera.
 
 const prisma = require('../lib/prisma')
-const { Modelo } = require('./modelo')
+const { Modelo, normalizar } = require('./modelo')
 
 const REENTRENAR_MS = 6 * 60 * 60 * 1000
-// Por debajo de esto el modelo no opina: con 5 ejemplos cualquier
+// Por debajo de esto un modelo no opina: con 5 ejemplos cualquier
 // probabilidad es ruido.
 const MIN_EJEMPLOS = 20
-// Umbrales para que la propuesta del modelo reemplace a las reglas. Se
-// ajustan con scripts/evaluar-clasificador.js contra los datos reales.
-const MIN_PROBABILIDAD = 0.6
+// Categoria: el modelo reemplaza a las reglas solo si esta muy seguro.
+const MIN_PROBABILIDAD = 0.8
 const MIN_COBERTURA = 0.5
-// Una correccion explicita pesa mas que un dato historico: es la senal mas
-// clara que existe de que el modelo (o las reglas) se equivocaron. Con 3, una
-// sola correccion de "uber eats" arrastraba tambien a "uber" solo; con 2 se
+// Linea: el umbral que mejor resulto en la evaluacion con datos reales
+// (con 0.4 la ⭐ acierta 62 %; con 0.5, 61 %).
+const MIN_PROBABILIDAD_LINEA = 0.4
+// Una correccion explicita pesa mas que una aceptacion. Con 3, una sola
+// correccion de "uber eats" arrastraba tambien a "uber" solo; con 2 se
 // separan (ver el caso M5 de scripts/test-clasificador.js).
 const PESO_CORRECCION = 2
 
 const ESTADO = { PENDIENTE: 'pendiente', ACEPTADA: 'aceptada', CORREGIDA: 'corregida' }
 
-let modelo = null
+let modelo = null        // categoria
+let modeloLineas = null  // linea (etiqueta = nombre normalizado de la linea)
 let categorias = new Map() // id -> nombre (solo Gasto activas)
 let entrenadoEn = 0
 let entrenando = null
@@ -54,49 +61,43 @@ function habilitado() {
   return process.env.CLASIFICADOR_ML_ENABLED !== 'false'
 }
 
-async function cargarEjemplos() {
-  const [txs, feedback, cats] = await Promise.all([
-    prisma.transaccion.findMany({
-      where: { tipo: 'Gasto' },
-      select: { id: true, descripcion: true, categoriaId: true },
-    }),
-    prisma.clasificacionFeedback.findMany({
-      where: { estado: { in: [ESTADO.PENDIENTE, ESTADO.CORREGIDA] } },
-      select: { transaccionId: true, categoriaPropuestaId: true, estado: true },
-    }),
-    prisma.categoria.findMany({ where: { activo: true, tipo: 'Gasto' } }),
-  ])
-
-  const propuestaPendiente = new Map()
-  const corregidas = new Set()
-  for (const f of feedback || []) {
-    if (f.estado === ESTADO.PENDIENTE) propuestaPendiente.set(f.transaccionId, f.categoriaPropuestaId)
-    else corregidas.add(f.transaccionId)
-  }
-
-  const ejemplos = []
-  for (const tx of txs || []) {
-    if (propuestaPendiente.get(tx.id) === tx.categoriaId) continue
-    ejemplos.push({
-      texto: tx.descripcion,
-      categoriaId: tx.categoriaId,
-      peso: corregidas.has(tx.id) ? PESO_CORRECCION : 1,
-    })
-  }
-  return { ejemplos, cats: cats || [] }
+// Las lineas se repiten cada quincena con el mismo nombre ("Super",
+// "Gasolina Spark") pero con otro id. Por eso se aprende el NOMBRE.
+function etiquetaLinea(descripcion) {
+  return normalizar(descripcion)
 }
 
 async function entrenar() {
-  const { ejemplos, cats } = await cargarEjemplos()
+  const [feedback, cats, conLinea] = await Promise.all([
+    prisma.clasificacionFeedback.findMany({
+      where: { estado: { in: [ESTADO.ACEPTADA, ESTADO.CORREGIDA] } },
+      select: { texto: true, categoriaFinalId: true, estado: true },
+    }),
+    prisma.categoria.findMany({ where: { activo: true, tipo: 'Gasto' } }),
+    prisma.transaccion.findMany({
+      where: { presupuestoId: { not: null } },
+      select: { descripcion: true, presupuesto: { select: { descripcion: true } } },
+    }),
+  ])
+
+  const permitidas = new Set((cats || []).map(c => c.id))
   const nuevo = new Modelo()
-  const permitidas = new Set(cats.map(c => c.id))
-  for (const e of ejemplos) {
-    if (permitidas.has(e.categoriaId)) nuevo.aprender(e.texto, e.categoriaId, e.peso)
+  for (const f of feedback || []) {
+    if (permitidas.has(f.categoriaFinalId)) {
+      nuevo.aprender(f.texto, f.categoriaFinalId, f.estado === ESTADO.CORREGIDA ? PESO_CORRECCION : 1)
+    }
   }
+
+  const lineas = new Modelo()
+  for (const t of conLinea || []) {
+    if (t.presupuesto?.descripcion) lineas.aprender(t.descripcion, etiquetaLinea(t.presupuesto.descripcion))
+  }
+
   modelo = nuevo
-  categorias = new Map(cats.map(c => [c.id, c.nombre]))
+  modeloLineas = lineas
+  categorias = new Map((cats || []).map(c => [c.id, c.nombre]))
   entrenadoEn = Date.now()
-  console.log(`CLASIFICADOR_ENTRENADO: ejemplos=${nuevo.ejemplos}; categorias=${categorias.size}`)
+  console.log(`CLASIFICADOR_ENTRENADO: categoria=${nuevo.ejemplos} respuestas; lineas=${lineas.ejemplos} gastos; categorias=${categorias.size}`)
   return nuevo
 }
 
@@ -187,6 +188,45 @@ async function resolver({ transaccionId, categoriaFinalId }) {
   }
 }
 
+/**
+ * La linea de presupuesto mas probable para una descripcion, ELEGIDA ENTRE
+ * `candidatas` (las de la quincena y el tipo del movimiento), o null si el
+ * modelo no esta seguro.
+ *
+ * @param {Array<{id:number, descripcion:string}>} candidatas
+ * @returns {Promise<{id:number, confianza:number}|null>}
+ */
+async function sugerirLinea(descripcion, candidatas) {
+  if (!habilitado() || !candidatas?.length) return null
+  try {
+    await asegurarModelo()
+    if (!modeloLineas || modeloLineas.ejemplos < MIN_EJEMPLOS) return null
+    const porEtiqueta = new Map()
+    for (const c of candidatas) {
+      const e = etiquetaLinea(c.descripcion)
+      if (e && !porEtiqueta.has(e)) porEtiqueta.set(e, c)
+    }
+    const { ranking, cobertura } = modeloLineas.predecir(descripcion, porEtiqueta.keys())
+    const top = ranking[0]
+    if (!top || top.probabilidad < MIN_PROBABILIDAD_LINEA || cobertura < MIN_COBERTURA) return null
+    return { id: porEtiqueta.get(top.etiqueta).id, confianza: top.probabilidad }
+  } catch (error) {
+    console.error('CLASIFICADOR_LINEA_ERROR:', error.message)
+    return null
+  }
+}
+
+// El usuario enlazo un gasto a una linea: ese es el ejemplo.
+function aprenderLinea(descripcion, lineaDescripcion) {
+  if (!habilitado() || !modeloLineas) return false
+  try {
+    return modeloLineas.aprender(descripcion, etiquetaLinea(lineaDescripcion))
+  } catch (error) {
+    console.error('CLASIFICADOR_LINEA_ERROR:', error.message)
+    return false
+  }
+}
+
 // La propuesta que sigue esperando respuesta para esa transaccion, o null.
 async function pendiente(transaccionId) {
   if (!habilitado()) return null
@@ -202,6 +242,7 @@ async function pendiente(transaccionId) {
 // Solo para pruebas: olvida el modelo en memoria.
 function _reiniciar() {
   modelo = null
+  modeloLineas = null
   categorias = new Map()
   entrenadoEn = 0
   entrenando = null
@@ -212,11 +253,14 @@ module.exports = {
   registrarPropuesta,
   resolver,
   pendiente,
+  sugerirLinea,
+  aprenderLinea,
   entrenar,
   habilitado,
   ESTADO,
   MIN_EJEMPLOS,
   MIN_PROBABILIDAD,
   MIN_COBERTURA,
+  MIN_PROBABILIDAD_LINEA,
   _reiniciar,
 }

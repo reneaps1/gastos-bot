@@ -82,7 +82,7 @@ const cambiosPresupuesto = []
 // `feedbackFalla` simula que la tabla no responde: el gasto se tiene que
 // registrar igual, solo que sin la pregunta (caso CL10).
 const feedbacks = []
-const historico = []
+const historicoLineas = []
 let feedbackFalla = false
 let nextFeedbackId = 1
 
@@ -130,10 +130,11 @@ const fakePrisma = {
     // filtra por descripcion). Los demas llamadores siguen viendo [] para no
     // cambiar el comportamiento de los casos A-H.
     findMany: async ({ where, select } = {}) => {
-      // La firma del entrenamiento del clasificador (src/clasificador): todas
-      // las de tipo Gasto, solo descripcion y categoria. Devuelve `historico`,
-      // que arranca vacio (el modelo no opina) y el caso CL9 llena.
-      if (where?.tipo === 'Gasto' && select?.descripcion && select?.categoriaId) return historico
+      // La firma del entrenamiento del modelo de LINEAS (src/clasificador):
+      // los gastos que ya tienen linea, con el nombre de la linea. Devuelve
+      // `historicoLineas`, que arranca vacio (el modelo no opina) y el caso
+      // CL11 llena.
+      if (where?.presupuestoId?.not === null && select?.presupuesto) return historicoLineas
       const texto = where?.descripcion?.contains
       if (!texto) return []
       return creadas.filter(t =>
@@ -823,13 +824,14 @@ async function main() {
   check('sin pregunta', !cbsDe(enviados.at(-1)).some(cb => cb.startsWith('ka:')), JSON.stringify(cbsDe(enviados.at(-1))))
   check('sin feedback', !fbDe(txCL8), JSON.stringify(fbDe(txCL8)))
 
-  console.log('\n=== CL9: con datos, el modelo propone y gana a las reglas ===')
+  console.log('\n=== CL9: con respuestas confirmadas, el modelo propone y gana a las reglas ===')
   // "convivio" no esta en las palabras clave: las reglas lo mandan a Personal
-  // por default. En el historico, los convivios son de Familia.
+  // por default. En las respuestas Si/No del usuario, los convivios son de
+  // Familia. (El modelo de categoria aprende SOLO de esas respuestas.)
   let hid = 90000
   for (let i = 0; i < 3; i++) {
-    for (const d of ['convivio escuela', 'convivio kinder', 'convivio salon', 'convivio fin de curso', 'croquetas']) historico.push({ id: hid++, descripcion: d, categoriaId: 3 })
-    for (const d of ['ropa', 'gym', 'tenis', 'corte pelo', 'yoga']) historico.push({ id: hid++, descripcion: d, categoriaId: 7 })
+    for (const d of ['convivio escuela', 'convivio kinder', 'convivio salon', 'convivio fin de curso', 'croquetas']) feedbacks.push({ id: hid, transaccionId: hid++, texto: d, categoriaPropuestaId: 3, categoriaFinalId: 3, fuente: 'reglas', estado: 'aceptada' })
+    for (const d of ['ropa', 'gym', 'tenis', 'corte pelo', 'yoga']) feedbacks.push({ id: hid, transaccionId: hid++, texto: d, categoriaPropuestaId: 7, categoriaFinalId: 7, fuente: 'reglas', estado: 'aceptada' })
   }
   require(path.join(SRC, 'clasificador'))._reiniciar()
   await post(textUpdate('95 convivio'))
@@ -848,6 +850,36 @@ async function main() {
   check('registro el gasto', creadas.length === antesCL10 + 1, creadas.length)
   check('confirmo el registro', /registrado/i.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
   check('sin pregunta (no hay donde guardar la respuesta)', !cbsDe(enviados.at(-1)).some(cb => cb.startsWith('ka:')), JSON.stringify(cbsDe(enviados.at(-1))))
+
+  console.log('\n=== CL11: la ⭐ de linea la pone el modelo cuando la regla no opina ===')
+  // "kermes" no se parece a ningun nombre de linea, y la regla solo mira las
+  // lineas de SU categoria (Personal). En el historico, las kermes van a
+  // Colegiatura (linea 12, de Familia).
+  for (let i = 0; i < 25; i++) historicoLineas.push({ descripcion: i % 2 ? 'kermes escuela' : 'kermes', presupuesto: { descripcion: 'Colegiatura' } })
+  for (let i = 0; i < 10; i++) historicoLineas.push({ descripcion: 'ropa', presupuesto: { descripcion: 'Gastos Personales' } })
+  require(path.join(SRC, 'clasificador'))._reiniciar()
+  await post(textUpdate('55 kermes'))
+  const txCL11 = creadas.at(-1)
+  const msgCL11 = enviados.at(-1)
+  const filasLineaCL11 = (msgCL11?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
+  check('la ⭐ es Colegiatura', filasLineaCL11[0]?.[0]?.callback_data === `pl:${txCL11.id}:12` && /^⭐ /.test(filasLineaCL11[0]?.[0]?.text || ''), JSON.stringify(filasLineaCL11[0]))
+  check('el texto la propone con su confianza', /¿Lo mando a \*Colegiatura\*\? _\(\d+ % seguro\)_/.test(msgCL11?.message || ''), msgCL11?.message)
+  await post(callbackUpdate(`pp:${txCL11.id}:0`))
+  check('paginar conserva la misma ⭐ (orden determinista)', editados.at(-1)?.buttons?.find(f => f[0]?.callback_data?.startsWith('pl:'))?.[0]?.callback_data === `pl:${txCL11.id}:12`, JSON.stringify(editados.at(-1)?.buttons?.[0]))
+
+  console.log('\n=== CL12: elegir una linea le ensena al modelo ===')
+  // "rifa" es nueva para el modelo: no hay ⭐. Despues de mandarla dos veces
+  // a Colegiatura... la tercera ya la sugiere.
+  await post(textUpdate('20 rifa'))
+  const txR1 = creadas.at(-1)
+  check('al principio no la conoce', !(enviados.at(-1)?.buttons || []).some(f => /^⭐ /.test(f[0]?.text || '')), JSON.stringify(enviados.at(-1)?.buttons?.[1]))
+  await post(callbackUpdate(`pl:${txR1.id}:12`))
+  await post(textUpdate('20 rifa'))
+  await post(callbackUpdate(`pl:${creadas.at(-1).id}:12`))
+  await post(textUpdate('20 rifa'))
+  const txR3 = creadas.at(-1)
+  const filasR3 = (enviados.at(-1)?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
+  check('despues de dos toques ya la sugiere', filasR3[0]?.[0]?.callback_data === `pl:${txR3.id}:12` && /^⭐ /.test(filasR3[0]?.[0]?.text || ''), JSON.stringify(filasR3[0]))
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
