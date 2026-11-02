@@ -541,6 +541,24 @@ model ClasificacionFeedback {
   @@map("clasificacion_feedback")
 }
 
+// Palabras o frases sueltas que el usuario le escribio al bot en la sesion de
+// entrenamiento "Yo te escribo palabras". No son gastos. Ver la migracion
+// 20261102120000_clasificador_ejemplos.
+model ClasificadorEjemplo {
+  id               Int       @id @default(autoincrement())
+  texto            String    @db.VarChar(200)
+  lineaDescripcion String?   @map("linea_descripcion") @db.VarChar(200)
+  categoriaId      Int?      @map("categoria_id")
+  // 'pendiente' | 'confirmado'
+  estado           String    @default("pendiente") @db.VarChar(15)
+  acerto           Boolean?
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  resueltoEn       DateTime? @map("resuelto_en") @db.Timestamptz()
+
+  @@index([estado], name: "idx_clasif_ejemplos_estado")
+  @@map("clasificador_ejemplos")
+}
+
 model LiquidezSnapshot {
   id            Int      @id @default(autoincrement())
   fechaCorte    DateTime @map("fecha_corte") @db.Timestamptz()

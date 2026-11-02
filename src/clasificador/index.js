@@ -68,7 +68,7 @@ function etiquetaLinea(descripcion) {
 }
 
 async function entrenar() {
-  const [feedback, cats, conLinea] = await Promise.all([
+  const [feedback, cats, conLinea, ejemplos] = await Promise.all([
     prisma.clasificacionFeedback.findMany({
       where: { estado: { in: [ESTADO.ACEPTADA, ESTADO.CORREGIDA] } },
       select: { texto: true, categoriaFinalId: true, estado: true },
@@ -77,6 +77,15 @@ async function entrenar() {
     prisma.transaccion.findMany({
       where: { presupuestoId: { not: null } },
       select: { descripcion: true, presupuesto: { select: { descripcion: true } } },
+    }),
+    // Palabras sueltas del entrenamiento "Yo te escribo palabras". Si la tabla
+    // falla, se entrena sin ellas: no puede tumbar a los otros dos origenes.
+    (async () => prisma.clasificadorEjemplo.findMany({
+      where: { estado: 'confirmado' },
+      select: { texto: true, lineaDescripcion: true, categoriaId: true, acerto: true },
+    }))().catch(error => {
+      console.error('CLASIFICADOR_EJEMPLOS_ERROR:', error.message)
+      return []
     }),
   ])
 
@@ -93,11 +102,19 @@ async function entrenar() {
     if (t.presupuesto?.descripcion) lineas.aprender(t.descripcion, etiquetaLinea(t.presupuesto.descripcion))
   }
 
+  // Una palabra que el bot fallo y el usuario corrigio pesa como cualquier
+  // correccion: es la senal mas clara de que habia que cambiar de opinion.
+  for (const e of ejemplos || []) {
+    const peso = e.acerto === false ? PESO_CORRECCION : 1
+    if (e.lineaDescripcion) lineas.aprender(e.texto, etiquetaLinea(e.lineaDescripcion), peso)
+    if (permitidas.has(e.categoriaId)) nuevo.aprender(e.texto, e.categoriaId, peso)
+  }
+
   modelo = nuevo
   modeloLineas = lineas
   categorias = new Map((cats || []).map(c => [c.id, c.nombre]))
   entrenadoEn = Date.now()
-  console.log(`CLASIFICADOR_ENTRENADO: categoria=${nuevo.ejemplos} respuestas; lineas=${lineas.ejemplos} gastos; categorias=${categorias.size}`)
+  console.log(`CLASIFICADOR_ENTRENADO: categoria=${nuevo.ejemplos} respuestas; lineas=${lineas.ejemplos} gastos; palabras=${(ejemplos || []).length}; categorias=${categorias.size}`)
   return nuevo
 }
 
@@ -257,6 +274,21 @@ async function sugerirLinea(descripcion, candidatas) {
   }
 }
 
+// Una palabra suelta confirmada en el entrenamiento: entra a los dos modelos
+// en ese momento (y queda en clasificador_ejemplos para los reentrenos).
+function aprenderEjemplo(texto, lineaDescripcion, categoriaId, { corregida = false } = {}) {
+  if (!habilitado()) return false
+  try {
+    const peso = corregida ? PESO_CORRECCION : 1
+    if (modeloLineas && lineaDescripcion) modeloLineas.aprender(texto, etiquetaLinea(lineaDescripcion), peso)
+    if (modelo && categorias.has(Number(categoriaId))) modelo.aprender(texto, Number(categoriaId), peso)
+    return true
+  } catch (error) {
+    console.error('CLASIFICADOR_EJEMPLO_ERROR:', error.message)
+    return false
+  }
+}
+
 // El usuario enlazo un gasto a una linea: ese es el ejemplo.
 function aprenderLinea(descripcion, lineaDescripcion) {
   if (!habilitado() || !modeloLineas) return false
@@ -297,6 +329,7 @@ module.exports = {
   pendiente,
   sugerirLinea,
   aprenderLinea,
+  aprenderEjemplo,
   entrenar,
   habilitado,
   ESTADO,
