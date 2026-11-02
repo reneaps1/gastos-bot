@@ -130,7 +130,8 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 | Clasificador ML (Naive Bayes) de categoria | cerrado (#126, #127); pregunta Si/No retirada el 2026-11-01 | `CLASIFICADOR_ML.md`, `src/clasificador/`, migracion `20261101120000_clasificacion_feedback` |
 | Fase B: que aprenda la linea de presupuesto (sugerida correcta 34 % -> 62 %) | cerrado (#128) | `CLASIFICADOR_ML.md` |
 | Sesion de entrenamiento por Telegram ("vamos a entrenar") + un solo boton para corregir categoria | cerrado (#129) | `CLASIFICADOR_ML.md`, `src/entrenamiento.js` |
-| Bot centrado en la linea: la categoria sigue a la linea sin preguntar; entrenamiento solo de linea | en revision | `assignLine` en `src/budgetActions.js`, `src/entrenamiento.js`, `src/sugerenciaLinea.js` |
+| Bot centrado en la linea: la categoria sigue a la linea sin preguntar; entrenamiento solo de linea | cerrado (#130) | `assignLine` en `src/budgetActions.js`, `src/entrenamiento.js`, `src/sugerenciaLinea.js` |
+| Entrenamiento "Yo te escribo palabras" (menu de estilos, tabla `clasificador_ejemplos`) | en revision | `src/entrenamientoPalabras.js`, migracion `20261102120000_clasificador_ejemplos` |
 | Fase C (opcional): embeddings para sinonimos | pendiente | |
 
 ### Fase 9 — Issues

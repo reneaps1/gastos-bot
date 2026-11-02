@@ -22,6 +22,7 @@ function check(label, cond, extra) {
 
 let txs = []
 let conLinea = []
+let ejemplos = []
 let feedbacks = []
 let categorias = []
 let falla = false
@@ -46,6 +47,9 @@ const fakePrisma = {
   },
   categoria: {
     findMany: async ({ where }) => { registrar('categoria', 'findMany'); return categorias.filter(c => cumple(c, where)) },
+  },
+  clasificadorEjemplo: {
+    findMany: async ({ where }) => { registrar('ejemplo', 'findMany'); return ejemplos.filter(e => cumple(e, where)) },
   },
   clasificacionFeedback: {
     findMany: async ({ where }) => { registrar('feedback', 'findMany'); return feedbacks.filter(f => cumple(f, where)) },
@@ -228,6 +232,24 @@ async function main() {
   clasificador.aprenderLinea('kermes', 'Colegiatura')
   clasificador.aprenderLinea('kermes', 'Colegiatura')
   check('despues de dos toques -> Colegiatura', (await clasificador.sugerirLinea('kermes', CANDIDATAS))?.id === 34)
+
+  console.log('\n=== P1: las palabras sueltas confirmadas entran a los dos modelos ===')
+  ejemplos = [
+    ...Array.from({ length: 3 }, () => ({ texto: 'piñata', lineaDescripcion: 'Colegiatura', categoriaId: FAMILIA, estado: 'confirmado' })),
+    { texto: 'globos', lineaDescripcion: 'Colegiatura', categoriaId: FAMILIA, estado: 'pendiente' },
+  ]
+  clasificador._reiniciar()
+  check('linea: "piñata" -> Colegiatura', (await clasificador.sugerirLinea('piñata', CANDIDATAS))?.id === 34)
+  check('las pendientes no cuentan', logs.some(l => l.includes('palabras=3')), logs.filter(l => l.includes('ENTRENADO')).at(-1))
+  clasificador.aprenderEjemplo('serpentinas', 'Colegiatura', FAMILIA)
+  clasificador.aprenderEjemplo('serpentinas', 'Colegiatura', FAMILIA)
+  check('aprenderEjemplo ensena al momento', (await clasificador.sugerirLinea('serpentinas', CANDIDATAS))?.id === 34)
+  ejemplos = []
+  const tablaEjemplos = fakePrisma.clasificadorEjemplo
+  delete fakePrisma.clasificadorEjemplo
+  clasificador._reiniciar()
+  check('sin la tabla de palabras, entrena igual con lo demas', (await clasificador.sugerirLinea('croquetas gatos', CANDIDATAS))?.id === 31)
+  fakePrisma.clasificadorEjemplo = tablaEjemplos
 
   console.log('\n=== C1: confirmar (sesion de entrenamiento) ===')
   const sinFila = await clasificador.confirmar({ transaccionId: 7000, texto: 'kermes', categoriaPropuestaId: PERSONAL, categoriaFinalId: FAMILIA, fuente: 'reglas' })

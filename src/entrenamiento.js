@@ -21,6 +21,8 @@
 // siguiente" es el gasto que cumple lo de arriba con el id inmediato menor.
 // La sesion sobrevive a que Render duerma o reinicie el servicio.
 //
+//   em:g / em:p         menu de "vamos a entrenar": g = gastos (este archivo),
+//                       p = palabras (src/entrenamientoPalabras.js)
 //   ea:<tx>:<linea>     si, esa linea
 //   el:<tx>:<pagina>    elegir otra linea (menu paginado)
 //   en:<tx>:<linea>     esta es la linea
@@ -40,8 +42,9 @@ const clasificador = require('./clasificador')
 const { normalizar } = require('./clasificador/modelo')
 const { lineasPara } = require('./sugerenciaLinea')
 const { assignLine, describeRechazo } = require('./budgetActions')
+const palabras = require('./entrenamientoPalabras')
 
-const ACCIONES = new Set(['ea', 'el', 'en', 'eb', 'es', 'ef', 'eo', 'ec'])
+const ACCIONES = new Set(['em', 'ea', 'el', 'en', 'eb', 'es', 'ef', 'eo', 'ec'])
 const LOTE = 50
 const LINEAS_POR_PAGINA = 6
 
@@ -129,16 +132,27 @@ async function mostrarSiguiente(callback, antesDe, encabezado) {
     : vistaFin(`${encabezado ? `${encabezado}\n\n` : ''}Ya no quedan gastos sin línea.`))
 }
 
-// "vamos a entrenar"
+// "vamos a entrenar": primero se elige el estilo.
 async function iniciar(message) {
+  await telegram.sendTelegramMessage(
+    message.chatId,
+    '🧠 *¿Cómo entrenamos?*\n\n📋 *Tú me muestras gastos*: te enseño tus gastos sin línea y me dices a cuál va cada uno.\n\n✍️ *Yo te escribo palabras*: tú me escribes palabras sueltas y yo adivino la línea. Más retador.',
+    message.messageId,
+    { buttons: [[{ text: '📋 Tú me muestras gastos', callback_data: 'em:g' }], [{ text: '✍️ Yo te escribo palabras', callback_data: 'em:p' }]] },
+  )
+  console.log(`TELEGRAM_ENTRENAMIENTO_MENU: chat=${message.chatId}`)
+}
+
+// Modo "Tu me muestras gastos" (boton em:g).
+async function iniciarGastos(callback) {
+  palabras.salir(callback.chatId)
   const item = await siguiente(null)
   if (!item) {
-    await telegram.sendTelegramMessage(message.chatId, 'No hay gastos sin línea por revisar. ¡Todo está asignado!', message.messageId)
+    await editar(callback, vistaFin('No hay gastos sin línea por revisar. ¡Todo está asignado!'))
     return
   }
-  const vista = vistaGasto(item, 'Te muestro tus gastos sin línea, del más reciente al más viejo. Confirma o elige otra: aprendo con cada uno.')
-  await telegram.sendTelegramMessage(message.chatId, vista.texto, message.messageId, { buttons: vista.buttons })
-  console.log(`TELEGRAM_ENTRENAMIENTO_INICIO: chat=${message.chatId}; primero=${item.tx.id}`)
+  await editar(callback, vistaGasto(item, 'Te muestro tus gastos sin línea, del más reciente al más viejo. Confirma o elige otra: aprendo con cada uno.'))
+  console.log(`TELEGRAM_ENTRENAMIENTO_INICIO: chat=${callback.chatId}; primero=${item.tx.id}`)
 }
 
 // Asigna la linea (la categoria la sigue) y los dos modelos aprenden.
@@ -184,6 +198,11 @@ async function handleCallback(callback) {
   const [accion, txId, a] = callback.data.split(':')
   console.log(`TELEGRAM_ENTRENAMIENTO: accion=${accion} tx=${txId} chat=${callback.chatId}`)
 
+  if (accion === 'em') {
+    if (txId === 'p') await palabras.entrar(callback)
+    else await iniciarGastos(callback)
+    return
+  }
   if (accion === 'ef') {
     await editar(callback, vistaFin())
     return

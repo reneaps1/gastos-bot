@@ -90,7 +90,22 @@ function cumpleFeedback(f, where = {}) {
   return Object.entries(where).every(([k, v]) => (v && typeof v === 'object' && Array.isArray(v.in) ? v.in.includes(f[k]) : f[k] === v))
 }
 
+// Palabras sueltas del modo "Yo te escribo palabras" (clasificador_ejemplos).
+const ejemplos = []
+let nextEjemploId = 1
 const fakePrisma = {
+  clasificadorEjemplo: {
+    create: async ({ data }) => {
+      const row = { id: nextEjemploId++, estado: 'pendiente', lineaDescripcion: null, categoriaId: null, acerto: null, createdAt: new Date(), resueltoEn: null, ...data }
+      ejemplos.push(row)
+      return row
+    },
+    findUnique: async ({ where }) => ejemplos.find(e => e.id === where.id) || null,
+    update: async ({ where, data }) => Object.assign(ejemplos.find(e => e.id === where.id), data),
+    findMany: async ({ where } = {}) => ejemplos.filter(e =>
+      (where?.estado === undefined || e.estado === where.estado) &&
+      (where?.createdAt?.gte === undefined || e.createdAt >= where.createdAt.gte)),
+  },
   clasificacionFeedback: {
     create: async ({ data }) => {
       if (feedbackFalla) throw new Error('relation "clasificacion_feedback" does not exist')
@@ -910,7 +925,10 @@ async function main() {
   const escriturasE1 = escrituras.length
   const antesE1 = creadas.length
   await post(textUpdate('Vamos a entrenar'))
-  const msgE1 = enviados.at(-1)
+  const menuE1 = enviados.at(-1)
+  check('primero pregunta el estilo', /¿Cómo entrenamos\?/.test(menuE1?.message || '') && cbsDe(menuE1).join() === 'em:g,em:p', JSON.stringify(cbsDe(menuE1)))
+  await post(callbackUpdate('em:g'))
+  const msgE1 = editados.at(-1)
   const cbsE1 = cbsDe(msgE1)
   check('no registro nada', creadas.length === antesE1 && escrituras.length === escriturasE1, creadas.length)
   check('es la sesion, con ese gasto', /Entrenamiento/.test(msgE1?.message || '') && (msgE1?.message || '').includes('ropa'), msgE1?.message)
@@ -976,7 +994,75 @@ async function main() {
   console.log('\n=== E9: sin nada por revisar, lo dice ===')
   for (const t of creadas.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null)) t.presupuestoId = 10
   await post(textUpdate('/entrenar'))
-  check('"/entrenar" tambien funciona, y avisa que no hay nada', /No hay gastos sin línea/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+  await post(callbackUpdate('em:g'))
+  check('"/entrenar" tambien funciona, y avisa que no hay nada', /No hay gastos sin línea/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  // --- Modo "Yo te escribo palabras" (src/entrenamientoPalabras.js) ---
+  console.log('\n=== W1: elegir el modo palabras ===')
+  await post(textUpdate('vamos a entrenar'))
+  await post(callbackUpdate('em:p'))
+  check('explica el modo y que no registra gastos', /Modo palabras/.test(editados.at(-1)?.message || '') && /No se registra ningún gasto/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== W2: una palabra NO registra gasto y el bot adivina la linea ===')
+  const antesW2 = creadas.length
+  await post(textUpdate('kermes'))
+  const msgW2 = enviados.at(-1)
+  const ejW2 = ejemplos.at(-1)
+  check('no registro ningun gasto', creadas.length === antesW2, creadas.length)
+  check('guardo la palabra como ejemplo pendiente', ejW2?.texto === 'kermes' && ejW2?.estado === 'pendiente', JSON.stringify(ejW2))
+  check('adivina Colegiatura', /«kermes» → ¿\*Colegiatura\*\?/.test(msgW2?.message || '') && cbsDe(msgW2).includes(`wa:${ejW2.id}:12`), `${cbsDe(msgW2)} / ${msgW2?.message}`)
+  check('callback_data cabe en 64 bytes', cbsDe(msgW2).every(cb => Buffer.byteLength(cb) <= 64))
+
+  console.log('\n=== W3: "Si" -> acerto, se guarda y aprende ===')
+  await post(callbackUpdate(`wa:${ejW2.id}:12`))
+  check('ejemplo confirmado, con la linea y su categoria', ejW2.estado === 'confirmado' && ejW2.lineaDescripcion === 'Colegiatura' && ejW2.categoriaId === 3 && ejW2.acerto === true, JSON.stringify(ejW2))
+  check('lo celebra y pide otra', /¡Acerté!/.test(editados.at(-1)?.message || '') && /Escríbeme otra/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  const escriturasW3 = escrituras.length
+  await post(callbackUpdate(`wa:${ejW2.id}:12`))
+  check('contestar dos veces no cambia nada', escrituras.length === escriturasW3 && ejemplos.filter(e => e.estado === 'confirmado').length === 1)
+
+  console.log('\n=== W4: palabra desconocida -> elegir linea -> no acerto, pero aprende ===')
+  await post(textUpdate('piñata'))
+  const ejW4 = ejemplos.at(-1)
+  const msgW4 = enviados.at(-1)
+  check('no sabe y ofrece elegir', /no sé a qué línea va/.test(msgW4?.message || '') && cbsDe(msgW4).includes(`wl:${ejW4.id}:0:0`), `${cbsDe(msgW4)} / ${msgW4?.message}`)
+  await post(callbackUpdate(`wl:${ejW4.id}:0:0`))
+  const menuW4 = cbsDe(editados.at(-1))
+  check('menu de lineas de gasto de la quincena', menuW4.includes(`wn:${ejW4.id}:12:0`) && !menuW4.some(cb => cb.startsWith(`wn:${ejW4.id}:13:`)) && menuW4.includes(`wb:${ejW4.id}`), JSON.stringify(menuW4))
+  await post(callbackUpdate(`wn:${ejW4.id}:12:0`))
+  check('confirmado sin acierto', ejW4.estado === 'confirmado' && ejW4.lineaDescripcion === 'Colegiatura' && ejW4.acerto === false, JSON.stringify(ejW4))
+  check('dice que lo aprendio', /Aprendido: «piñata»/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  await post(textUpdate('piñata'))
+  check('la siguiente vez ya la adivina', /«piñata» → ¿\*Colegiatura\*\?/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+
+  console.log('\n=== W5: un wn forjado hacia una linea de ingreso se rechaza ===')
+  const ejW5 = ejemplos.at(-1)
+  await post(callbackUpdate(`wn:${ejW5.id}:13:0`))
+  check('no lo confirmo', ejW5.estado === 'pendiente', JSON.stringify(ejW5))
+  check('lo dice', /⚠️/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== W6: en modo palabras, un mensaje con monto SI se registra como gasto ===')
+  const antesW6 = creadas.length
+  const ejemplosW6 = ejemplos.length
+  await post(textUpdate('150 croquetas'))
+  check('registro el gasto', creadas.length === antesW6 + 1 && Number(creadas.at(-1).monto) === 150, creadas.length)
+  check('y no lo tomo como palabra', ejemplos.length === ejemplosW6, ejemplos.length)
+
+  console.log('\n=== W7: "listo" termina con el marcador ===')
+  await post(textUpdate('listo'))
+  check('marcador de la ronda', /Acerté 1 de 2\./.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+  const ejemplosW7 = ejemplos.length
+  await post(textUpdate('kermes'))
+  check('fuera del modo, una palabra ya no es entrenamiento', ejemplos.length === ejemplosW7, ejemplos.length)
+
+  console.log('\n=== W8: el modo se apaga solo tras la inactividad ===')
+  const palabrasMod = require(path.join(SRC, 'entrenamientoPalabras'))
+  await post(textUpdate('vamos a entrenar'))
+  await post(callbackUpdate('em:p'))
+  for (const s of palabrasMod._sesiones.values()) s.ultimo -= palabrasMod.INACTIVIDAD_MS + 1000
+  const ejemplosW8 = ejemplos.length
+  await post(textUpdate('kermes'))
+  check('tras 15 min sin escribir, ya no toma palabras', ejemplos.length === ejemplosW8, ejemplos.length)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

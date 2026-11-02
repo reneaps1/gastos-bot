@@ -63,6 +63,7 @@ const telegram = require('./telegram')
 const aiRouter = require('./aiRouter')
 const clasificador = require('./clasificador')
 const entrenamiento = require('./entrenamiento')
+const entrenamientoPalabras = require('./entrenamientoPalabras')
 const { lineasPara } = require('./sugerenciaLinea')
 const financeAgent = require('./financeAgent')
 const { clasificarMensaje } = require('./telegramRouting')
@@ -1109,6 +1110,10 @@ async function handleBudgetCallback(callback) {
       await entrenamiento.handleCallback(callback)
       return
     }
+    if (entrenamientoPalabras.ACCIONES.has(accion)) {
+      await entrenamientoPalabras.handleCallback(callback)
+      return
+    }
 
     if (accion === 'ka' || accion === 'kn' || accion === 'kc' || accion === 'kb') {
       await handleCategoriaCallback(callback, accion, txId, arg)
@@ -1504,6 +1509,14 @@ app.post('/telegram/webhook', async (req, res) => {
     if (entrenamiento.esPedidoDeEntrenar(message.text)) {
       await entrenamiento.iniciar(message)
       logTelegramQA({ chatId: message.chatId, ruta: 'entrenamiento', inicio, pregunta: message.text })
+      return
+    }
+
+    // Modo "Yo te escribo palabras" activo en este chat: una palabra suelta se
+    // atiende ahi. Un monto o una pregunta siguen el flujo normal (devuelve
+    // false), asi que un gasto nunca se pierde por estar entrenando.
+    if (await entrenamientoPalabras.manejarMensaje(message)) {
+      logTelegramQA({ chatId: message.chatId, ruta: 'entrenamiento-palabras', inicio, pregunta: message.text })
       return
     }
 

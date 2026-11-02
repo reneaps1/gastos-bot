@@ -27,7 +27,17 @@ El gasto se guarda **antes** de cualquier toque (decisión del 1/11/2026): si no
 
 Historia: la Fase A preguntaba «¿Es correcta la categoría?» con botones Sí/No; el 1/11 se quitó y quedó un solo botón de categoría, y el 2/11 también se quitó, junto con la pregunta de cruce. Los botones viejos (`ka`, `kn`, `kc`, `kb`, `pk`, `pm`) se siguen atendiendo para los mensajes que todavía los tienen.
 
-## Sesión de entrenamiento (línea)
+## Sesión de entrenamiento
+
+«vamos a entrenar» abre un menú con dos estilos (botones `em:g` y `em:p`):
+
+```
+¿Cómo entrenamos?
+[Tú me muestras gastos]     <- el bot muestra gastos sin línea
+[Yo te escribo palabras]    <- el usuario escribe palabras sueltas; más retador
+```
+
+### Estilo «Tú me muestras gastos» (línea)
 
 El usuario escribe **«vamos a entrenar»** (también «entrenar», «/entrenar», «entrenemos»; el mensaje tiene que ser solo la frase, así que «entrenamiento de futbol 300» se registra como gasto). El bot muestra, **uno por uno y del más reciente al más viejo, los gastos que todavía no tienen línea**, con la línea que cree, en **un solo mensaje que se va editando**:
 
@@ -59,6 +69,41 @@ $100.00 — croquetas
 | `eo`, `ec` | botones de categoría de la versión anterior: redibujan el gasto |
 
 Todo pasa por `assignLine` (`linkTransactionToBudget` + `alignTransactionCategory`), que revalida contra la base: mismo tipo, misma quincena y línea no cancelada.
+
+### Estilo «Yo te escribo palabras»
+
+El usuario escribe palabras o frases sueltas y el bot adivina la línea. **No se registra ningún gasto**: cada palabra se guarda en la tabla `clasificador_ejemplos` y, al confirmarla, entra a los dos modelos (la línea, y la categoría de esa línea). Al terminar, el bot dice cuántas acertó: ese es el reto.
+
+```
+Tú:   croquetas
+Milo: «croquetas» -> ¿Super? (72 %)
+      [Sí] [Otra línea]
+      [Terminar]
+Tú:   (Sí)
+Milo: ¡Acerté! «croquetas» -> Super. Escríbeme otra.
+Tú:   listo
+Milo: Entrenamiento de palabras terminado. Acerté 7 de 10.
+```
+
+- La línea se adivina **solo con el modelo**, entre las líneas de gasto de la quincena actual: no hay un gasto con categoría, así que la regla de texto no opina. Por eso es el estilo más retador.
+- Si el bot falla y el usuario lo corrige, el ejemplo pesa ×2, como cualquier corrección. Con eso una sola corrección le cambia la opinión (caso W4 de las pruebas).
+- **Es el único modo con estado** (en memoria, por chat). Mientras está activo, un mensaje **sin números ni «?»** se toma como palabra. Un mensaje con monto («150 super») **se registra como gasto normal** y una pregunta se contesta normal: olvidar que se está entrenando no hace perder un gasto.
+- Termina con «listo» (también «terminar», «salir», «ya»), con el botón Terminar o tras **15 minutos sin escribir**. Si el servicio reinicia, el modo se pierde (hay que volver a entrar), pero **lo aprendido no**: está en `clasificador_ejemplos` y se carga en cada reentreno.
+- Contestar dos veces el mismo mensaje no enseña dos veces.
+
+| `callback_data` | Qué hace |
+|---|---|
+| `wa:<ejemplo>:<linea>` | sí, la sugerida (acertó) |
+| `wl:<ejemplo>:<pagina>:<sugerida>` | menú de líneas |
+| `wn:<ejemplo>:<linea>:<sugerida>` | línea elegida (acertó si es la sugerida) |
+| `wb:<ejemplo>` | volver |
+| `wf:0` | terminar |
+
+La línea se revalida contra la base: que exista, que no esté cancelada y que sea de gasto.
+
+### Tabla `clasificador_ejemplos`
+
+Migración `20261102120000_clasificador_ejemplos` (raíz y dashboard, idénticas). Es **aditiva**: tabla nueva, `IF NOT EXISTS`. Guarda `texto`, `linea_descripcion` (el **nombre** de la línea, que se repite cada quincena), `categoria_id` (la de la línea), `estado` (`pendiente` o `confirmado`) y `acerto` (si la sugerida del bot fue la correcta). Solo las `confirmado` entran al entrenamiento. Si la tabla fallara, el clasificador entrena igual con lo demás.
 
 ## Cómo decide la categoría
 
@@ -144,7 +189,8 @@ En los logs de Render: `CLASIFICADOR_ENTRENADO`, `CLASIFICADOR_DIFIERE` (el mode
 
 - `scripts/test-clasificador.js` (71): modelo y servicio. Normalización, tolerancia a errores de dedo, «no sé» con texto desconocido, que una corrección cambie la opinión, exclusión de las pendientes, pesos, idempotencia, que nunca truene y el apagado.
 - `scripts/test-telegram-flow.js`, casos E1–E9: la sesión de entrenamiento de línea (orden, sugerida, Sí, Otra línea con categoría que sigue, `en` forjado hacia otro tipo, Saltar sin escrituras, Terminar, botones viejos, nada por revisar), y AC: elegir una línea de otra categoría mueve la categoría sin preguntar.
-- `scripts/test-clasificador.js`, casos C1–C2: `confirmar` y qué frases abren la sesión.
+- `scripts/test-clasificador.js`, casos C1–C2: `confirmar` y qué frases abren la sesión. P1: las palabras confirmadas entran a los dos modelos, las pendientes no, y sin la tabla entrena igual.
+- `scripts/test-telegram-flow.js`, casos W1–W8 (estilo palabras): no registra gastos, acierto, corrección que se aprende a la primera, `wn` forjado hacia una línea de ingreso, monto que sí se registra como gasto, «listo» con marcador y apagado por inactividad.
 - `scripts/test-telegram-flow.js`, casos CL11–CL12 (Fase B): la la pone el modelo cuando la regla no opina, la paginación la conserva y dos toques le enseñan una línea nueva.
 - `scripts/test-telegram-flow.js`, casos CL1–CL10: la pregunta, Sí, No, Volver, Corregir, `kc` forjado hacia otro tipo, línea de la misma categoría = sí, cruce = corrección, que un ingreso no pregunte, que el modelo entrenado le gane a las reglas y que una falla de la tabla no impida el registro.
 
