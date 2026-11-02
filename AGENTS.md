@@ -251,6 +251,7 @@ Que hace:
 - Si el webhook apunta al lugar equivocado o no existe, **lo re-registra solo** y lo reporta.
 - Si hay algo que no puede reparar (servicio caido, lista blanca vacia, token revocado), **escribe al chat de Telegram** y sale con codigo 1, para que GitHub ademas mande su correo de workflow fallido.
 - Si todo esta bien, no manda nada.
+- Un timeout o 502/503/504 del arranque en frio (Render despierta el servicio y Telegram reintenta) **no alerta** si la cola de Telegram esta vacia y `/health` responde: el mensaje ya se entrego. Sin esa regla mandaba una alarma falsa al chat cada vez que el bot dormia (visto el 2026-11-01/02). Un 403/404, una cola atorada o el servicio caido siguen alertando.
 
 Secrets que necesita (Settings -> Secrets and variables -> Actions): `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALERT_CHAT_ID`, `TELEGRAM_EXPECTED_WEBHOOK_URL`, `TELEGRAM_SERVICE_URL`.
 

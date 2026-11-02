@@ -96,10 +96,20 @@ function evaluate({ webhookInfo = null, expectedUrl = null, health = null, statu
     }
 
     const lastError = String(webhookInfo.last_error_message || '')
+    const pendientes = Number(webhookInfo.pending_update_count || 0)
     if (lastError) {
       const errorAt = webhookInfo.last_error_date ? webhookInfo.last_error_date * 1000 : null
       const reciente = errorAt === null || now - errorAt < ERROR_WINDOW_MS
-      if (reciente) {
+      // Arranque en frio del plan free (visto el 2026-11-01/02): Render duerme
+      // el servicio a los 15 min sin trafico; el primer intento de Telegram se
+      // corta ("Read timeout expired") mientras despierta, Telegram reintenta
+      // y el mensaje SI llega. Ese error transitorio, con la cola vacia (ya se
+      // entrego todo) y el servicio respondiendo ahora, no es una caida: antes
+      // mandaba una alarma falsa al chat cada vez que el bot dormia. Un 403/404
+      // (configuracion), una cola atorada o el servicio caido siguen alertando.
+      const transitorio = /50[0234]|Gateway|timeout|timed out/i.test(lastError)
+      const yaSeRecupero = transitorio && pendientes === 0 && health != null && health.ok === true
+      if (reciente && !yaSeRecupero) {
         problems.push(problem(
           'WEBHOOK_DELIVERY_ERROR',
           'ERROR',
@@ -109,7 +119,7 @@ function evaluate({ webhookInfo = null, expectedUrl = null, health = null, statu
       }
     }
 
-    const pending = Number(webhookInfo.pending_update_count || 0)
+    const pending = pendientes
     if (pending > PENDING_THRESHOLD) {
       problems.push(problem(
         'WEBHOOK_PENDING_BACKLOG',
