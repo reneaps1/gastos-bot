@@ -143,7 +143,7 @@ const fakePrisma = {
       // La firma de la sesion de entrenamiento: gastos por id descendente.
       if (where?.tipo === 'Gasto' && orderBy?.id === 'desc') {
         return creadas
-          .filter(t => t.tipo === 'Gasto' && (where.id?.lt === undefined || t.id < where.id.lt))
+          .filter(t => t.tipo === 'Gasto' && (where.presupuestoId !== null || t.presupuestoId == null) && (where.id?.lt === undefined || t.id < where.id.lt))
           .sort((a, b) => b.id - a.id)
           .slice(0, take ?? Infinity)
           .map(t => ({ ...t, categoria: categorias.find(c => c.id === t.categoriaId) || null }))
@@ -477,24 +477,26 @@ async function main() {
   // tipo de getActiveBudgetLines y la comparacion de linkTransactionToBudget.
   check('no ofrece la linea de Ingreso', !cbsI.includes(`pl:${txAmbiguo.id}:13`), JSON.stringify(cbsI))
 
-  console.log('\n=== AC: enlazar a una linea cruzada NO mueve la categoria sola ===')
-  // La decision de negocio es literal: elegir la linea enlaza, y nada mas.
-  // Mover la categoria es una segunda escritura que el usuario confirma aparte
-  // (alignTransactionCategory). Si algun dia enlazar recategoriza en silencio,
-  // este caso truena.
+  console.log('\n=== AC: enlazar a una linea de otra categoria MUEVE la categoria, sin preguntar ===')
+  // Decision del 2026-11-02: en Telegram lo util es la linea; la categoria la
+  // sigue (assignLine en src/budgetActions.js). Antes esto preguntaba
+  // "¿Muevo tambien la categoria?".
   await post(textUpdate('80, convivio de la escuela'))
   const txCruzado = creadas.at(-1)
-  const catAntesAC = txCruzado.categoriaId
+  check('nace en Personal', txCruzado.categoriaId === 7, txCruzado.categoriaId)
   await post(callbackUpdate(`pl:${txCruzado.id}:12`))
   check('enlazo a la linea de otra categoria', txCruzado.presupuestoId === 12, txCruzado.presupuestoId)
-  check('la categoria NO se movio sola', txCruzado.categoriaId === catAntesAC, `${catAntesAC} -> ${txCruzado.categoriaId}`)
+  check('la categoria se movio a la de la linea (Familia)', txCruzado.categoriaId === 3, txCruzado.categoriaId)
+  check('re-derivo la clasificacion', txCruzado.clasificacion === 'Variable', txCruzado.clasificacion)
   const msgAC = editados.at(-1)
-  const cbsAC = msgAC?.buttons?.flat().map(b => b.callback_data) || []
-  check('pregunta si mueve la categoria', /¿Muevo también la categoría\?/.test(msgAC?.message || ''), msgAC?.message)
-  check('nombra las dos categorias', /Familia/.test(msgAC?.message || '') && /Personal/.test(msgAC?.message || ''), msgAC?.message)
-  check('ofrece mover y mantener', cbsAC.includes(`pk:${txCruzado.id}:12`) && cbsAC.includes(`pm:${txCruzado.id}:12`), JSON.stringify(cbsAC))
+  const cbsAC = msgAC?.buttons?.flat().map(b => b.callback_data).filter(Boolean) || []
+  check('ya no pregunta', !/¿Muevo también la categoría\?/.test(msgAC?.message || '') && !cbsAC.some(cb => /^p[km]:/.test(cb)), msgAC?.message)
+  check('avisa el cambio de categoria', /Categoría: Personal → Familia/.test(msgAC?.message || ''), msgAC?.message)
+  const escriturasAC = escrituras.length
+  await post(callbackUpdate(`pl:${txCruzado.id}:12`))
+  check('tocar dos veces no escribe dos veces', escrituras.length === escriturasAC, escrituras.length)
 
-  console.log('\n=== AD: confirmar mueve la categoria y re-deriva la clasificacion ===')
+  console.log('\n=== AD: el boton viejo "Si, moverlo" (pk) sigue funcionando y no escribe de mas ===')
   await post(callbackUpdate(`pk:${txCruzado.id}:12`))
   check('ahora si movio la categoria', txCruzado.categoriaId === 3, txCruzado.categoriaId)
   check('re-derivo la clasificacion de la categoria nueva', txCruzado.clasificacion === 'Variable', txCruzado.clasificacion)
@@ -503,10 +505,12 @@ async function main() {
   await post(callbackUpdate(`pk:${txCruzado.id}:12`))
   check('tocar dos veces no escribe dos veces', escrituras.length === escriturasAntesAD2, escrituras.length)
 
-  console.log('\n=== AE: mantener mi categoria no escribe nada ===')
+  console.log('\n=== AE: el boton viejo "No, dejarlo" (pm) no escribe nada ===')
+  // Un mensaje de antes del 2026-11-02 dejo el gasto cruzado y pregunto: se
+  // simula el enlace viejo directo en la fila.
   await post(textUpdate('90, convivio del salon'))
   const txMantiene = creadas.at(-1)
-  await post(callbackUpdate(`pl:${txMantiene.id}:12`))
+  txMantiene.presupuestoId = 12
   const escriturasAntesAE = escrituras.length
   await post(callbackUpdate(`pm:${txMantiene.id}:12`))
   check('la categoria sigue siendo la suya', txMantiene.categoriaId === 7, txMantiene.categoriaId)
@@ -588,7 +592,7 @@ async function main() {
   // Sin la pregunta de categoria (se quito el 2026-11-01): las lineas van
   // directo, y la sugerida es la primera.
   check('no hay fila de pregunta de categoria', !botonesT.flat().some(b => /^k[abc]:/.test(b.callback_data || '')), JSON.stringify(botonesT[0]))
-  check('un solo "✏️ Categoría", en la fila de "Dejar sin asignar"', botonesT.flat().filter(b => b.callback_data === `kn:${txT.id}`).length === 1 && botonesT.find(f => f.some(b => b.callback_data === `pn:${txT.id}`))?.some(b => b.callback_data === `kn:${txT.id}`), JSON.stringify(botonesT.at(-1)))
+  check('sin botones de categoria (la categoria sigue a la linea)', !botonesT.flat().some(b => /^k/.test(b.callback_data || '')), JSON.stringify(botonesT.at(-1)))
   const filasLineaT = botonesT.filter(f => f[0]?.callback_data?.startsWith('pl:'))
   check('la sugerida va primera y marcada', /^⭐ /.test(filasLineaT[0]?.[0]?.text || ''), filasLineaT[0]?.[0]?.text)
   check('la sugerida es Niñera', filasLineaT[0]?.[0]?.callback_data === `pl:${txT.id}:11`, filasLineaT[0]?.[0]?.callback_data)
@@ -830,9 +834,7 @@ async function main() {
   await post(textUpdate('40 tenis'))
   const txCL7 = creadas.at(-1)
   await post(callbackUpdate(`pl:${txCL7.id}:12`))
-  check('con cruce sigue pendiente', fbDe(txCL7)?.estado === 'pendiente', fbDe(txCL7)?.estado)
-  await post(callbackUpdate(`pk:${txCL7.id}:12`))
-  check('feedback corregida a Familia', fbDe(txCL7)?.estado === 'corregida' && fbDe(txCL7)?.categoriaFinalId === 3, JSON.stringify(fbDe(txCL7)))
+  check('con cruce, el toque ya es la correccion (Familia)', fbDe(txCL7)?.estado === 'corregida' && fbDe(txCL7)?.categoriaFinalId === 3 && txCL7.categoriaId === 3, JSON.stringify(fbDe(txCL7)))
 
   console.log('\n=== CL8: un ingreso no pregunta ===')
   await post(textUpdate('cobro 1200 reembolso'))
@@ -898,112 +900,83 @@ async function main() {
   const filasR3 = (enviados.at(-1)?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
   check('despues de dos toques ya la sugiere', filasR3[0]?.[0]?.callback_data === `pl:${txR3.id}:12` && /^⭐ /.test(filasR3[0]?.[0]?.text || ''), JSON.stringify(filasR3[0]))
 
-  // --- Sesion de entrenamiento (src/entrenamiento.js) ---
-  const gastosSinRespuesta = () => creadas.filter(t => t.tipo === 'Gasto' && !feedbacks.some(f => f.transaccionId === t.id && f.estado !== 'pendiente'))
+  // --- Sesion de entrenamiento (src/entrenamiento.js): solo la LINEA ---
+  const sinLinea = () => creadas.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null && /[a-z]/i.test(t.descripcion)).sort((x, y) => y.id - x.id)
 
-  console.log('\n=== E1: "vamos a entrenar" muestra el gasto mas reciente sin respuesta ===')
+  console.log('\n=== E1: "vamos a entrenar" muestra el gasto sin linea mas reciente, con su linea propuesta ===')
+  // "ropa" -> Gastos Personales (linea 10) en el historico de lineas (CL11).
+  await post(textUpdate('45 ropa'))
+  const txE1 = creadas.at(-1)
   const escriturasE1 = escrituras.length
   const antesE1 = creadas.length
   await post(textUpdate('Vamos a entrenar'))
-  const esperadoE1 = gastosSinRespuesta().sort((a, b) => b.id - a.id)[0]
   const msgE1 = enviados.at(-1)
-  check('no registro nada', creadas.length === antesE1 && escrituras.length === escriturasE1, creadas.length)
-  check('es la sesion', /Entrenamiento/.test(msgE1?.message || ''), msgE1?.message)
-  check('el gasto mas reciente sin respuesta', (msgE1?.message || '').includes(esperadoE1.descripcion), `${esperadoE1.descripcion} / ${msgE1?.message}`)
   const cbsE1 = cbsDe(msgE1)
-  check('botones: Si, Categoria, Linea, Saltar, Terminar', cbsE1.some(cb => cb.startsWith(`ea:${esperadoE1.id}:`)) && cbsE1.some(cb => cb.startsWith(`eo:${esperadoE1.id}:`)) && cbsE1.includes(`el:${esperadoE1.id}:0`) && cbsE1.includes(`es:${esperadoE1.id}`) && cbsE1.includes('ef:0'), JSON.stringify(cbsE1))
-  check('tres filas', msgE1?.buttons?.length === 3, msgE1?.buttons?.length)
-  check('muestra categoria y linea', /Categoría: ¿\*/.test(msgE1?.message || '') && /Línea:/.test(msgE1?.message || ''), msgE1?.message)
+  check('no registro nada', creadas.length === antesE1 && escrituras.length === escriturasE1, creadas.length)
+  check('es la sesion, con ese gasto', /Entrenamiento/.test(msgE1?.message || '') && (msgE1?.message || '').includes('ropa'), msgE1?.message)
+  check('propone la linea Gastos Personales', /📂 ¿\*Gastos Personales\*\?/.test(msgE1?.message || '') && cbsE1.includes(`ea:${txE1.id}:10`), `${cbsE1} / ${msgE1?.message}`)
+  check('ni una palabra de categoria', !/Categor/.test(msgE1?.message || ''), msgE1?.message)
+  check('botones: Si, Otra linea / Saltar, Terminar (dos filas)', msgE1?.buttons?.length === 2 && cbsE1.includes(`el:${txE1.id}:0`) && cbsE1.includes(`es:${txE1.id}`) && cbsE1.includes('ef:0'), JSON.stringify(cbsE1))
   check('callback_data cabe en 64 bytes', cbsE1.every(cb => Buffer.byteLength(cb) <= 64))
 
-  console.log('\n=== E2: "Si" confirma, aprende y pasa al siguiente (mas viejo) ===')
-  const cbSi = cbsE1.find(cb => cb.startsWith('ea:'))
-  const catE2 = Number(cbSi.split(':')[2])
-  await post(callbackUpdate(cbSi))
-  const fbE2 = feedbacks.find(f => f.transaccionId === esperadoE1.id)
-  check('feedback resuelto con la categoria confirmada', fbE2 && fbE2.estado !== 'pendiente' && fbE2.categoriaFinalId === catE2, JSON.stringify(fbE2))
-  check('el gasto queda en esa categoria', esperadoE1.categoriaId === catE2, esperadoE1.categoriaId)
+  console.log('\n=== E2: "Si" asigna la linea, la categoria la sigue y pasa al siguiente ===')
+  await post(callbackUpdate(`ea:${txE1.id}:10`))
+  check('enlazo la linea', txE1.presupuestoId === 10, txE1.presupuestoId)
+  check('la categoria es la de la linea (Personal)', txE1.categoriaId === 7, txE1.categoriaId)
+  check('la categoria quedo como respuesta del modelo de categoria', ['aceptada', 'corregida'].includes(feedbacks.find(f => f.transaccionId === txE1.id)?.estado) && feedbacks.find(f => f.transaccionId === txE1.id)?.categoriaFinalId === 7, JSON.stringify(feedbacks.find(f => f.transaccionId === txE1.id)))
   const msgE2 = editados.at(-1)
-  const siguienteE2 = gastosSinRespuesta().filter(t => t.id < esperadoE1.id).sort((a, b) => b.id - a.id)[0]
-  check('edita el MISMO mensaje con el siguiente', (msgE2?.message || '').includes(siguienteE2.descripcion) && cbsDe(msgE2).some(cb => cb.startsWith(`ea:${siguienteE2.id}:`)), msgE2?.message)
-  check('dice lo que acaba de aprender', /✅ «/.test(msgE2?.message || ''), msgE2?.message)
+  check('lo dice', /✅ «ropa» → Gastos Personales/.test(msgE2?.message || ''), msgE2?.message)
+  const sigE2 = sinLinea().find(t => t.id < txE1.id)
+  check('edita el MISMO mensaje con el siguiente sin linea', cbsDe(msgE2).some(cb => cb.endsWith(`:${sigE2.id}:0`) || cb.startsWith(`ea:${sigE2.id}:`) || cb === `es:${sigE2.id}`), JSON.stringify(cbsDe(msgE2)))
 
-  console.log('\n=== E3: "Otra" -> elegir categoria corrige, aunque el gasto ya tenga linea ===')
-  // Se toma un gasto ya enlazado a la linea 12 (Familia) y se corrige a Personal.
-  const enlazado = creadas.filter(t => t.tipo === 'Gasto' && t.presupuestoId === 12 && t.categoriaId === 3).sort((a, b) => b.id - a.id)[0]
-  await post(callbackUpdate(`eo:${enlazado.id}:3:r`))
-  const menuE3 = cbsDe(editados.at(-1))
-  check('menu de categorias de gasto, sin la propuesta', menuE3.includes(`ec:${enlazado.id}:7:3:r`) && !menuE3.some(cb => cb.startsWith(`ec:${enlazado.id}:3:`)) && !menuE3.some(cb => cb.startsWith(`ec:${enlazado.id}:1:`)), JSON.stringify(menuE3))
-  check('permite volver', menuE3.includes(`eb:${enlazado.id}`), JSON.stringify(menuE3))
-  await post(callbackUpdate(`ec:${enlazado.id}:7:3:r`))
-  check('corrigio la categoria (con linea)', enlazado.categoriaId === 7 && enlazado.presupuestoId === 12, `${enlazado.categoriaId} / ${enlazado.presupuestoId}`)
-  check('feedback corregida', feedbacks.find(f => f.transaccionId === enlazado.id)?.estado === 'corregida', JSON.stringify(feedbacks.find(f => f.transaccionId === enlazado.id)))
-  check('lo dice', /✏️ «.*» → Personal/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  console.log('\n=== E3: "Otra linea" -> menu paginado de la quincena; elegir una mueve tambien la categoria ===')
+  await post(textUpdate('60 tenis'))
+  const txE3 = creadas.at(-1)
+  await post(textUpdate('vamos a entrenar'))
+  await post(callbackUpdate(`el:${txE3.id}:0`))
+  const cbsMenuE3 = cbsDe(editados.at(-1))
+  check('menu con lineas y volver', cbsMenuE3.some(cb => cb.startsWith(`en:${txE3.id}:`)) && cbsMenuE3.includes(`eb:${txE3.id}`), JSON.stringify(cbsMenuE3))
+  check('nunca ofrece lineas de otro tipo', !cbsMenuE3.includes(`en:${txE3.id}:13`), JSON.stringify(cbsMenuE3))
+  check('pagina si no caben', cbsMenuE3.includes(`el:${txE3.id}:1`), JSON.stringify(cbsMenuE3))
+  await post(callbackUpdate(`eb:${txE3.id}`))
+  check('volver redibuja el gasto', cbsDe(editados.at(-1)).includes(`es:${txE3.id}`), JSON.stringify(cbsDe(editados.at(-1))))
+  await post(callbackUpdate(`en:${txE3.id}:12`))
+  check('enlazo Colegiatura', txE3.presupuestoId === 12, txE3.presupuestoId)
+  check('y la categoria paso a Familia', txE3.categoriaId === 3, txE3.categoriaId)
+  check('feedback corregida a Familia', feedbacks.find(f => f.transaccionId === txE3.id)?.estado === 'corregida', JSON.stringify(feedbacks.find(f => f.transaccionId === txE3.id)))
 
-  console.log('\n=== E4: un ec forjado hacia otro TIPO se rechaza ===')
-  const victima = gastosSinRespuesta().sort((a, b) => b.id - a.id)[0]
-  const catVictima = victima.categoriaId
-  await post(callbackUpdate(`ec:${victima.id}:1:${catVictima}:r`))
-  check('no cambio la categoria', victima.categoriaId === catVictima, victima.categoriaId)
-  check('no dejo feedback resuelto', !feedbacks.some(f => f.transaccionId === victima.id && f.estado !== 'pendiente'))
+  console.log('\n=== E4: un en forjado hacia una linea de otro tipo se rechaza ===')
+  await post(textUpdate('35 tenis'))
+  const txE4 = creadas.at(-1)
+  const escriturasE4 = escrituras.length
+  await post(callbackUpdate(`en:${txE4.id}:13`))
+  check('no enlazo ni movio nada', txE4.presupuestoId == null && txE4.categoriaId === 7 && escrituras.length === escriturasE4, `${txE4.presupuestoId} / ${txE4.categoriaId}`)
+  check('lo dice', /⚠️/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
 
   console.log('\n=== E5: "Saltar" no escribe nada ===')
   const feedbacksE5 = JSON.stringify(feedbacks)
   const escriturasE5 = escrituras.length
-  await post(callbackUpdate(`es:${victima.id}`))
+  await post(callbackUpdate(`es:${txE4.id}`))
   check('ni feedback ni transacciones', JSON.stringify(feedbacks) === feedbacksE5 && escrituras.length === escriturasE5)
-  check('pasa a uno mas viejo', cbsDe(editados.at(-1)).some(cb => { const id = Number(cb.split(':')[1]); return cb.startsWith('ea:') && id < victima.id }), JSON.stringify(cbsDe(editados.at(-1))))
+  check('pasa a uno mas viejo', cbsDe(editados.at(-1)).every(cb => cb === 'ef:0' || Number(cb.split(':')[1]) < txE4.id), JSON.stringify(cbsDe(editados.at(-1))))
 
-  console.log('\n=== E6: "Terminar" cierra con el marcador ===')
+  console.log('\n=== E6: "Terminar" cierra ===')
   await post(callbackUpdate('ef:0'))
   check('cierra sin botones', /Entrenamiento terminado/.test(editados.at(-1)?.message || '') && !editados.at(-1)?.buttons, editados.at(-1)?.message)
-  check('dice cuantos lleva y que tanto acerto', /Llevo \d+ gastos? confirmados? y acerté la categoría en \d+ %/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
 
-  console.log('\n=== E8: "Si" tambien enlaza la linea sugerida, y el modelo de lineas aprende ===')
-  // "ropa" -> Gastos Personales (linea 10) en el historico de lineas (CL11).
-  await post(textUpdate('45 ropa'))
-  const txE8 = creadas.at(-1)
-  await post(textUpdate('vamos a entrenar'))
-  const msgE8 = enviados.at(-1)
-  const siE8 = cbsDe(msgE8).find(cb => cb.startsWith(`ea:${txE8.id}:`))
-  check('propone la linea Gastos Personales', /Línea: ¿\*Gastos Personales\*\?/.test(msgE8?.message || '') && siE8?.endsWith(':10'), `${siE8} / ${msgE8?.message}`)
-  await post(callbackUpdate(siE8))
-  check('enlazo la linea', txE8.presupuestoId === 10, txE8.presupuestoId)
-  check('y confirmo la categoria', feedbacks.find(f => f.transaccionId === txE8.id)?.estado === 'aceptada', JSON.stringify(feedbacks.find(f => f.transaccionId === txE8.id)))
-  check('lo dice, con las dos partes', /✅ «ropa» → Personal · Gastos Personales/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  console.log('\n=== E7: un boton de categoria de la version anterior no rompe nada ===')
+  const escriturasE7 = escrituras.length
+  await post(callbackUpdate(`ec:${txE4.id}:3:7:r`))
+  check('no escribio', escrituras.length === escriturasE7 && txE4.categoriaId === 7)
+  check('redibuja el gasto en el formato nuevo', cbsDe(editados.at(-1)).includes(`es:${txE4.id}`), JSON.stringify(cbsDe(editados.at(-1))))
 
-  console.log('\n=== E9: corregir la linea regresa al MISMO gasto con la linea resuelta ===')
-  await post(textUpdate('60 tenis'))
-  const txE9 = creadas.at(-1)
-  await post(textUpdate('vamos a entrenar'))
-  await post(callbackUpdate(`el:${txE9.id}:0`))
-  const menuE9 = editados.at(-1)
-  const cbsMenuE9 = cbsDe(menuE9)
-  check('menu de lineas de la quincena', cbsMenuE9.includes(`en:${txE9.id}:11`) && cbsMenuE9.includes(`eb:${txE9.id}`), JSON.stringify(cbsMenuE9))
-  check('nunca ofrece lineas de otro tipo', !cbsMenuE9.includes(`en:${txE9.id}:13`), JSON.stringify(cbsMenuE9))
-  check('pagina si no caben', cbsMenuE9.includes(`el:${txE9.id}:1`), JSON.stringify(cbsMenuE9))
-  await post(callbackUpdate(`en:${txE9.id}:11`))
-  check('enlazo la linea elegida', txE9.presupuestoId === 11, txE9.presupuestoId)
-  const vistaE9 = editados.at(-1)
-  check('se queda en el mismo gasto (falta la categoria)', cbsDe(vistaE9).some(cb => cb.startsWith(`ea:${txE9.id}:`)) && /Línea: \*Niñera\* ✓/.test(vistaE9?.message || ''), vistaE9?.message)
-  const siE9 = cbsDe(vistaE9).find(cb => cb.startsWith(`ea:${txE9.id}:`))
-  check('"Si" ya no toca la linea (va en 0)', siE9?.endsWith(':0'), siE9)
-  await post(callbackUpdate(siE9))
-  check('confirmo la categoria y no movio la linea', feedbacks.find(f => f.transaccionId === txE9.id)?.estado === 'aceptada' && txE9.presupuestoId === 11, txE9.presupuestoId)
-  check('y avanzo a otro gasto', !cbsDe(editados.at(-1)).some(cb => cb.includes(`:${txE9.id}:`)), JSON.stringify(cbsDe(editados.at(-1))))
+  console.log('\n=== E8: un gasto con linea nunca sale ===')
+  check('ninguno de los gastos con linea aparecio', ![txE1.id, txE3.id].some(id => editados.slice(-3).some(m => (m.buttons || []).flat().some(b => b.callback_data === `es:${id}`))))
 
-  console.log('\n=== E10: un en forjado hacia una linea de otro tipo se rechaza ===')
-  await post(textUpdate('35 tenis'))
-  const txE10 = creadas.at(-1)
-  const escriturasE10 = escrituras.length
-  await post(callbackUpdate(`en:${txE10.id}:13`))
-  check('no enlazo', txE10.presupuestoId == null && escrituras.length === escriturasE10, txE10.presupuestoId)
-  check('lo dice', /⚠️/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
-
-  console.log('\n=== E7: sin nada por revisar, lo dice ===')
-  for (const t of gastosSinRespuesta()) feedbacks.push({ id: nextFeedbackId++, transaccionId: t.id, texto: t.descripcion, categoriaPropuestaId: t.categoriaId, categoriaFinalId: t.categoriaId, estado: 'aceptada', fuente: 'reglas' })
+  console.log('\n=== E9: sin nada por revisar, lo dice ===')
+  for (const t of creadas.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null)) t.presupuestoId = 10
   await post(textUpdate('/entrenar'))
-  check('"/entrenar" tambien funciona, y avisa que no hay nada', /No hay gastos por revisar/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+  check('"/entrenar" tambien funciona, y avisa que no hay nada', /No hay gastos sin línea/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

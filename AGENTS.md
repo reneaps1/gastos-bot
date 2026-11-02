@@ -130,7 +130,7 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 | Clasificador ML (Naive Bayes) de categoria | cerrado (#126, #127); pregunta Si/No retirada el 2026-11-01 | `CLASIFICADOR_ML.md`, `src/clasificador/`, migracion `20261101120000_clasificacion_feedback` |
 | Fase B: que aprenda la linea de presupuesto (sugerida correcta 34 % -> 62 %) | cerrado (#128) | `CLASIFICADOR_ML.md` |
 | Sesion de entrenamiento por Telegram ("vamos a entrenar") + un solo boton para corregir categoria | cerrado (#129) | `CLASIFICADOR_ML.md`, `src/entrenamiento.js` |
-| Entrenamiento tambien de la linea de presupuesto | en revision | `src/entrenamiento.js`, `src/sugerenciaLinea.js` |
+| Bot centrado en la linea: la categoria sigue a la linea sin preguntar; entrenamiento solo de linea | en revision | `assignLine` en `src/budgetActions.js`, `src/entrenamiento.js`, `src/sugerenciaLinea.js` |
 | Fase C (opcional): embeddings para sinonimos | pendiente | |
 
 ### Fase 9 — Issues
@@ -347,8 +347,8 @@ Piezas:
 | `ps:<tx>` | elegir cual movimiento (reasignacion ambigua) |
 | `pp:<tx>:<pagina>` | paginar |
 | `pc:<tx>:<cat>` | categorias; `0` = el menu, id real = sus lineas |
-| `pk:<tx>:<linea>` | confirmar el cambio de categoria |
-| `pm:<tx>:<linea>` | mantener mi categoria |
+| `pk:<tx>:<linea>` | confirmar el cambio de categoria (solo mensajes viejos: desde el 2026-11-02 la categoria sigue a la linea sin preguntar) |
+| `pm:<tx>:<linea>` | mantener mi categoria (solo mensajes viejos) |
 | `pd:<tx>:<cat>` | crear linea; `0` = elegir categoria, id real = crearla |
 
 Reglas que no se pueden relajar:
