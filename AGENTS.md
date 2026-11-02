@@ -131,7 +131,8 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 | Fase B: que aprenda la linea de presupuesto (sugerida correcta 34 % -> 62 %) | cerrado (#128) | `CLASIFICADOR_ML.md` |
 | Sesion de entrenamiento por Telegram ("vamos a entrenar") + un solo boton para corregir categoria | cerrado (#129) | `CLASIFICADOR_ML.md`, `src/entrenamiento.js` |
 | Bot centrado en la linea: la categoria sigue a la linea sin preguntar; entrenamiento solo de linea | cerrado (#130) | `assignLine` en `src/budgetActions.js`, `src/entrenamiento.js`, `src/sugerenciaLinea.js` |
-| Entrenamiento "Yo te escribo palabras" (menu de estilos, tabla `clasificador_ejemplos`) | en revision | `src/entrenamientoPalabras.js`, migracion `20261102120000_clasificador_ejemplos` |
+| Entrenamiento "Yo te escribo palabras" (menu de estilos, tabla `clasificador_ejemplos`) | cerrado (#131, #132, #133) | `src/entrenamientoPalabras.js`, migracion `20261102120000_clasificador_ejemplos` |
+| Con sugerida, el gasto se manda directo a la linea (boton para cambiarla) | en revision | `registrarGastoTelegram` en `src/index.js` |
 | Fase C (opcional): embeddings para sinonimos | pendiente | |
 
 ### Fase 9 — Issues
@@ -321,9 +322,11 @@ El modo privacidad se apaga en @BotFather: `/setprivacy` → Disable. Sin eso, e
 
 ### Asignar gastos a lineas desde Telegram
 
-**Milo NUNCA asigna solo.** Un movimiento registrado desde Telegram nace siempre sin linea, y la confirmacion trae **botones** con las lineas de la quincena. El enlace lo escribe el toque, no el registro.
+**Con sugerida, Milo manda el gasto directo a esa linea y ofrece cambiarla** (decision del usuario del 2026-11-02, que reemplaza la regla anterior "Milo nunca asigna solo"). La sugerida sale de `src/sugerenciaLinea.js`: primero `resolveBudgetLine()` (parecido de texto dentro de la categoria) y, si no opina, el modelo que aprende de las lineas elegidas (ver `CLASIFICADOR_ML.md`). Medido con los datos reales, acierta ~75 % de las veces que aparece.
 
-`resolveBudgetLine()` sigue existiendo pero ya no enlaza: solo dice cual es la apuesta fuerte, para ponerla **primera y marcada con ⭐**. Antes, cuando acertaba con confianza, escribia el enlace sola y el mensaje salia **sin un solo boton** — dos problemas en uno: asignaba sin preguntar, y cuando se equivocaba no habia forma de verlo ni de corregirlo desde Telegram, porque las opciones ni se mostraban.
+El mensaje dice a donde fue ("Lo mande a *Super* (72 % seguro)") y trae dos botones: **Cambiar linea** (`pp:<tx>:0`, la lista completa) y **Quitar linea** (`pn:<tx>`). Si la linea queda excedida, el aviso y el boton al dashboard llegan en el mismo mensaje. Lo que evita el problema de la version vieja (que se auto-asignaba **sin un solo boton**, sin forma de ver ni corregir) es justo eso: siempre se ve a donde fue y siempre hay como cambiarlo.
+
+Sin sugerida, el gasto nace sin linea y la confirmacion trae los **botones** con las lineas de la quincena, como antes.
 
 Cuando las lineas no caben en una pantalla, hay tres salidas y el texto dice cuantas hay en total, para que no se lea como "estas son las que hay":
 
@@ -354,7 +357,7 @@ Piezas:
 
 Reglas que no se pueden relajar:
 
-- **Nada se asigna sin un toque humano.** No hay atajo "si estoy muy seguro, lo escribo". El caso T0 existe para atrapar esa regresion con la coincidencia mas obvia que hay (un gasto que dice "niñera" y una linea que se llama "Niñera").
+- **Una asignacion automatica siempre se ve y siempre se puede cambiar.** Solo pasa cuando hay sugerida, el mensaje dice a donde fue y trae "Cambiar linea" y "Quitar linea". El caso T0 lo fija con la coincidencia mas obvia ("niñera" -> linea "Niñera"). La escritura es la misma de los botones (`assignLine`), con todas sus validaciones. El canal de WhatsApp no cambia: ahi el bot sigue sin fijar `presupuestoId`.
 - **`callback_data` es entrada NO CONFIABLE.** Viaja por el cliente del usuario, asi que un cliente modificado puede mandar cualquier par de ids. `linkTransactionToBudget()` verifica TODO contra la base: que la transaccion exista, que la linea exista y no este cancelada, que **los tipos coincidan**, y sobre todo **que la linea sea de la misma quincena que la transaccion**. Sin eso, un gasto podria colgarse de una linea de otro periodo y el presupuesto dejaria de cuadrar sin que nadie lo note hasta el cierre.
 - **Un callback pasa por las mismas puertas que un mensaje**: el secreto del webhook y la lista blanca de chats. Un boton no puede ser una puerta trasera.
 - **Tocar dos veces no escribe dos veces.** El segundo toque es no-op y responde "ya estaba asignado".

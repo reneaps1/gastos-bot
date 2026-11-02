@@ -416,7 +416,13 @@ async function main() {
     const r = await preguntar(g.texto)
     const tx = creadas().at(-1)?.[2]
     check(`"${g.texto}" se registra con $${g.monto}`, creadas().length === antes + 1 && Number(tx?.monto) === g.monto, `${creadas().length - antes} / ${tx?.monto}`)
-    check(`"${g.texto}" nace sin linea (la asigna un toque)`, tx?.presupuestoId == null, tx?.presupuestoId)
+    // Desde el 2026-11-02, con sugerida el gasto se manda directo a la linea
+    // y el mensaje lo dice (con boton para cambiarla); sin sugerida nace sin
+    // linea y se muestran los botones. Lo que no puede pasar es un enlace que
+    // el mensaje no cuente.
+    check(`"${g.texto}" si quedo con linea, el mensaje dice a cual y ofrece cambiarla`,
+      tx?.presupuestoId == null || (/Lo mandé a/.test(r?.message || '') && (r?.buttons || []).flat().some(b => b.callback_data === `pp:${tx.id}:0`)),
+      `${tx?.presupuestoId} / ${r?.message}`)
     check(`"${g.texto}" confirma el registro`, /registrado/i.test(r?.message || ''), r?.message)
   }
 
@@ -482,9 +488,18 @@ async function main() {
     modeloCaido = false
   }
 
-  console.log('\n[9] La IA nunca escribe: solo hubo creates de los gastos')
+  console.log('\n[9] La IA nunca escribe: solo los gastos registrados (y su linea sugerida)')
   {
-    const otras = fakePrisma._escrituras.filter(([tabla, op]) => !(tabla === 'transaccion' && op === 'create'))
+    // Permitido: crear el gasto y, si hubo sugerida, enlazarlo a su linea (y
+    // que la categoria la siga) -- siempre sobre un gasto registrado aqui.
+    // Cualquier otra escritura (sobre otra transaccion, otra tabla u otros
+    // campos) es que se filtro una escritura al camino de las preguntas.
+    const idsCreados = new Set(creadas().map(([, , fila]) => fila.id))
+    const camposDeEnlace = new Set(['id', 'presupuestoId', 'categoriaId', 'tipo', 'direccion', 'clasificacion'])
+    const otras = fakePrisma._escrituras.filter(([tabla, op, datos]) => !(
+      tabla === 'transaccion' && (op === 'create' ||
+        (op === 'update' && idsCreados.has(datos.id) && Object.keys(datos).every(k => camposDeEnlace.has(k))))
+    ))
     check('ninguna escritura fuera de registrar gastos', otras.length === 0, JSON.stringify(otras))
   }
 

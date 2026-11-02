@@ -6,23 +6,24 @@ Parte de la Fase 8 (Inteligencia y Automatización): *"Este gasto parece Super, 
 
 **En el bot lo que importa es la línea de presupuesto** (decisión del usuario del 2/11/2026); la categoría es para el dashboard. Por eso:
 
-- Cuando llega un gasto por Telegram, el bot propone la línea (la sugerida va primera y marcada) y el usuario la elige con un toque. No hay preguntas ni botones de categoría.
+- Cuando llega un gasto por Telegram y hay sugerida, **el bot lo manda directo a esa línea** y ofrece cambiarla (decisión del usuario del 2/11/2026: «que lo mande, y si quiero cambiar, ese sea el botón»). Sin sugerida, muestra las líneas para elegir. No hay preguntas ni botones de categoría.
 - **La categoría sigue a la línea, sin preguntar** (`assignLine` en `src/budgetActions.js`): al elegir una línea de otra categoría, el gasto pasa a la categoría de la línea y el mensaje lo avisa («Categoría: Familia → Super»). Antes el bot preguntaba «¿Muevo también la categoría?». Sigue habiendo un toque humano detrás: el usuario eligió la línea. Lo mismo pasa al crear una línea nueva desde Telegram.
 
 ```
 Tú:   100, croquetas
-Milo: Gasto registrado ... Familia ...
-      ¿Lo mando a Super? (99 % seguro)
-      [Super] [Otra línea]
-      [Dejar sin asignar]
-Tú:   (toca Super)
-Milo: Asignado a Super
-      Categoría: Familia -> Super
+Milo: Gasto registrado ... Super ...
+      Lo mandé a Super (99 % seguro)
+      [Cambiar línea] [Quitar línea]
+Tú:   (toca Cambiar línea y elige Diversion)
+Milo: Asignado a Diversion
+      Categoría: Super -> Diversión
 ```
 
-**Vista compacta** (2/11/2026, «respondió con muchos botones»): cuando hay sugerida, el gasto recién registrado trae solo tres botones: la sugerida (un toque), **Otra línea** (`pp:<tx>:0`, la lista completa de siempre, con páginas, «Buscar por categoría», «Crear línea nueva» y «Dejar sin asignar») y «Dejar sin asignar». Sin sugerida, sale la lista completa directamente.
+**Asignación directa:** con sugerida, el gasto queda enlazado al registrarse (`assignLine`, la misma escritura de los botones, con sus validaciones) y la categoría sigue a la línea. El mensaje dice a dónde fue y qué tan seguro estaba, y trae **Cambiar línea** (`pp:<tx>:0`: la lista completa, que dice «Está en *X*. ¿A cuál la cambio?») y **Quitar línea** (`pn:<tx>`). Si la línea queda excedida, el aviso llega en el mismo mensaje. Medido con los datos reales, la sugerida acierta ~75 % de las veces que aparece: más o menos 1 de cada 4 hay que cambiarla.
 
-La categoría propuesta al registrar se guarda en `clasificacion_feedback` como `pendiente`, y el toque de línea la resuelve: `aceptada` si la línea es de la misma categoría, `corregida` si no. Así el modelo de categoría (que propone la categoría de los gastos nuevos, útil para el dashboard) también aprende de cada toque. Si nunca se elige línea, o se toca «Dejar sin asignar», sigue `pendiente` y no entra al entrenamiento.
+La asignación automática **no se le enseña al modelo en el momento** (es su propia adivinanza). Si el usuario la cambia, ese toque sí se aprende; si la deja, el gasto entra al reentreno como cualquier gasto con línea (el usuario la vio y no la cambió).
+
+La categoría propuesta al registrar se guarda en `clasificacion_feedback` como `pendiente`, y el toque de línea la resuelve: `aceptada` si la línea es de la misma categoría, `corregida` si no. Así el modelo de categoría (que propone la categoría de los gastos nuevos, útil para el dashboard) también aprende de cada toque. Si nadie toca una línea (tampoco cuando el bot la asignó solo), sigue `pendiente` y no entra al entrenamiento de categoría.
 
 El gasto se guarda **antes** de cualquier toque (decisión del 1/11/2026): si no se toca nada, el gasto no se pierde.
 

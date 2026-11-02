@@ -343,26 +343,6 @@ function budgetButtons(transaccionId, candidates, { pagina = 0, sugeridaId = nul
   return rows
 }
 
-// Vista COMPACTA del gasto recien registrado cuando hay sugerida (pedido del
-// usuario, 2026-11-02: "respondio con muchos botones"): un toque para la
-// sugerida, otro para ver todas, y dejar sin asignar. "Otra línea" es
-// `pp:<tx>:0`, la lista completa de siempre (con paginas, categorias y crear
-// linea), asi que no se pierde ninguna salida.
-function budgetButtonsCompactos(transaccionId, sugerida) {
-  return [
-    [
-      { text: `✅ ${sugerida.descripcion}`.slice(0, 40), callback_data: `pl:${transaccionId}:${sugerida.id}` },
-      { text: '📂 Otra línea', callback_data: `pp:${transaccionId}:0` },
-    ],
-    [{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }],
-  ]
-}
-
-function budgetPromptCompacto(sugerida, confianza = null) {
-  const seguro = confianza == null ? '' : ` _(${porcentajeSeguro(confianza)} % seguro)_`
-  return `¿Lo mando a *${telegram.escapeMarkdown(sugerida.descripcion)}*?${seguro}`
-}
-
 // El texto que acompaña a los botones de linea.
 //
 // Dice cuantas lineas hay EN TOTAL, no cuantas caben en la pantalla. Sin ese
@@ -1195,7 +1175,10 @@ async function handleBudgetCallback(callback) {
       await telegram.editMessageText(
         callback.chatId,
         callback.messageId,
-        `${resumen}\n\n${budgetPrompt(candidatas, sugeridaId, sugeridaConfianza)}`,
+        // Ya enlazado (lo mando el bot o se eligio antes): "Cambiar línea".
+        tx.presupuestoId != null
+          ? `${resumen}\n\nEstá en *${telegram.escapeMarkdown(candidatas.find(c => c.id === tx.presupuestoId)?.descripcion || 'una línea')}*. ¿A cuál la cambio?`
+          : `${resumen}\n\n${budgetPrompt(candidatas, sugeridaId, sugeridaConfianza)}`,
         { buttons: budgetButtons(tx.id, candidatas, { pagina: accion === 'pp' ? arg : 0, sugeridaId }) },
       )
       return
@@ -1397,16 +1380,9 @@ async function registrarGastoTelegram(message, user, senderName, expenseData) {
     return null
   }
 
-  // EL MOVIMIENTO NACE SIN LINEA, SIEMPRE.
-  //
-  // Antes, cuando resolveBudgetLine acertaba con confianza, el enlace se
-  // escribia aqui mismo y el mensaje salia sin un solo boton. Dos problemas en
-  // uno: asignaba sin preguntar, y cuando se equivocaba no habia forma de
-  // verlo ni de corregirlo desde Telegram, porque las opciones ni se
-  // mostraban. La sugerencia sigue existiendo -- va primera y marcada con una
-  // estrella -- pero ahora es una propuesta de un toque, no un hecho
-  // consumado. Quien escribe el enlace es siempre el boton `pl:`, o sea
-  // linkTransactionToBudget, que es el unico camino validado.
+  // El movimiento se guarda sin linea; si hay sugerida, se le asigna justo
+  // despues (ver "CON SUGERIDA, SE MANDA DIRECTO" mas abajo) y el mensaje
+  // ofrece cambiarla. Sin sugerida, los botones de linea de siempre.
   const tx = await saveTelegramTransaction(parsed, user, categoria, metodoPago, quincena)
 
   // El gasto ya quedo guardado con la categoria propuesta. Si nunca se elige
@@ -1425,30 +1401,66 @@ async function registrarGastoTelegram(message, user, senderName, expenseData) {
     })
   }
 
-  let confirmation = formatTelegramConfirmation(parsed)
   let buttons = null
   let sugeridaId = null
+  let lineaTexto = null
+  let enlazada = false
 
   if (TIPOS_CON_LINEA.has(parsed.tipo)) {
     const contexto = await budgetPickerContext(tx.id)
     const candidatas = contexto?.candidatas ?? []
     sugeridaId = contexto?.sugeridaId ?? null
-
     const sugerida = sugeridaId == null ? null : candidatas.find(c => c.id === sugeridaId)
+
+    // CON SUGERIDA, SE MANDA DIRECTO (decision del usuario, 2026-11-02: "no
+    // que me pregunte si lo mando a Super; que lo mande, y si quiero cambiar,
+    // ese sea el boton"). Reemplaza la regla anterior "nada se asigna sin un
+    // toque humano". La escritura es la de siempre (assignLine: valida tipo,
+    // quincena y linea cancelada; la categoria sigue a la linea), y el mensaje
+    // dice a donde fue con un boton para cambiarlo. Medido con los datos
+    // reales, la sugerida acierta ~75 % de las veces que aparece.
+    //
+    // No se le ensena al modelo en este momento: es su propia adivinanza. Si
+    // el usuario la cambia, ese toque (`pl`) si se aprende; si no la cambia,
+    // el gasto entra al reentreno como cualquier gasto con linea.
+    let r = null
     if (sugerida) {
-      confirmation += `\n\n${budgetPromptCompacto(sugerida, contexto?.sugeridaConfianza ?? null)}`
-      buttons = budgetButtonsCompactos(tx.id, sugerida)
+      r = await assignLine({ transaccionId: tx.id, presupuestoId: sugerida.id })
+      if (!r.ok) console.warn(`TELEGRAM_AUTOASIGNACION_RECHAZADA: tx=${tx.id}; linea=${sugerida.id}; motivo=${r.reason}`)
+    }
+
+    if (r?.ok) {
+      enlazada = true
+      if (r.categoriaMovida?.a?.nombre) {
+        parsed.categoria = r.categoriaMovida.a.nombre
+        parsed.clasificacion = CLASIFICACION_POR_CATEGORIA[r.categoriaMovida.a.nombre] ?? parsed.clasificacion
+      }
+      const confianza = contexto?.sugeridaConfianza
+      const seguro = confianza == null ? '' : ` _(${porcentajeSeguro(confianza)} % seguro)_`
+      const bloque = budgetStatusBlock(r.status)
+      lineaTexto = `📂 Lo mandé a *${telegram.escapeMarkdown(sugerida.descripcion)}*${seguro}`
+      if (bloque.texto) lineaTexto += `\n\n${bloque.texto}`
+      buttons = [
+        [
+          { text: '✏️ Cambiar línea', callback_data: `pp:${tx.id}:0` },
+          { text: 'Quitar línea', callback_data: `pn:${tx.id}` },
+        ],
+        ...(bloque.buttons || []),
+      ]
     } else if (candidatas.length > 0) {
-      confirmation += `\n\n${budgetPrompt(candidatas, sugeridaId, contexto?.sugeridaConfianza ?? null)}`
+      lineaTexto = budgetPrompt(candidatas, sugeridaId, contexto?.sugeridaConfianza ?? null)
       buttons = budgetButtons(tx.id, candidatas, { sugeridaId })
     } else {
-      confirmation += '\n\n⚠️ No hay líneas de presupuesto de este tipo en la quincena.'
+      lineaTexto = '⚠️ No hay líneas de presupuesto de este tipo en la quincena.'
       buttons = [[{ text: '➕ Crear línea nueva', callback_data: `pd:${tx.id}:0` }]]
     }
   }
 
+  let confirmation = formatTelegramConfirmation(parsed)
+  if (lineaTexto) confirmation += `\n\n${lineaTexto}`
+
   await telegram.sendTelegramMessage(message.chatId, confirmation, message.messageId, { buttons })
-  console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=none; sugerida=${sugeridaId ?? '-'}`)
+  console.log(`Telegram transaction saved: ${tx.id}; chat=${message.chatId}; budget=${enlazada ? sugeridaId : 'none'}; sugerida=${sugeridaId ?? '-'}`)
   return tx
 }
 
