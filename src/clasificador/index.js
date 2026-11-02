@@ -289,6 +289,58 @@ function aprenderEjemplo(texto, lineaDescripcion, categoriaId, { corregida = fal
   }
 }
 
+/**
+ * La MEJOR APUESTA de linea entre `candidatas`, sin umbral: aunque el modelo
+ * no este seguro, dice cual es la mas probable y con que confianza. La usa el
+ * entrenamiento de palabras, donde el usuario siempre confirma (pidio que el
+ * bot "siempre mande la aproximacion"). Null solo si el modelo no tiene ni un
+ * ejemplo o no hay candidatas.
+ *
+ * @returns {Promise<{id:number, confianza:number, cobertura:number}|null>}
+ */
+async function mejorLinea(descripcion, candidatas) {
+  if (!habilitado() || !candidatas?.length) return null
+  try {
+    await asegurarModelo()
+    if (!modeloLineas || modeloLineas.ejemplos === 0) return null
+    const porEtiqueta = new Map()
+    for (const c of candidatas) {
+      const e = etiquetaLinea(c.descripcion)
+      if (e && !porEtiqueta.has(e)) porEtiqueta.set(e, c)
+    }
+    const { ranking, cobertura } = modeloLineas.predecir(descripcion, porEtiqueta.keys())
+    const top = ranking[0]
+    if (!top) return null
+    return { id: porEtiqueta.get(top.etiqueta).id, confianza: top.probabilidad, cobertura }
+  } catch (error) {
+    console.error('CLASIFICADOR_LINEA_ERROR:', error.message)
+    return null
+  }
+}
+
+/**
+ * Las candidatas ordenadas de la mas probable a la menos, segun el modelo de
+ * lineas. Para los menus de "elige la linea": las probables salen en la
+ * primera pagina en vez de en la quinta. Si el modelo no tiene ejemplos, deja
+ * el orden que traian. Orden estable (empates conservan el orden de entrada).
+ */
+async function ordenarLineas(descripcion, candidatas) {
+  if (!habilitado() || !candidatas?.length) return candidatas || []
+  try {
+    await asegurarModelo()
+    if (!modeloLineas || modeloLineas.ejemplos === 0) return candidatas
+    const { ranking } = modeloLineas.predecir(descripcion, candidatas.map(c => etiquetaLinea(c.descripcion)))
+    const prob = new Map(ranking.map(r => [r.etiqueta, r.probabilidad]))
+    return candidatas
+      .map((c, i) => ({ c, i, p: prob.get(etiquetaLinea(c.descripcion)) ?? 0 }))
+      .sort((a, b) => b.p - a.p || a.i - b.i)
+      .map(x => x.c)
+  } catch (error) {
+    console.error('CLASIFICADOR_LINEA_ERROR:', error.message)
+    return candidatas
+  }
+}
+
 // El usuario enlazo un gasto a una linea: ese es el ejemplo.
 function aprenderLinea(descripcion, lineaDescripcion) {
   if (!habilitado() || !modeloLineas) return false
@@ -328,6 +380,8 @@ module.exports = {
   confirmar,
   pendiente,
   sugerirLinea,
+  mejorLinea,
+  ordenarLineas,
   aprenderLinea,
   aprenderEjemplo,
   entrenar,

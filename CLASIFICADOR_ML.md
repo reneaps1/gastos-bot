@@ -12,14 +12,15 @@ Parte de la Fase 8 (Inteligencia y Automatización): *"Este gasto parece Super, 
 ```
 Tú:   100, croquetas
 Milo: Gasto registrado ... Familia ...
-      ¿Lo mando a Super? (99 % seguro) Toca la que corresponda:
-      [Super · Super — $3600.00]   <- primera y marcada
-      [Ballet Dalia · Familia — $550.00] ...
+      ¿Lo mando a Super? (99 % seguro)
+      [Super] [Otra línea]
       [Dejar sin asignar]
 Tú:   (toca Super)
 Milo: Asignado a Super
       Categoría: Familia -> Super
 ```
+
+**Vista compacta** (2/11/2026, «respondió con muchos botones»): cuando hay sugerida, el gasto recién registrado trae solo tres botones: la sugerida (un toque), **Otra línea** (`pp:<tx>:0`, la lista completa de siempre, con páginas, «Buscar por categoría», «Crear línea nueva» y «Dejar sin asignar») y «Dejar sin asignar». Sin sugerida, sale la lista completa directamente.
 
 La categoría propuesta al registrar se guarda en `clasificacion_feedback` como `pendiente`, y el toque de línea la resuelve: `aceptada` si la línea es de la misma categoría, `corregida` si no. Así el modelo de categoría (que propone la categoría de los gastos nuevos, útil para el dashboard) también aprende de cada toque. Si nunca se elige línea, o se toca «Dejar sin asignar», sigue `pendiente` y no entra al entrenamiento.
 
@@ -86,10 +87,12 @@ Milo: Entrenamiento de palabras terminado. Acerté 7 de 10.
 ```
 
 - La línea se adivina **solo con el modelo**, entre las líneas de gasto de la quincena actual: no hay un gasto con categoría, así que la regla de texto no opina. Por eso es el estilo más retador.
+- **Siempre manda una aproximación** (pedido del usuario: «que siempre me mande la aproximación y yo confirmo»). Si el modelo no pasa su umbral, propone su mejor apuesta sin umbral (`clasificador.mejorLinea`) y lo marca: «¿Diversion? (mi mejor intento, 12 %)». Si el modelo no tiene ni un ejemplo, propone la línea que más se parece por texto. Nunca responde «no sé».
 - Si el bot falla y el usuario lo corrige, el ejemplo pesa ×2, como cualquier corrección. Con eso una sola corrección le cambia la opinión (caso W4 de las pruebas).
 - **Es el único modo con estado** (en memoria, por chat). Mientras está activo, un mensaje **sin números ni «?»** se toma como palabra. Un mensaje con monto («150 super») **se registra como gasto normal** y una pregunta se contesta normal: olvidar que se está entrenando no hace perder un gasto.
 - Termina con «listo» (también «terminar», «salir», «ya»), con el botón Terminar o tras **15 minutos sin escribir**. Si el servicio reinicia, el modo se pierde (hay que volver a entrar), pero **lo aprendido no**: está en `clasificador_ejemplos` y se carga en cada reentreno.
 - Contestar dos veces el mismo mensaje no enseña dos veces.
+- En los menús de «Otra línea» de los dos estilos de entrenamiento, la sugerida va primero y el resto **de la más probable a la menos** según el modelo (`clasificador.ordenarLineas`), así que las que importan salen en la primera página. En producción se vio que, con el orden por parecido de texto, había que paginar 4 o 5 veces por palabra.
 
 | `callback_data` | Qué hace |
 |---|---|
@@ -190,7 +193,7 @@ En los logs de Render: `CLASIFICADOR_ENTRENADO`, `CLASIFICADOR_DIFIERE` (el mode
 - `scripts/test-clasificador.js` (71): modelo y servicio. Normalización, tolerancia a errores de dedo, «no sé» con texto desconocido, que una corrección cambie la opinión, exclusión de las pendientes, pesos, idempotencia, que nunca truene y el apagado.
 - `scripts/test-telegram-flow.js`, casos E1–E9: la sesión de entrenamiento de línea (orden, sugerida, Sí, Otra línea con categoría que sigue, `en` forjado hacia otro tipo, Saltar sin escrituras, Terminar, botones viejos, nada por revisar), y AC: elegir una línea de otra categoría mueve la categoría sin preguntar.
 - `scripts/test-clasificador.js`, casos C1–C2: `confirmar` y qué frases abren la sesión. P1: las palabras confirmadas entran a los dos modelos, las pendientes no, y sin la tabla entrena igual.
-- `scripts/test-telegram-flow.js`, casos W1–W8 (estilo palabras): no registra gastos, acierto, corrección que se aprende a la primera, `wn` forjado hacia una línea de ingreso, monto que sí se registra como gasto, «listo» con marcador y apagado por inactividad.
+- `scripts/test-telegram-flow.js`, casos W1–W8 (estilo palabras): no registra gastos, acierto, palabra desconocida que igual recibe aproximación, corrección que se aprende a la primera, `wn` forjado hacia una línea de ingreso, monto que sí se registra como gasto, «listo» con marcador y apagado por inactividad.
 - `scripts/test-telegram-flow.js`, casos CL11–CL12 (Fase B): la la pone el modelo cuando la regla no opina, la paginación la conserva y dos toques le enseñan una línea nueva.
 - `scripts/test-telegram-flow.js`, casos CL1–CL10: la pregunta, Sí, No, Volver, Corregir, `kc` forjado hacia otro tipo, línea de la misma categoría = sí, cruce = corrección, que un ingreso no pregunte, que el modelo entrenado le gane a las reglas y que una falla de la tabla no impida el registro.
 

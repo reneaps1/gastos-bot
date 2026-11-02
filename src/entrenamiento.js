@@ -176,7 +176,13 @@ async function asignar(callback, tx, lineaId) {
 }
 
 async function menuLineas(callback, tx, pagina) {
-  const { candidatas, sugeridaId } = await lineasPara(tx)
+  // La sugerida primero y el resto de la mas probable a la menos.
+  const r = await lineasPara(tx)
+  const sugeridaId = r.sugeridaId
+  const candidatas = [
+    ...r.candidatas.filter(c => c.id === sugeridaId),
+    ...(await clasificador.ordenarLineas(tx.descripcion, r.candidatas.filter(c => c.id !== sugeridaId))),
+  ]
   const total = Math.max(1, Math.ceil(candidatas.length / LINEAS_POR_PAGINA))
   const p = Math.min(Math.max(0, Number(pagina) || 0), total - 1)
   const rows = candidatas.slice(p * LINEAS_POR_PAGINA, (p + 1) * LINEAS_POR_PAGINA).map(c => [{

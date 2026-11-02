@@ -343,6 +343,26 @@ function budgetButtons(transaccionId, candidates, { pagina = 0, sugeridaId = nul
   return rows
 }
 
+// Vista COMPACTA del gasto recien registrado cuando hay sugerida (pedido del
+// usuario, 2026-11-02: "respondio con muchos botones"): un toque para la
+// sugerida, otro para ver todas, y dejar sin asignar. "Otra línea" es
+// `pp:<tx>:0`, la lista completa de siempre (con paginas, categorias y crear
+// linea), asi que no se pierde ninguna salida.
+function budgetButtonsCompactos(transaccionId, sugerida) {
+  return [
+    [
+      { text: `✅ ${sugerida.descripcion}`.slice(0, 40), callback_data: `pl:${transaccionId}:${sugerida.id}` },
+      { text: '📂 Otra línea', callback_data: `pp:${transaccionId}:0` },
+    ],
+    [{ text: 'Dejar sin asignar', callback_data: `pn:${transaccionId}` }],
+  ]
+}
+
+function budgetPromptCompacto(sugerida, confianza = null) {
+  const seguro = confianza == null ? '' : ` _(${porcentajeSeguro(confianza)} % seguro)_`
+  return `¿Lo mando a *${telegram.escapeMarkdown(sugerida.descripcion)}*?${seguro}`
+}
+
 // El texto que acompaña a los botones de linea.
 //
 // Dice cuantas lineas hay EN TOTAL, no cuantas caben en la pantalla. Sin ese
@@ -1414,7 +1434,11 @@ async function registrarGastoTelegram(message, user, senderName, expenseData) {
     const candidatas = contexto?.candidatas ?? []
     sugeridaId = contexto?.sugeridaId ?? null
 
-    if (candidatas.length > 0) {
+    const sugerida = sugeridaId == null ? null : candidatas.find(c => c.id === sugeridaId)
+    if (sugerida) {
+      confirmation += `\n\n${budgetPromptCompacto(sugerida, contexto?.sugeridaConfianza ?? null)}`
+      buttons = budgetButtonsCompactos(tx.id, sugerida)
+    } else if (candidatas.length > 0) {
       confirmation += `\n\n${budgetPrompt(candidatas, sugeridaId, contexto?.sugeridaConfianza ?? null)}`
       buttons = budgetButtons(tx.id, candidatas, { sugeridaId })
     } else {
