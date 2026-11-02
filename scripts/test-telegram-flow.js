@@ -309,14 +309,15 @@ function check(label, cond, extra) {
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 let updateId = 1000
 
-function textUpdate(text, chatId = CHAT_PERMITIDO) {
+// `from` cambia el autor: el grupo tiene varios miembros (caso W9).
+function textUpdate(text, chatId = CHAT_PERMITIDO, from = { id: 42, first_name: 'Rene', username: 'rene' }) {
   updateId++
   return {
     update_id: updateId,
     message: {
       message_id: updateId,
       chat: { id: Number(chatId), type: 'supergroup', title: 'Control de gastos' },
-      from: { id: 42, first_name: 'Rene', username: 'rene' },
+      from,
       text,
     },
   }
@@ -1070,6 +1071,23 @@ async function main() {
   const ejemplosW8 = ejemplos.length
   await post(textUpdate('kermes'))
   check('tras 15 min sin escribir, ya no toma palabras', ejemplos.length === ejemplosW8, ejemplos.length)
+
+  console.log('\n=== W9: en el grupo el modo palabras es POR PERSONA ===')
+  const MARIANA = { id: 77, first_name: 'Mariana', username: 'mariana' }
+  await post(textUpdate('vamos a entrenar'))
+  await post(callbackUpdate('em:p'))
+  const ejemplosW9 = ejemplos.length
+  const antesW9 = creadas.length
+  await post(textUpdate('hola', CHAT_PERMITIDO, MARIANA))
+  check('el "hola" de otro miembro NO se vuelve palabra', ejemplos.length === ejemplosW9, ejemplos.length)
+  await post(textUpdate('80 tortillas', CHAT_PERMITIDO, MARIANA))
+  check('y su gasto se registra normal', creadas.length === antesW9 + 1, creadas.length)
+  await post(textUpdate('listo', CHAT_PERMITIDO, MARIANA))
+  await post(textUpdate('kermes'))
+  check('el "listo" de otro miembro no termina mi sesion', ejemplos.length === ejemplosW9 + 1 && ejemplos.at(-1).texto === 'kermes', ejemplos.length)
+  await post(textUpdate('listo'))
+  await post(textUpdate('kermes'))
+  check('mi "listo" si la termina', ejemplos.length === ejemplosW9 + 1, ejemplos.length)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

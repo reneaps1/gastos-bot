@@ -145,7 +145,7 @@ async function iniciar(message) {
 
 // Modo "Tu me muestras gastos" (boton em:g).
 async function iniciarGastos(callback) {
-  palabras.salir(callback.chatId)
+  palabras.salir(callback)
   const item = await siguiente(null)
   if (!item) {
     await editar(callback, vistaFin('No hay gastos sin línea por revisar. ¡Todo está asignado!'))

@@ -9,7 +9,9 @@
 //
 // MODO CON ESTADO (lo unico con estado en el bot): mientras el modo esta
 // activo, un mensaje sin numeros ni "?" se toma como palabra. Vive en memoria,
-// por chat, y se apaga con "listo", con el boton de terminar o tras
+// POR PERSONA dentro de cada chat (chat + usuario de Telegram): en un grupo,
+// si uno entrena, los mensajes de los demas siguen el flujo normal -- un
+// "hola" de otro miembro no se vuelve palabra de entrenamiento. y se apaga con "listo", con el boton de terminar o tras
 // INACTIVIDAD_MS sin escribir. Si el servicio reinicia, el modo se pierde y el
 // mensaje sigue el flujo normal: no se pierde nada, solo hay que volver a
 // entrar. Un mensaje con monto ("150 super") o una pregunta ("¿cuanto me
@@ -38,7 +40,13 @@ const ACCIONES = new Set(['wa', 'wl', 'wn', 'wb', 'wf'])
 const INACTIVIDAD_MS = 15 * 60 * 1000
 const LINEAS_POR_PAGINA = 6
 
-const sesiones = new Map() // chatId -> { desde: Date, ultimo: number }
+const sesiones = new Map() // "chatId:usuarioId" -> { desde: Date, ultimo: number }
+
+// La llave de la sesion: chat + persona. Sirve igual para un mensaje que para
+// el toque de un boton (los dos traen chatId y telegramUserId).
+function clave(x) {
+  return `${x.chatId}:${x.telegramUserId || ''}`
+}
 
 const esc = t => telegram.escapeMarkdown(String(t ?? ''))
 
@@ -46,18 +54,18 @@ function pct(confianza) {
   return confianza == null ? '' : ` _(${Math.min(99, Math.round(confianza * 100))} %)_`
 }
 
-function sesion(chatId) {
-  const s = sesiones.get(String(chatId))
+function sesion(x) {
+  const s = sesiones.get(clave(x))
   if (!s) return null
   if (Date.now() - s.ultimo > INACTIVIDAD_MS) {
-    sesiones.delete(String(chatId))
+    sesiones.delete(clave(x))
     return null
   }
   return s
 }
 
-function activar(chatId) {
-  sesiones.set(String(chatId), { desde: new Date(), ultimo: Date.now() })
+function activar(x) {
+  sesiones.set(clave(x), { desde: new Date(), ultimo: Date.now() })
 }
 
 function esFin(texto) {
@@ -131,9 +139,21 @@ async function marcador(desde) {
   return { total: filas.length, aciertos: filas.filter(f => f.acerto).length }
 }
 
-async function textoFin(chatId) {
-  const s = sesiones.get(String(chatId))
-  sesiones.delete(String(chatId))
+// Termina la sesion de quien escribio o toco. Si esa persona no tenia sesion
+// (otro miembro del grupo toco "Terminar" en el mensaje de alguien mas), se
+// cierran las del chat: el boton siempre tiene que hacer lo que dice.
+async function textoFin(x) {
+  let s = sesiones.get(clave(x))
+  if (s) {
+    sesiones.delete(clave(x))
+  } else {
+    for (const [k, v] of sesiones) {
+      if (k.startsWith(`${x.chatId}:`)) {
+        s = v
+        sesiones.delete(k)
+      }
+    }
+  }
   const m = s ? await marcador(s.desde) : null
   const lineas = ['🏁 *Entrenamiento de palabras terminado*']
   if (m?.total) lineas.push('', `Acerté ${m.aciertos} de ${m.total}${m.aciertos === m.total ? ' 🎯' : ''}.`)
@@ -143,7 +163,7 @@ async function textoFin(chatId) {
 
 // Desde el menu de src/entrenamiento.js (boton em:p).
 async function entrar(callback) {
-  activar(callback.chatId)
+  activar(callback)
   await telegram.editMessageText(
     callback.chatId,
     callback.messageId,
@@ -153,8 +173,8 @@ async function entrar(callback) {
   console.log(`TELEGRAM_PALABRAS_INICIO: chat=${callback.chatId}`)
 }
 
-function salir(chatId) {
-  sesiones.delete(String(chatId))
+function salir(x) {
+  sesiones.delete(clave(x))
 }
 
 /**
@@ -162,11 +182,11 @@ function salir(chatId) {
  * lo atendio; false si no es para este modo (y sigue el flujo normal).
  */
 async function manejarMensaje(message) {
-  const s = sesion(message.chatId)
+  const s = sesion(message)
   if (!s) return false
 
   if (esFin(message.text)) {
-    await telegram.sendTelegramMessage(message.chatId, await textoFin(message.chatId), message.messageId)
+    await telegram.sendTelegramMessage(message.chatId, await textoFin(message), message.messageId)
     return true
   }
   if (!esPalabra(message.text)) return false
@@ -196,7 +216,7 @@ async function confirmar(callback, ejemplo, lineaId, sugeridaId) {
   })
   clasificador.aprenderEjemplo(ejemplo.texto, linea.descripcion, linea.categoriaId, { corregida: !acerto })
 
-  const s = sesion(callback.chatId)
+  const s = sesion(callback)
   if (s) s.ultimo = Date.now()
   const encabezado = acerto
     ? `✅ ¡Acerté! «${esc(ejemplo.texto)}» → *${esc(linea.descripcion)}*`
@@ -231,7 +251,7 @@ async function handleCallback(callback) {
   console.log(`TELEGRAM_PALABRAS: accion=${accion} ejemplo=${id} chat=${callback.chatId}`)
 
   if (accion === 'wf') {
-    await telegram.editMessageText(callback.chatId, callback.messageId, await textoFin(callback.chatId))
+    await telegram.editMessageText(callback.chatId, callback.messageId, await textoFin(callback))
     return
   }
 
