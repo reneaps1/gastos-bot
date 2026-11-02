@@ -94,6 +94,37 @@ const f = evaluate({
 })
 check('ok = true con error de hace 3 horas', f.ok === true, JSON.stringify(codigos(f)))
 
+console.log('\n=== F2: timeout del arranque en frio ya recuperado NO alerta ===')
+// El caso real del 2026-11-01/02: Render durmio el servicio, el primer intento
+// de Telegram se corto con "Read timeout expired", Telegram reintento y el
+// mensaje llego. Cola vacia y /health en 200: nada que avisar.
+const f2 = evaluate({
+  ...SANO,
+  webhookInfo: { url: URL_OK, pending_update_count: 0, last_error_message: 'Read timeout expired', last_error_date: haceMinutos(10) },
+})
+check('ok = true', f2.ok === true, JSON.stringify(codigos(f2)))
+const f3 = evaluate({
+  ...SANO,
+  webhookInfo: { url: URL_OK, pending_update_count: 0, last_error_message: 'Wrong response from the webhook: 502 Bad Gateway', last_error_date: haceMinutos(10) },
+})
+check('un 502 del arranque, ya recuperado, tampoco', f3.ok === true, JSON.stringify(codigos(f3)))
+const f4 = evaluate({
+  ...SANO,
+  webhookInfo: { url: URL_OK, pending_update_count: 3, last_error_message: 'Read timeout expired', last_error_date: haceMinutos(10) },
+})
+check('pero si quedan mensajes encolados, SI alerta', codigos(f4).includes('WEBHOOK_DELIVERY_ERROR'), JSON.stringify(codigos(f4)))
+const f5 = evaluate({
+  ...SANO,
+  health: { ok: false, status: 503 },
+  webhookInfo: { url: URL_OK, pending_update_count: 0, last_error_message: 'Read timeout expired', last_error_date: haceMinutos(10) },
+})
+check('y si el servicio no responde ahora, SI alerta', codigos(f5).includes('WEBHOOK_DELIVERY_ERROR') && hasErrors(f5.problems), JSON.stringify(codigos(f5)))
+const f6 = evaluate({
+  ...SANO,
+  webhookInfo: { url: URL_OK, pending_update_count: 0, last_error_message: 'Wrong response from the webhook: 403 Forbidden', last_error_date: haceMinutos(10) },
+})
+check('un 403 (configuracion) SIEMPRE alerta, aunque la cola este vacia', codigos(f6).includes('WEBHOOK_DELIVERY_ERROR'), JSON.stringify(codigos(f6)))
+
 console.log('\n=== G: servicio arriba pero con la lista blanca vacia ===')
 // El caso traicionero: /health responde 200 y aun asi el bot ignora todo.
 const g = evaluate({ ...SANO, status: { ...SANO.status, allowedChatIdCount: 0 } })
