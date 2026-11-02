@@ -592,42 +592,39 @@ async function main() {
   check('lo dice explicitamente', /sin línea de presupuesto/i.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
   check('deja un boton al dashboard', editados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(editados.at(-1)?.buttons))
 
-  console.log('\n=== T0: NUNCA se auto-asigna, ni con la coincidencia mas obvia ===')
-  // La linea 11 se llama "Niñera" y el gasto dice "niñera": es el caso donde
-  // resolveBudgetLine acierta con mas holgura, y por eso mismo es el que
-  // atrapa una regresion. Antes esto se enlazaba solo Y el mensaje salia SIN
-  // BOTONES, asi que ademas de no preguntar, cuando se equivocaba no habia
-  // forma de corregirlo desde Telegram.
-  //
-  // La sugerencia sigue viva, pero como propuesta: primera y con estrella.
+  console.log('\n=== T0: con sugerida, el gasto se MANDA DIRECTO y se puede cambiar ===')
+  // Decision del usuario (2026-11-02): "no que me pregunte si lo mando a
+  // Super; que lo mande, y si quiero cambiar, ese sea el boton". Reemplaza la
+  // regla anterior "nunca se auto-asigna". La linea 11 se llama "Niñera" y el
+  // gasto dice "niñera": la sugerida mas obvia.
   await post(textUpdate('800, niñera'))
   const txT = creadas.at(-1)
-  check('el gasto nace SIN linea', txT?.presupuestoId == null, txT?.presupuestoId)
-  const botonesT = enviados.at(-1)?.buttons || []
-  check('pregunta con botones', botonesT.length > 0, JSON.stringify(botonesT))
-  // Sin la pregunta de categoria (se quito el 2026-11-01): las lineas van
-  // directo, y la sugerida es la primera.
-  check('no hay fila de pregunta de categoria', !botonesT.flat().some(b => /^k[abc]:/.test(b.callback_data || '')), JSON.stringify(botonesT[0]))
-  check('sin botones de categoria (la categoria sigue a la linea)', !botonesT.flat().some(b => /^k/.test(b.callback_data || '')), JSON.stringify(botonesT.at(-1)))
-  const filasLineaT = botonesT.filter(f => f[0]?.callback_data?.startsWith('pl:'))
-  // Con sugerida, la vista es COMPACTA (2026-11-02): [✅ Niñera] [📂 Otra línea] / [Dejar sin asignar].
-  check('la sugerida va primera, con un solo toque', /^✅ Niñera/.test(filasLineaT[0]?.[0]?.text || ''), filasLineaT[0]?.[0]?.text)
-  check('vista compacta: tres botones', botonesT.flat().length === 3 && botonesT.flat().map(b => b.callback_data).join() === `pl:${txT.id}:11,pp:${txT.id}:0,pn:${txT.id}`, JSON.stringify(botonesT.flat().map(b => b.callback_data)))
-  check('la sugerida es Niñera', filasLineaT[0]?.[0]?.callback_data === `pl:${txT.id}:11`, filasLineaT[0]?.[0]?.callback_data)
-  await post(callbackUpdate(`pp:${txT.id}:0`))
-  const todasT = editados.at(-1)?.buttons?.flat().map(b => b.callback_data) || []
-  check('"Otra línea" abre la lista completa, con la sugerida marcada primero', /^⭐ /.test(editados.at(-1)?.buttons?.[0]?.[0]?.text || '') && todasT[0] === `pl:${txT.id}:11`, JSON.stringify(editados.at(-1)?.buttons?.[0]))
-  check('y con todas las salidas (crear linea, sin asignar)', todasT.includes(`pd:${txT.id}:0`) && todasT.includes(`pn:${txT.id}`), JSON.stringify(todasT))
+  const msgT0 = enviados.at(-1)
+  const botonesT = msgT0?.buttons || []
+  const cbsT = botonesT.flat().map(b => b.callback_data).filter(Boolean)
+  check('quedo asignado a Niñera', txT?.presupuestoId === 11, txT?.presupuestoId)
+  check('el mensaje dice a donde lo mando', /Lo mandé a \*Niñera\*/.test(msgT0?.message || ''), msgT0?.message)
+  check('botones: Cambiar linea y Quitar linea, nada mas', cbsT.join() === `pp:${txT.id}:0,pn:${txT.id}`, JSON.stringify(cbsT))
+  check('sin botones de categoria', !cbsT.some(cb => /^k/.test(cb)), JSON.stringify(cbsT))
+  // La linea 11 tiene $750: 800 la rebasa, y como el enlace ya existe, el
+  // aviso llega en el mismo mensaje del registro.
+  check('avisa del excedido al registrar', /rebasó la línea/i.test(msgT0?.message || ''), msgT0?.message)
+  check('ofrece boton al dashboard', botonesT.flat().some(b => b.url?.includes('/presupuesto')), JSON.stringify(botonesT))
 
-  console.log('\n=== T: al confirmar, avisa del excedido y ofrece cubrirlo ===')
-  // La linea 11 tiene $750. Un gasto de 800 la rebasa por 50. El aviso ya no
-  // llega al registrar sino al confirmar, que es cuando el enlace existe.
+  console.log('\n=== T: "Cambiar línea" abre la lista y otra linea la reemplaza ===')
+  await post(callbackUpdate(`pp:${txT.id}:0`))
+  const msgCambio = editados.at(-1)
+  const todasT = msgCambio?.buttons?.flat().map(b => b.callback_data) || []
+  check('dice en que linea esta', /Está en \*Niñera\*\. ¿A cuál la cambio\?/.test(msgCambio?.message || ''), msgCambio?.message)
+  check('lista completa con todas las salidas', todasT.includes(`pl:${txT.id}:10`) && todasT.includes(`pd:${txT.id}:0`) && todasT.includes(`pn:${txT.id}`), JSON.stringify(todasT))
+  await post(callbackUpdate(`pl:${txT.id}:10`))
+  check('la cambio a Gastos Personales', txT.presupuestoId === 10, txT.presupuestoId)
+  check('lo confirma', /Asignado a \*Gastos Personales\*/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
   await post(callbackUpdate(`pl:${txT.id}:11`))
-  check('ahora si lo vinculo', txT.presupuestoId === 11, txT.presupuestoId)
-  const msgT = editados.at(-1)?.message || ''
-  check('avisa del excedido', /[Ee]xcedido/.test(msgT), msgT)
-  check('dice que rebaso la linea', /rebasó la línea/i.test(msgT), msgT)
-  check('ofrece boton al dashboard', editados.at(-1)?.buttons?.[0]?.[0]?.url?.includes('/presupuesto'), JSON.stringify(editados.at(-1)?.buttons))
+  check('y de vuelta a Niñera', txT.presupuestoId === 11, txT.presupuestoId)
+  await post(callbackUpdate(`pn:${txT.id}`))
+  check('"Quitar línea" la deja sin linea', txT.presupuestoId == null, txT.presupuestoId)
+  await post(callbackUpdate(`pl:${txT.id}:11`))
 
   console.log('\n=== U: "el gasto de X mandalo a Y" encuentra el movimiento y PROPONE ===')
   // Antes las descripciones de estos casos TENIAN que caer en Personal, porque
@@ -901,8 +898,8 @@ async function main() {
   const txCL11 = creadas.at(-1)
   const msgCL11 = enviados.at(-1)
   const filasLineaCL11 = (msgCL11?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
-  check('la sugerida es Colegiatura (vista compacta)', filasLineaCL11[0]?.[0]?.callback_data === `pl:${txCL11.id}:12` && /^✅ Colegiatura/.test(filasLineaCL11[0]?.[0]?.text || ''), JSON.stringify(filasLineaCL11[0]))
-  check('el texto la propone con su confianza', /¿Lo mando a \*Colegiatura\*\? _\(\d+ % seguro\)_/.test(msgCL11?.message || ''), msgCL11?.message)
+  check('la mando directo a Colegiatura (la del modelo)', txCL11.presupuestoId === 12 && filasLineaCL11.length === 0, `${txCL11.presupuestoId} / ${JSON.stringify(msgCL11?.buttons)}`)
+  check('el texto dice a donde y que tan seguro', /Lo mandé a \*Colegiatura\* _\(\d+ % seguro\)_/.test(msgCL11?.message || ''), msgCL11?.message)
   check('nunca dice "100 % seguro"', !/100 % seguro/.test(msgCL11?.message || '') && /99 % seguro/.test(msgCL11?.message || ''), msgCL11?.message)
   await post(callbackUpdate(`pp:${txCL11.id}:0`))
   check('paginar conserva la misma ⭐ (orden determinista)', editados.at(-1)?.buttons?.find(f => f[0]?.callback_data?.startsWith('pl:'))?.[0]?.callback_data === `pl:${txCL11.id}:12`, JSON.stringify(editados.at(-1)?.buttons?.[0]))
@@ -912,22 +909,26 @@ async function main() {
   // a Colegiatura... la tercera ya la sugiere.
   await post(textUpdate('20 rifa'))
   const txR1 = creadas.at(-1)
-  check('al principio no la conoce', !(enviados.at(-1)?.buttons || []).some(f => /^⭐ /.test(f[0]?.text || '')), JSON.stringify(enviados.at(-1)?.buttons?.[1]))
+  check('al principio no la conoce: no la manda, muestra la lista', txR1.presupuestoId == null && !(enviados.at(-1)?.buttons || []).some(f => /^⭐ /.test(f[0]?.text || '')), JSON.stringify(enviados.at(-1)?.buttons?.[1]))
   await post(callbackUpdate(`pl:${txR1.id}:12`))
   await post(textUpdate('20 rifa'))
   await post(callbackUpdate(`pl:${creadas.at(-1).id}:12`))
   await post(textUpdate('20 rifa'))
   const txR3 = creadas.at(-1)
-  const filasR3 = (enviados.at(-1)?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
-  check('despues de dos toques ya la sugiere', filasR3[0]?.[0]?.callback_data === `pl:${txR3.id}:12` && /^✅ /.test(filasR3[0]?.[0]?.text || ''), JSON.stringify(filasR3[0]))
+  check('despues de dos toques ya la manda sola a Colegiatura', txR3.presupuestoId === 12 && /Lo mandé a \*Colegiatura\*/.test(enviados.at(-1)?.message || ''), `${txR3.presupuestoId} / ${enviados.at(-1)?.message}`)
 
   // --- Sesion de entrenamiento (src/entrenamiento.js): solo la LINEA ---
   const sinLinea = () => creadas.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null && /[a-z]/i.test(t.descripcion)).sort((x, y) => y.id - x.id)
 
   console.log('\n=== E1: "vamos a entrenar" muestra el gasto sin linea mas reciente, con su linea propuesta ===')
   // "ropa" -> Gastos Personales (linea 10) en el historico de lineas (CL11).
+  // "ropa" ya tiene sugerida, asi que el bot la manda sola a Gastos
+  // Personales; se le quita la linea ("Quitar línea") para tener un gasto sin
+  // linea que entrenar.
   await post(textUpdate('45 ropa'))
   const txE1 = creadas.at(-1)
+  check('(se mando solo a Gastos Personales)', txE1.presupuestoId === 10, txE1.presupuestoId)
+  await post(callbackUpdate(`pn:${txE1.id}`))
   const escriturasE1 = escrituras.length
   const antesE1 = creadas.length
   await post(textUpdate('Vamos a entrenar'))
@@ -972,6 +973,7 @@ async function main() {
   console.log('\n=== E4: un en forjado hacia una linea de otro tipo se rechaza ===')
   await post(textUpdate('35 tenis'))
   const txE4 = creadas.at(-1)
+  await post(callbackUpdate(`pn:${txE4.id}`))
   const escriturasE4 = escrituras.length
   await post(callbackUpdate(`en:${txE4.id}:13`))
   check('no enlazo ni movio nada', txE4.presupuestoId == null && txE4.categoriaId === 7 && escrituras.length === escriturasE4, `${txE4.presupuestoId} / ${txE4.categoriaId}`)
