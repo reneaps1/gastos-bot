@@ -140,7 +140,14 @@ const EJEMPLOS = `EJEMPLOS (pregunta -> herramienta):
 
 const FORMATO = `FORMATO DE LA RESPUESTA:
 - Primera línea: el veredicto o la respuesta directa (p. ej. "Te faltan $9,075.39 para cubrir lo que te queda por pagar esta quincena.").
-- Máximo 4 líneas en total, o el veredicto más hasta 3 viñetas que empiecen con "• ".
+- Si la respuesta enumera varias cosas (pagos, líneas, gastos, categorías, movimientos), pon UNA por renglón, cada una como viñeta "• Nombre — $monto (cuándo o detalle)", en el orden en que vienen de la herramienta. Hasta 10 viñetas; si hay más, termina con "• y N más". NUNCA juntes varias cosas en la misma viñeta separadas por comas, ni las agrupes en "Lo más próximo: ..., Luego: ...".
+  Ejemplo:
+  Te faltan $8,163.86 para cubrir los $26,050.00 por pagar en Q38.
+  • Renta — $10,500.00 (hoy)
+  • Hosting — $487.00 (hoy)
+  • Colegiatura — $1,300.00 (2 de nov.)
+  • y 9 más
+- Si no hay nada que enumerar: máximo 4 líneas.
 - Montos como $1,234.56. Si la herramienta trae frases en "summary" o textos ya formateados, cópialos tal cual.
 - Texto plano: sin asteriscos, sin guiones bajos, sin Markdown, sin tablas.
 - Sin preámbulos ("Claro", "Según los datos"). Español mexicano, natural.`

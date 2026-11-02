@@ -370,6 +370,20 @@ async function main() {
     check('pasos lentos: corta por tiempo, no por MAX_STEPS', r2 === null && pasos < _interno.MAX_STEPS && Date.now() - t0 < 1000, `pasos=${pasos} ${Date.now() - t0} ms`)
   }
 
+  console.log('\n=== Formato: las listas van una por renglon (2026-11-02) ===')
+  {
+    // El usuario vio "Lo más próximo: Renta $10,500 y Hosting $487 hoy,
+    // Colegiatura ... / Luego: ChatGPT ..., YouTube ..." -- quince pagos
+    // amontonados con comas porque el prompt topaba en "3 viñetas".
+    const { _interno } = require(path.join(SRC, 'financeAgent'))
+    const prompt = _interno.buildSystemPrompt('CONTEXTO')
+    check('el prompt pide UNA cosa por renglon', /UNA por renglón/.test(prompt) && /NUNCA juntes varias cosas en la misma viñeta/.test(prompt))
+    check('ya no topa en 3 viñetas', !/hasta 3 viñetas/.test(prompt))
+    check('trae el ejemplo de lista', /• Renta — \$10,500\.00 \(hoy\)\n\s*• Hosting/.test(prompt))
+    const limpio = _interno.limpiarRespuesta('Te faltan $8,163.86.\n- Renta — $10,500.00 (hoy)\n* **Hosting** — $487.00 (hoy)')
+    check('la limpieza deja viñetas "• " y cada una en su renglon', limpio === 'Te faltan $8,163.86.\n• Renta — $10,500.00 (hoy)\n• Hosting — $487.00 (hoy)', JSON.stringify(limpio))
+  }
+
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
 }
