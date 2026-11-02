@@ -89,7 +89,7 @@ Milo: Entrenamiento de palabras terminado. Acerté 7 de 10.
 - La línea se adivina **solo con el modelo**, entre las líneas de gasto de la quincena actual: no hay un gasto con categoría, así que la regla de texto no opina. Por eso es el estilo más retador.
 - **Siempre manda una aproximación** (pedido del usuario: «que siempre me mande la aproximación y yo confirmo»). Si el modelo no pasa su umbral, propone su mejor apuesta sin umbral (`clasificador.mejorLinea`) y lo marca: «¿Diversion? (mi mejor intento, 12 %)». Si el modelo no tiene ni un ejemplo, propone la línea que más se parece por texto. Nunca responde «no sé».
 - Si el bot falla y el usuario lo corrige, el ejemplo pesa ×2, como cualquier corrección. Con eso una sola corrección le cambia la opinión (caso W4 de las pruebas).
-- **Es el único modo con estado** (en memoria, por chat). Mientras está activo, un mensaje **sin números ni «?»** se toma como palabra. Un mensaje con monto («150 super») **se registra como gasto normal** y una pregunta se contesta normal: olvidar que se está entrenando no hace perder un gasto.
+- **Es el único modo con estado** (en memoria, **por persona dentro de cada chat**: chat + usuario de Telegram). En un grupo, si uno entrena, los mensajes de los demás siguen el flujo normal: un «hola» de otro miembro no se vuelve palabra, y su «listo» no termina la sesión ajena. El botón Terminar sí cierra la sesión del chat aunque lo toque otro miembro. Mientras está activo, un mensaje **sin números ni «?»** se toma como palabra. Un mensaje con monto («150 super») **se registra como gasto normal** y una pregunta se contesta normal: olvidar que se está entrenando no hace perder un gasto.
 - Termina con «listo» (también «terminar», «salir», «ya»), con el botón Terminar o tras **15 minutos sin escribir**. Si el servicio reinicia, el modo se pierde (hay que volver a entrar), pero **lo aprendido no**: está en `clasificador_ejemplos` y se carga en cada reentreno.
 - Contestar dos veces el mismo mensaje no enseña dos veces.
 - En los menús de «Otra línea» de los dos estilos de entrenamiento, la sugerida va primero y el resto **de la más probable a la menos** según el modelo (`clasificador.ordenarLineas`), así que las que importan salen en la primera página. En producción se vio que, con el orden por parecido de texto, había que paginar 4 o 5 veces por palabra.
@@ -107,6 +107,17 @@ La línea se revalida contra la base: que exista, que no esté cancelada y que s
 ### Tabla `clasificador_ejemplos`
 
 Migración `20261102120000_clasificador_ejemplos` (raíz y dashboard, idénticas). Es **aditiva**: tabla nueva, `IF NOT EXISTS`. Guarda `texto`, `linea_descripcion` (el **nombre** de la línea, que se repite cada quincena), `categoria_id` (la de la línea), `estado` (`pendiente` o `confirmado`) y `acerto` (si la sugerida del bot fue la correcta). Solo las `confirmado` entran al entrenamiento. Si la tabla fallara, el clasificador entrena igual con lo demás.
+
+### En grupos de Telegram
+
+No hace falta configurar nada extra para que el aprendizaje funcione en un grupo. Basta con lo mismo que ya necesita el bot para registrar gastos ahí:
+
+- el id del grupo en `TELEGRAM_ALLOWED_CHAT_IDS`;
+- el modo privacidad del bot apagado en @BotFather (`/setprivacy` → Disable), para que lleguen los mensajes sueltos y no solo los comandos. Si está prendido, el arranque deja `TELEGRAM_PRIVACY_MODE_ON` en el log.
+
+Verificado el 2/11/2026: un gasto del grupo «Control de gastos» llegó y se registró, y no hubo avisos de privacidad, de chat no autorizado ni de migración a supergrupo.
+
+El modelo es **uno solo para todos los chats**: lo que se enseña en el grupo o en un chat privado alimenta las mismas sugerencias. Los botones (de línea y de entrenamiento) los puede tocar cualquier miembro del grupo. Solo el modo palabras es por persona (ver arriba).
 
 ## Cómo decide la categoría
 
@@ -193,7 +204,7 @@ En los logs de Render: `CLASIFICADOR_ENTRENADO`, `CLASIFICADOR_DIFIERE` (el mode
 - `scripts/test-clasificador.js` (71): modelo y servicio. Normalización, tolerancia a errores de dedo, «no sé» con texto desconocido, que una corrección cambie la opinión, exclusión de las pendientes, pesos, idempotencia, que nunca truene y el apagado.
 - `scripts/test-telegram-flow.js`, casos E1–E9: la sesión de entrenamiento de línea (orden, sugerida, Sí, Otra línea con categoría que sigue, `en` forjado hacia otro tipo, Saltar sin escrituras, Terminar, botones viejos, nada por revisar), y AC: elegir una línea de otra categoría mueve la categoría sin preguntar.
 - `scripts/test-clasificador.js`, casos C1–C2: `confirmar` y qué frases abren la sesión. P1: las palabras confirmadas entran a los dos modelos, las pendientes no, y sin la tabla entrena igual.
-- `scripts/test-telegram-flow.js`, casos W1–W8 (estilo palabras): no registra gastos, acierto, palabra desconocida que igual recibe aproximación, corrección que se aprende a la primera, `wn` forjado hacia una línea de ingreso, monto que sí se registra como gasto, «listo» con marcador y apagado por inactividad.
+- `scripts/test-telegram-flow.js`, casos W1–W8 (estilo palabras): no registra gastos, acierto, palabra desconocida que igual recibe aproximación, corrección que se aprende a la primera, `wn` forjado hacia una línea de ingreso, monto que sí se registra como gasto, «listo» con marcador, apagado por inactividad y (W9) sesión por persona en un grupo.
 - `scripts/test-telegram-flow.js`, casos CL11–CL12 (Fase B): la la pone el modelo cuando la regla no opina, la paginación la conserva y dos toques le enseñan una línea nueva.
 - `scripts/test-telegram-flow.js`, casos CL1–CL10: la pregunta, Sí, No, Volver, Corregir, `kc` forjado hacia otro tipo, línea de la misma categoría = sí, cruce = corrección, que un ingreso no pregunte, que el modelo entrenado le gane a las reglas y que una falla de la tabla no impida el registro.
 
