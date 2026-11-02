@@ -1,37 +1,49 @@
-// Sesion de entrenamiento del clasificador por Telegram.
+// Sesion de entrenamiento por Telegram: la LINEA de presupuesto.
 //
-// El usuario escribe "vamos a entrenar" y el bot le muestra sus gastos UNO POR
-// UNO, del mas reciente al mas viejo, con la categoria que el cree. El
-// usuario confirma o corrige con un toque y el modelo aprende en ese momento
-// (src/clasificador). Todo pasa en UN mensaje que se va editando: el chat no
-// se llena de mensajes.
+// El usuario escribe "vamos a entrenar" y el bot le muestra, UNO POR UNO y del
+// mas reciente al mas viejo, los gastos que todavia no tienen linea, con la
+// linea que el cree. El usuario confirma o elige otra con un toque y el modelo
+// aprende en ese momento (src/clasificador). Todo pasa en UN mensaje que se
+// va editando: el chat no se llena de mensajes.
+//
+// SOLO LINEA (decision del usuario, 2026-11-02): en el bot lo util es la
+// linea; la categoria es para el dashboard y sigue a la linea (assignLine en
+// src/budgetActions.js). Al asignar, la categoria del gasto queda igual a la
+// de la linea, y esa categoria tambien se guarda como respuesta para el
+// modelo de categoria (que propone la categoria de los gastos nuevos).
+//
+// QUE GASTOS SALEN: tipo Gasto, sin linea, con al menos una linea posible en
+// su quincena, y con letras en la descripcion (no hay nada que aprender de
+// "$200"). Un gasto con linea ya la eligio una persona: no hay nada que
+// confirmar.
 //
 // SIN ESTADO: cada boton lleva el id del gasto que se esta viendo, y "el
-// siguiente" es el gasto de tipo Gasto con el id inmediato menor que todavia
-// no tiene respuesta. La sesion sobrevive a que Render duerma o reinicie el
-// servicio, y no hay nada que expirar.
+// siguiente" es el gasto que cumple lo de arriba con el id inmediato menor.
+// La sesion sobrevive a que Render duerma o reinicie el servicio.
 //
-//   ea:<tx>:<cat>:<f>           si, es esa categoria (f = m modelo | r reglas)
-//   eo:<tx>:<cat>:<f>           no: ver las otras categorias
-//   ec:<tx>:<cat>:<prop>:<f>    esta es la correcta
-//   eb:<tx>                     volver al gasto
-//   es:<tx>                     saltar
-//   ef:0                        terminar
+//   ea:<tx>:<linea>     si, esa linea
+//   el:<tx>:<pagina>    elegir otra linea (menu paginado)
+//   en:<tx>:<linea>     esta es la linea
+//   eb:<tx>             volver al gasto
+//   es:<tx>             saltar
+//   ef:0                terminar
+//   eo, ec              botones de categoria de la version anterior: si llega
+//                       uno de un mensaje viejo, se redibuja el gasto
 //
-// callback_data no es confiable: el cambio de categoria pasa por
-// correctTransactionCategory, que revalida todo contra la base. Aqui si se
-// permite cambiar la categoria de un gasto que ya tiene linea: es una decision
-// explicita del usuario, revisando gasto por gasto, y deja un estado valido
-// (el mismo que el boton "No, dejarlo en X" del cruce).
+// callback_data no es confiable: assignLine pasa por linkTransactionToBudget y
+// alignTransactionCategory, que revalidan todo contra la base (mismo tipo,
+// misma quincena, linea no cancelada).
 
 const prisma = require('./lib/prisma')
 const telegram = require('./telegram')
 const clasificador = require('./clasificador')
 const { normalizar } = require('./clasificador/modelo')
-const { correctTransactionCategory, describeRechazo } = require('./budgetActions')
+const { lineasPara } = require('./sugerenciaLinea')
+const { assignLine, describeRechazo } = require('./budgetActions')
 
-const ACCIONES = new Set(['ea', 'eo', 'ec', 'eb', 'es', 'ef'])
+const ACCIONES = new Set(['ea', 'el', 'en', 'eb', 'es', 'ef', 'eo', 'ec'])
 const LOTE = 50
+const LINEAS_POR_PAGINA = 6
 
 function esPedidoDeEntrenar(texto) {
   // El mensaje tiene que ser SOLO la frase: "entrenamiento de futbol 300" es
@@ -44,68 +56,53 @@ function fecha(d) {
   return `${f.getUTCDate()}/${f.getUTCMonth() + 1}/${f.getUTCFullYear()}`
 }
 
-// El siguiente gasto por revisar: el de id inmediato menor que `antesDe` que
-// no tenga ya una respuesta (aceptada o corregida) y cuya descripcion tenga
-// letras (no hay nada que aprender de "$200").
+const esc = t => telegram.escapeMarkdown(String(t ?? ''))
+
+function pct(confianza) {
+  return confianza == null ? '' : ` _(${Math.min(99, Math.round(confianza * 100))} %)_`
+}
+
+// El siguiente gasto por revisar, con sus lineas posibles ya calculadas.
 async function siguiente(antesDe = null) {
   let cursor = antesDe == null ? null : Number(antesDe)
   for (let vuelta = 0; vuelta < 20; vuelta++) {
     const lote = await prisma.transaccion.findMany({
-      where: { tipo: 'Gasto', ...(cursor == null ? {} : { id: { lt: cursor } }) },
+      where: { tipo: 'Gasto', presupuestoId: null, ...(cursor == null ? {} : { id: { lt: cursor } }) },
       orderBy: { id: 'desc' },
       take: LOTE,
       include: { categoria: true },
     })
     if (!lote.length) return null
-    const resueltas = await prisma.clasificacionFeedback.findMany({
-      where: { transaccionId: { in: lote.map(t => t.id) }, estado: { in: ['aceptada', 'corregida'] } },
-      select: { transaccionId: true },
-    })
-    const hechas = new Set(resueltas.map(r => r.transaccionId))
-    const tx = lote.find(t => !hechas.has(t.id) && normalizar(t.descripcion).length > 0)
-    if (tx) return tx
+    for (const tx of lote) {
+      if (!normalizar(tx.descripcion).length) continue
+      const lineas = await lineasPara(tx)
+      if (lineas.candidatas.length) return { tx, ...lineas }
+    }
     cursor = lote[lote.length - 1].id
   }
   return null
 }
 
-async function categoriasDeGasto() {
-  return prisma.categoria.findMany({ where: { activo: true, tipo: 'Gasto' }, orderBy: { nombre: 'asc' } })
-}
-
-// Lo que el bot cree: el modelo si tiene opinion; si no, la categoria con la
-// que el gasto se guardo (la que decidieron las reglas o la IA en su momento).
-async function prediccion(tx, cats) {
-  const op = await clasificador.opinar(tx.descripcion)
-  const delModelo = op && cats.find(c => c.id === op.categoriaId)
-  if (delModelo) return { categoria: delModelo, fuente: 'm', confianza: op.confianza }
-  return { categoria: tx.categoria, fuente: 'r', confianza: null }
-}
-
-async function vistaGasto(tx, encabezado = null) {
-  const cats = await categoriasDeGasto()
-  const p = await prediccion(tx, cats)
-  const seguro = p.confianza == null ? '' : ` _(${Math.min(99, Math.round(p.confianza * 100))} % seguro)_`
+function vistaGasto({ tx, candidatas, sugeridaId, sugeridaConfianza }, encabezado = null) {
+  const sugerida = candidatas.find(c => c.id === sugeridaId) || null
   const lineas = ['🧠 *Entrenamiento*']
   if (encabezado) lineas.push(encabezado)
-  lineas.push(
-    '',
-    `*$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*`,
-    `📅 ${fecha(tx.fecha)}`,
-    '',
-    `¿Es de *${telegram.escapeMarkdown(p.categoria?.nombre || '')}*?${seguro}`,
-  )
-  if (p.categoria?.id !== tx.categoriaId) {
-    lineas.push(`_Ahora está en ${telegram.escapeMarkdown(tx.categoria?.nombre || '')}._`)
-  }
-  const cat = p.categoria?.id
+  lineas.push('', `*$${Number(tx.monto).toFixed(2)} — ${esc(tx.descripcion)}*`, `📅 ${fecha(tx.fecha)}`, '')
+  lineas.push(sugerida
+    ? `📂 ¿*${esc(sugerida.descripcion)}*?${pct(sugeridaConfianza)}`
+    : '📂 No sé a qué línea va. ¿Me dices?')
+
+  const primera = sugerida
+    ? [
+        { text: '✅ Sí', callback_data: `ea:${tx.id}:${sugerida.id}` },
+        { text: '✏️ Otra línea', callback_data: `el:${tx.id}:0` },
+      ]
+    : [{ text: '📂 Elegir línea', callback_data: `el:${tx.id}:0` }]
+
   return {
     texto: lineas.join('\n'),
     buttons: [
-      [
-        { text: '✅ Sí', callback_data: `ea:${tx.id}:${cat}:${p.fuente}` },
-        { text: '✏️ Otra', callback_data: `eo:${tx.id}:${cat}:${p.fuente}` },
-      ],
+      primera,
       [
         { text: '⏭ Saltar', callback_data: `es:${tx.id}` },
         { text: '🏁 Terminar', callback_data: 'ef:0' },
@@ -114,68 +111,85 @@ async function vistaGasto(tx, encabezado = null) {
   }
 }
 
-async function vistaFin(encabezado = null) {
-  const m = await clasificador.marcador()
+function vistaFin(encabezado = null) {
   const lineas = ['🏁 *Entrenamiento terminado*']
   if (encabezado) lineas.push(encabezado)
-  if (m?.respuestas) {
-    const gastos = m.respuestas === 1 ? '1 gasto confirmado' : `${m.respuestas} gastos confirmados`
-    lineas.push('', `Llevo ${gastos} y acerté en ${Math.round((100 * m.aceptadas) / m.respuestas)} %.`)
-  }
   lineas.push('', 'Escribe «vamos a entrenar» cuando quieras seguir.')
   return { texto: lineas.join('\n'), buttons: null }
 }
 
-async function mostrarSiguiente(callback, antesDe, encabezado) {
-  const tx = await siguiente(antesDe)
-  const vista = tx ? await vistaGasto(tx, encabezado) : await vistaFin(`${encabezado ? `${encabezado}\n\n` : ''}Ya no quedan gastos por revisar.`)
+async function editar(callback, vista) {
   await telegram.editMessageText(callback.chatId, callback.messageId, vista.texto, { buttons: vista.buttons })
+}
+
+async function mostrarSiguiente(callback, antesDe, encabezado) {
+  const item = await siguiente(antesDe)
+  await editar(callback, item
+    ? vistaGasto(item, encabezado)
+    : vistaFin(`${encabezado ? `${encabezado}\n\n` : ''}Ya no quedan gastos sin línea.`))
 }
 
 // "vamos a entrenar"
 async function iniciar(message) {
-  const tx = await siguiente(null)
-  if (!tx) {
-    await telegram.sendTelegramMessage(message.chatId, 'No hay gastos por revisar. ¡Ya me enseñaste todos!', message.messageId)
+  const item = await siguiente(null)
+  if (!item) {
+    await telegram.sendTelegramMessage(message.chatId, 'No hay gastos sin línea por revisar. ¡Todo está asignado!', message.messageId)
     return
   }
-  const vista = await vistaGasto(tx, 'Te muestro tus gastos del más reciente al más viejo. Confirma o corrige: aprendo con cada uno.')
+  const vista = vistaGasto(item, 'Te muestro tus gastos sin línea, del más reciente al más viejo. Confirma o elige otra: aprendo con cada uno.')
   await telegram.sendTelegramMessage(message.chatId, vista.texto, message.messageId, { buttons: vista.buttons })
-  console.log(`TELEGRAM_ENTRENAMIENTO_INICIO: chat=${message.chatId}; primero=${tx.id}`)
+  console.log(`TELEGRAM_ENTRENAMIENTO_INICIO: chat=${message.chatId}; primero=${item.tx.id}`)
 }
 
-async function aplicar(callback, tx, { propuestaId, finalId, fuente }) {
-  const nombre = telegram.escapeMarkdown(tx.descripcion)
-  if (finalId !== tx.categoriaId) {
-    const r = await correctTransactionCategory({ transaccionId: tx.id, categoriaId: finalId, permitirEnlazada: true })
-    if (!r.ok) {
-      await mostrarSiguiente(callback, tx.id, `⚠️ «${nombre}»: ${describeRechazo(r.reason)}`)
-      return
-    }
+// Asigna la linea (la categoria la sigue) y los dos modelos aprenden.
+async function asignar(callback, tx, lineaId) {
+  const r = await assignLine({ transaccionId: tx.id, presupuestoId: lineaId })
+  if (!r.ok) {
+    await mostrarSiguiente(callback, tx.id, `⚠️ «${esc(tx.descripcion)}»: ${describeRechazo(r.reason)}`)
+    return
   }
-  await clasificador.confirmar({
-    transaccionId: tx.id,
-    texto: tx.descripcion,
-    categoriaPropuestaId: propuestaId,
-    categoriaFinalId: finalId,
-    fuente: fuente === 'm' ? 'modelo' : 'reglas',
+  if (!r.yaEstaba) clasificador.aprenderLinea(tx.descripcion, r.linea.descripcion)
+  if (r.linea.categoriaId != null) {
+    await clasificador.confirmar({
+      transaccionId: tx.id,
+      texto: tx.descripcion,
+      categoriaPropuestaId: tx.categoriaId,
+      categoriaFinalId: r.linea.categoriaId,
+      fuente: 'reglas',
+    })
+  }
+  await mostrarSiguiente(callback, tx.id, `✅ «${esc(tx.descripcion)}» → ${esc(r.linea.descripcion)}`)
+}
+
+async function menuLineas(callback, tx, pagina) {
+  const { candidatas, sugeridaId } = await lineasPara(tx)
+  const total = Math.max(1, Math.ceil(candidatas.length / LINEAS_POR_PAGINA))
+  const p = Math.min(Math.max(0, Number(pagina) || 0), total - 1)
+  const rows = candidatas.slice(p * LINEAS_POR_PAGINA, (p + 1) * LINEAS_POR_PAGINA).map(c => [{
+    text: `${c.id === sugeridaId ? '⭐ ' : ''}${c.descripcion}${c.categoriaNombre ? ` · ${c.categoriaNombre}` : ''}`.slice(0, 60),
+    callback_data: `en:${tx.id}:${c.id}`,
+  }])
+  const nav = []
+  if (p > 0) nav.push({ text: '« Anterior', callback_data: `el:${tx.id}:${p - 1}` })
+  if (p < total - 1) nav.push({ text: `Ver más » (${p + 1}/${total})`, callback_data: `el:${tx.id}:${p + 1}` })
+  if (nav.length) rows.push(nav)
+  rows.push([{ text: '◀ Volver', callback_data: `eb:${tx.id}` }])
+  await editar(callback, {
+    texto: `🧠 *Entrenamiento*\n\n*$${Number(tx.monto).toFixed(2)} — ${esc(tx.descripcion)}*\n\n¿A qué línea va?`,
+    buttons: rows,
   })
-  const cat = await prisma.categoria.findUnique({ where: { id: finalId } })
-  const marca = propuestaId === finalId ? '✅' : '✏️'
-  await mostrarSiguiente(callback, tx.id, `${marca} «${nombre}» → ${telegram.escapeMarkdown(cat?.nombre || '')}`)
 }
 
 async function handleCallback(callback) {
-  const [accion, txId, a, b, c] = callback.data.split(':')
+  const [accion, txId, a] = callback.data.split(':')
   console.log(`TELEGRAM_ENTRENAMIENTO: accion=${accion} tx=${txId} chat=${callback.chatId}`)
 
   if (accion === 'ef') {
-    const vista = await vistaFin()
-    await telegram.editMessageText(callback.chatId, callback.messageId, vista.texto, { buttons: vista.buttons })
+    await editar(callback, vistaFin())
     return
   }
   if (accion === 'es') {
-    await mostrarSiguiente(callback, txId, `⏭ Saltado.`)
+    await mostrarSiguiente(callback, txId, '⏭ Saltado.')
     return
   }
 
@@ -185,38 +199,22 @@ async function handleCallback(callback) {
     return
   }
 
-  if (accion === 'eb') {
-    const vista = await vistaGasto(tx)
-    await telegram.editMessageText(callback.chatId, callback.messageId, vista.texto, { buttons: vista.buttons })
+  if (accion === 'el') {
+    await menuLineas(callback, tx, a)
+    return
+  }
+  if (accion === 'ea' || accion === 'en') {
+    await asignar(callback, tx, Number(a))
     return
   }
 
-  if (accion === 'eo') {
-    const cats = await categoriasDeGasto()
-    const propuestaId = Number(a)
-    const opciones = cats.filter(x => x.id !== propuestaId)
-    const rows = []
-    for (let i = 0; i < opciones.length; i += 2) {
-      rows.push(opciones.slice(i, i + 2).map(x => ({ text: x.nombre, callback_data: `ec:${tx.id}:${x.id}:${propuestaId}:${b === 'm' ? 'm' : 'r'}` })))
-    }
-    rows.push([{ text: '◀ Volver', callback_data: `eb:${tx.id}` }])
-    await telegram.editMessageText(
-      callback.chatId,
-      callback.messageId,
-      `🧠 *Entrenamiento*\n\n*$${Number(tx.monto).toFixed(2)} — ${telegram.escapeMarkdown(tx.descripcion)}*\n\n¿De qué categoría es?`,
-      { buttons: rows },
-    )
+  // 'eb', y los botones de categoria de un mensaje viejo ('eo', 'ec'): se
+  // redibuja el gasto; si ya tiene linea, se pasa al siguiente.
+  if (tx.presupuestoId != null) {
+    await mostrarSiguiente(callback, tx.id, null)
     return
   }
-
-  if (accion === 'ea') {
-    await aplicar(callback, tx, { propuestaId: Number(a), finalId: Number(a), fuente: b })
-    return
-  }
-
-  if (accion === 'ec') {
-    await aplicar(callback, tx, { propuestaId: Number(b), finalId: Number(a), fuente: c })
-  }
+  await editar(callback, vistaGasto({ tx, ...(await lineasPara(tx)) }))
 }
 
 module.exports = { ACCIONES, esPedidoDeEntrenar, iniciar, handleCallback, siguiente }

@@ -4,50 +4,61 @@ Parte de la Fase 8 (Inteligencia y Automatización): *"Este gasto parece Super, 
 
 ## Qué hace
 
-Cuando llega un gasto por Telegram, el bot propone la categoría y la línea de presupuesto. **No pregunta nada aparte**: aprende de lo que el usuario ya hace al elegir la línea (aprendizaje supervisado).
+**En el bot lo que importa es la línea de presupuesto** (decisión del usuario del 2/11/2026); la categoría es para el dashboard. Por eso:
+
+- Cuando llega un gasto por Telegram, el bot propone la línea (la sugerida va primera y marcada) y el usuario la elige con un toque. No hay preguntas ni botones de categoría.
+- **La categoría sigue a la línea, sin preguntar** (`assignLine` en `src/budgetActions.js`): al elegir una línea de otra categoría, el gasto pasa a la categoría de la línea y el mensaje lo avisa («Categoría: Familia → Super»). Antes el bot preguntaba «¿Muevo también la categoría?». Sigue habiendo un toque humano detrás: el usuario eligió la línea. Lo mismo pasa al crear una línea nueva desde Telegram.
 
 ```
 Tú:   100, croquetas
 Milo: Gasto registrado ... Familia ...
       ¿Lo mando a Super? (99 % seguro) Toca la que corresponda:
-      [* Super · Super — $3600.00]   <- primera y marcada
+      [Super · Super — $3600.00]   <- primera y marcada
       [Ballet Dalia · Familia — $550.00] ...
+      [Dejar sin asignar]
+Tú:   (toca Super)
+Milo: Asignado a Super
+      Categoría: Familia -> Super
 ```
 
-La pregunta «¿Es correcta la categoría?» con botones Sí/No existió en la Fase A y **se quitó el 1/11/2026** a pedido del usuario: si la categoría ya está, preguntar sobra. El feedback se sigue registrando y se resuelve así:
-
-| Lo que hace el usuario | Feedback de la categoría |
-|---|---|
-| Elige una línea de la **misma** categoría | `aceptada`: vio la categoría y no la objetó |
-| Elige una línea de **otra** categoría y el bot pregunta «¿Muevo también la categoría?» → «Sí, moverlo» (`pk`) | `corregida` (pesa ×2) |
-| … → «No, dejarlo en X» (`pm`) | `aceptada` |
-| No elige línea, o «Dejar sin asignar» (`pn`) | sigue `pendiente`: no entra al entrenamiento |
+La categoría propuesta al registrar se guarda en `clasificacion_feedback` como `pendiente`, y el toque de línea la resuelve: `aceptada` si la línea es de la misma categoría, `corregida` si no. Así el modelo de categoría (que propone la categoría de los gastos nuevos, útil para el dashboard) también aprende de cada toque. Si nunca se elige línea, o se toca «Dejar sin asignar», sigue `pendiente` y no entra al entrenamiento.
 
 El gasto se guarda **antes** de cualquier toque (decisión del 1/11/2026): si no se toca nada, el gasto no se pierde.
 
-Para corregir sin tanto botón, el mensaje trae **un solo** botón «Categoría» (`kn`), en la misma fila que «Dejar sin asignar»: abre el menú de categorías (`kc`), corrige (feedback `corregida`) y vuelve a las líneas. Solo aparece en gastos sin línea; con línea, la categoría se corrige con el cruce o en la sesión de entrenamiento. El botón `ka` («Sí» de la pregunta vieja) se sigue atendiendo para los mensajes que todavía lo tienen.
+Historia: la Fase A preguntaba «¿Es correcta la categoría?» con botones Sí/No; el 1/11 se quitó y quedó un solo botón de categoría, y el 2/11 también se quitó, junto con la pregunta de cruce. Los botones viejos (`ka`, `kn`, `kc`, `kb`, `pk`, `pm`) se siguen atendiendo para los mensajes que todavía los tienen.
 
-## Sesión de entrenamiento
+## Sesión de entrenamiento (línea)
 
-El usuario escribe **«vamos a entrenar»** (también «entrenar», «/entrenar», «entrenemos»; el mensaje tiene que ser solo la frase, así que «entrenamiento de futbol 300» se registra como gasto). El bot muestra los gastos **uno por uno, del más reciente al más viejo**, con la categoría que cree, en **un solo mensaje que se va editando**:
+El usuario escribe **«vamos a entrenar»** (también «entrenar», «/entrenar», «entrenemos»; el mensaje tiene que ser solo la frase, así que «entrenamiento de futbol 300» se registra como gasto). El bot muestra, **uno por uno y del más reciente al más viejo, los gastos que todavía no tienen línea**, con la línea que cree, en **un solo mensaje que se va editando**:
 
 ```
 Entrenamiento
-«tenis» -> Familia            <- lo que acaba de aprender
+«ropa» -> Gastos Personales     <- lo que acaba de aprender
 $100.00 — croquetas
 1/11/2026
-¿Es de Familia? (87 % seguro)
-Ahora está en Personal.
-[Sí] [Otra]
+¿Super? (72 %)
+[Sí] [Otra línea]
 [Saltar] [Terminar]
 ```
 
-- **Qué cree el bot:** la opinión del modelo de categoría, aunque no sea muy firme (en la sesión siempre se revisa), o, si no tiene, la categoría con la que se guardó el gasto.
-- **Sí / Otra:** guarda la respuesta (`aceptada` / `corregida`; la crea si el gasto es viejo y no tenía propuesta), corrige la categoría del gasto si hace falta y el modelo aprende en ese momento. Aquí **sí** se puede corregir un gasto que ya tiene línea: es una decisión explícita y deja un estado válido, el mismo que «No, dejarlo en X» del cruce.
-- **Saltar** no escribe nada. **Terminar** dice cuántos gastos lleva confirmados y en qué porcentaje acertó.
-- Se saltan los gastos que ya tienen respuesta y los que no tienen letras («$200»).
-- **Sin estado:** cada botón lleva el id del gasto, y «el siguiente» es el gasto anterior sin respuesta. La sesión sobrevive a que Render duerma o reinicie el servicio.
-- `callback_data`: `ea:<tx>:<cat>:<f>` sí, `eo:<tx>:<cat>:<f>` otra, `ec:<tx>:<cat>:<propuesta>:<f>` elegida, `eb:<tx>` volver, `es:<tx>` saltar, `ef:0` terminar (`f` = `m` modelo o `r` reglas). El cambio de categoría pasa por `correctTransactionCategory`, que revalida todo contra la base y nunca cruza tipos.
+- **Sí** asigna la línea sugerida; **Otra línea** abre el menú paginado de las líneas de la quincena. En los dos casos la categoría sigue a la línea, el gasto pasa al siguiente y **los dos modelos aprenden en ese momento** (la línea, y la categoría de la línea como respuesta del modelo de categoría).
+- Si el bot no tiene sugerencia, el único botón es «Elegir línea».
+- **Saltar** no escribe nada; **Terminar** cierra.
+- La sugerida es la misma del flujo normal (`src/sugerenciaLinea.js`: regla primero, luego el modelo), así que lo que se enseña es lo mismo que el bot propone.
+- Salen solo gastos de tipo Gasto **sin línea**, con al menos una línea posible en su quincena y con letras en la descripción. Un gasto con línea ya la eligió una persona.
+- **Sin estado:** cada botón lleva el id del gasto, y «el siguiente» es el gasto anterior que cumple lo de arriba. La sesión sobrevive a que Render duerma o reinicie el servicio.
+
+| `callback_data` | Qué hace |
+|---|---|
+| `ea:<tx>:<linea>` | sí, esa línea |
+| `el:<tx>:<pagina>` | menú de líneas |
+| `en:<tx>:<linea>` | línea elegida |
+| `eb:<tx>` | volver |
+| `es:<tx>` | saltar |
+| `ef:0` | terminar |
+| `eo`, `ec` | botones de categoría de la versión anterior: redibujan el gasto |
+
+Todo pasa por `assignLine` (`linkTransactionToBudget` + `alignTransactionCategory`), que revalida contra la base: mismo tipo, misma quincena y línea no cancelada.
 
 ## Cómo decide la categoría
 
@@ -74,7 +85,7 @@ Naive Bayes multinomial sobre **palabras + fragmentos de 3 y 4 letras** (`src/cl
 
 **Por qué no el historial (decisión de la Fase B, medida con datos reales):** en la Fase A se entrenaba con la categoría de todas las transacciones. Medido con los 545 movimientos de producción, ese modelo acertaba **menos** que las palabras clave (60–65 % contra 68 %). Las categorías históricas casi nunca las confirmó nadie, porque las puso el mismo parser, y son inconsistentes: «tacos» aparece como Familia, Personal y Diversión. El modelo aprendía ruido.
 
-## Fase B: la línea de presupuesto (la )
+## Fase B: la línea de presupuesto (la sugerida)
 
 Las líneas se repiten cada quincena con el mismo nombre («Super», «Gasolina Spark») pero con otro id, así que **el modelo aprende el nombre de la línea**. Se entrena con todos los gastos que ya tienen línea: 430 en producción, y cada una la eligió una persona con un toque, así que son etiquetas confiables.
 
@@ -132,8 +143,8 @@ En los logs de Render: `CLASIFICADOR_ENTRENADO`, `CLASIFICADOR_DIFIERE` (el mode
 ## Pruebas
 
 - `scripts/test-clasificador.js` (71): modelo y servicio. Normalización, tolerancia a errores de dedo, «no sé» con texto desconocido, que una corrección cambie la opinión, exclusión de las pendientes, pesos, idempotencia, que nunca truene y el apagado.
-- `scripts/test-telegram-flow.js`, casos E1–E7: la sesión de entrenamiento (orden, Sí, Otra con línea, `ec` forjado hacia otro tipo, Saltar sin escrituras, Terminar con marcador, nada por revisar).
-- `scripts/test-clasificador.js`, casos C1–C2: `confirmar`, `opinar`, `marcador` y qué frases abren la sesión.
+- `scripts/test-telegram-flow.js`, casos E1–E9: la sesión de entrenamiento de línea (orden, sugerida, Sí, Otra línea con categoría que sigue, `en` forjado hacia otro tipo, Saltar sin escrituras, Terminar, botones viejos, nada por revisar), y AC: elegir una línea de otra categoría mueve la categoría sin preguntar.
+- `scripts/test-clasificador.js`, casos C1–C2: `confirmar` y qué frases abren la sesión.
 - `scripts/test-telegram-flow.js`, casos CL11–CL12 (Fase B): la la pone el modelo cuando la regla no opina, la paginación la conserva y dos toques le enseñan una línea nueva.
 - `scripts/test-telegram-flow.js`, casos CL1–CL10: la pregunta, Sí, No, Volver, Corregir, `kc` forjado hacia otro tipo, línea de la misma categoría = sí, cruce = corrección, que un ingreso no pregunte, que el modelo entrenado le gane a las reglas y que una falla de la tabla no impida el registro.
 

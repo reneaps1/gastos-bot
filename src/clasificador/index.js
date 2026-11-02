@@ -230,43 +230,6 @@ async function confirmar({ transaccionId, texto, categoriaPropuestaId, categoria
 }
 
 /**
- * La categoria que el bot cree para un texto en la sesion de entrenamiento:
- * el modelo si esta seguro, o null (el llamador cae en las reglas). Igual a
- * proponer(), pero sin el umbral alto: aqui el usuario SIEMPRE revisa, asi
- * que conviene ver la opinion del modelo aunque no sea muy firme.
- */
-async function opinar(descripcion) {
-  if (!habilitado()) return null
-  try {
-    const m = await asegurarModelo()
-    if (!m || m.ejemplos < MIN_EJEMPLOS) return null
-    const { ranking, cobertura } = m.predecir(descripcion, categorias.keys())
-    const top = ranking[0]
-    if (!top || cobertura < MIN_COBERTURA) return null
-    const categoriaId = Number(top.etiqueta)
-    return { categoriaId, nombre: categorias.get(categoriaId), confianza: top.probabilidad }
-  } catch (error) {
-    console.error('CLASIFICADOR_OPINAR_ERROR:', error.message)
-    return null
-  }
-}
-
-// Cuantas respuestas lleva y que tanto acerto (para el cierre del entrenamiento).
-async function marcador() {
-  try {
-    const filas = await prisma.clasificacionFeedback.findMany({
-      where: { estado: { in: [ESTADO.ACEPTADA, ESTADO.CORREGIDA] } },
-      select: { estado: true },
-    })
-    const aceptadas = filas.filter(f => f.estado === ESTADO.ACEPTADA).length
-    return { respuestas: filas.length, aceptadas }
-  } catch (error) {
-    console.error('CLASIFICADOR_MARCADOR_ERROR:', error.message)
-    return null
-  }
-}
-
-/**
  * La linea de presupuesto mas probable para una descripcion, ELEGIDA ENTRE
  * `candidatas` (las de la quincena y el tipo del movimiento), o null si el
  * modelo no esta seguro.
@@ -331,8 +294,6 @@ module.exports = {
   registrarPropuesta,
   resolver,
   confirmar,
-  opinar,
-  marcador,
   pendiente,
   sugerirLinea,
   aprenderLinea,

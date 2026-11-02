@@ -15,9 +15,11 @@
 //      movimiento y la enlaza. Es la unica que crea presupuesto, y por eso es
 //      la unica que escribe bitacora (ver su comentario).
 //
-// 1 y 2 son escrituras separadas a proposito: enlazar no cambia la categoria en
-// silencio, y confirmar la categoria no puede mover el enlace. Esa separacion
-// es lo que hace que "nunca se sobrescribe en silencio" sea literal.
+// 1 y 2 siguen siendo escrituras separadas: linkTransactionToBudget no toca la
+// categoria, y alignTransactionCategory no puede mover el enlace. Desde el
+// 2026-11-02 el flujo de Telegram las encadena con `assignLine` (la categoria
+// sigue a la linea que el usuario eligio, sin preguntar), pero cada una
+// conserva su validacion y se puede usar sola.
 //
 // Los TRASPASOS entre lineas (cubrir un excedente moviendo `montoRevisado`) NO
 // estan aqui y no deben estarlo: esa operacion valida que la linea donante no
@@ -105,8 +107,8 @@ async function linkTransactionToBudget({ transaccionId, presupuestoId }) {
 
   // `cruzado` = la linea es de otra categoria que la transaccion. Es un estado
   // legal (el dashboard lleva tiempo permitiendolo desde el panel "Movimientos
-  // sin presupuesto"), pero el llamador tiene que saberlo para PREGUNTAR si se
-  // mueve tambien la categoria. Enlazar nunca la mueve solo.
+  // sin presupuesto"). Esta funcion nunca mueve la categoria; quien quiere que
+  // la categoria siga a la linea usa assignLine.
   const cruzado = linea.categoriaId !== tx.categoriaId
 
   // Tocar el boton dos veces no debe escribir dos veces ni reportar algo
@@ -178,11 +180,12 @@ async function createBudgetLineForTransaction({ transaccionId, categoriaId, acto
   })
 
   // Enlazar pasa por el camino de siempre, ya validado, en vez de escribir
-  // `presupuestoId` aqui por atajo.
-  const enlace = await linkTransactionToBudget({ transaccionId: txId, presupuestoId: linea.id })
+  // `presupuestoId` aqui por atajo. Y la categoria sigue a la linea (ver
+  // assignLine).
+  const enlace = await assignLine({ transaccionId: txId, presupuestoId: linea.id })
   if (!enlace.ok) return { ok: false, reason: enlace.reason, linea }
 
-  return { ok: true, linea, status: enlace.status }
+  return { ok: true, linea, status: enlace.status, categoriaMovida: enlace.categoriaMovida }
 }
 
 /**
@@ -295,6 +298,31 @@ async function correctTransactionCategory({ transaccionId, categoriaId, permitir
   return { ok: true, yaEstaba: false, tx, categoriaAnterior: tx.categoria, categoriaNueva: categoria }
 }
 
+/**
+ * Enlaza el movimiento a una linea Y deja su categoria igual a la de la linea.
+ *
+ * DECISION DEL 2026-11-02 (del usuario): en Telegram lo util es la linea; la
+ * categoria es para el dashboard y tiene que cuadrar con ella. Antes, elegir
+ * una linea de otra categoria preguntaba "¿Muevo tambien la categoria?"; ahora
+ * la categoria sigue a la linea sin preguntar. Sigue habiendo un toque humano
+ * detras: el usuario eligio la linea. Las dos escrituras siguen siendo las de
+ * siempre (linkTransactionToBudget y alignTransactionCategory), con todas sus
+ * validaciones; esta funcion solo las encadena.
+ *
+ * @returns lo mismo que linkTransactionToBudget, mas `categoriaMovida`
+ *          ({de, a}) cuando la categoria cambio.
+ */
+async function assignLine({ transaccionId, presupuestoId }) {
+  const enlace = await linkTransactionToBudget({ transaccionId, presupuestoId })
+  if (!enlace.ok) return enlace
+  let categoriaMovida = null
+  if (enlace.cruzado) {
+    const al = await alignTransactionCategory({ transaccionId, presupuestoId })
+    if (al.ok && !al.yaEstaba) categoriaMovida = { de: al.categoriaAnterior, a: al.categoriaNueva }
+  }
+  return { ...enlace, categoriaMovida }
+}
+
 // Deja la transaccion explicitamente sin linea. Existe para que "Dejar sin
 // asignar" sea una decision registrada y no simplemente ignorar los botones:
 // asi el mensaje se cierra y el gasto no queda en el limbo visual.
@@ -372,6 +400,7 @@ function describeRechazo(reason) {
 
 module.exports = {
   linkTransactionToBudget,
+  assignLine,
   alignTransactionCategory,
   correctTransactionCategory,
   createBudgetLineForTransaction,
