@@ -129,12 +129,20 @@ const fakePrisma = {
     // Solo responde a la firma de findTransactionsByReference (la unica que
     // filtra por descripcion). Los demas llamadores siguen viendo [] para no
     // cambiar el comportamiento de los casos A-H.
-    findMany: async ({ where, select } = {}) => {
+    findMany: async ({ where, select, orderBy, take } = {}) => {
       // La firma del entrenamiento del modelo de LINEAS (src/clasificador):
       // los gastos que ya tienen linea, con el nombre de la linea. Devuelve
       // `historicoLineas`, que arranca vacio (el modelo no opina) y el caso
       // CL11 llena.
       if (where?.presupuestoId?.not === null && select?.presupuesto) return historicoLineas
+      // La firma de la sesion de entrenamiento: gastos por id descendente.
+      if (where?.tipo === 'Gasto' && orderBy?.id === 'desc') {
+        return creadas
+          .filter(t => t.tipo === 'Gasto' && (where.id?.lt === undefined || t.id < where.id.lt))
+          .sort((a, b) => b.id - a.id)
+          .slice(0, take ?? Infinity)
+          .map(t => ({ ...t, categoria: categorias.find(c => c.id === t.categoriaId) || null }))
+      }
       const texto = where?.descripcion?.contains
       if (!texto) return []
       return creadas.filter(t =>
@@ -572,9 +580,10 @@ async function main() {
   check('el gasto nace SIN linea', txT?.presupuestoId == null, txT?.presupuestoId)
   const botonesT = enviados.at(-1)?.buttons || []
   check('pregunta con botones', botonesT.length > 0, JSON.stringify(botonesT))
-  // Arriba de todo va la pregunta del clasificador ("¿Es correcta la
-  // categoria?"); la sugerida tiene que ser la primera de las LINEAS.
-  check('la pregunta de categoria va arriba', botonesT[0]?.[0]?.callback_data === `ka:${txT.id}`, botonesT[0]?.[0]?.callback_data)
+  // Sin la pregunta de categoria (se quito el 2026-11-01): las lineas van
+  // directo, y la sugerida es la primera.
+  check('no hay fila de pregunta de categoria', !botonesT.flat().some(b => /^k[abc]:/.test(b.callback_data || '')), JSON.stringify(botonesT[0]))
+  check('un solo "✏️ Categoría", en la fila de "Dejar sin asignar"', botonesT.flat().filter(b => b.callback_data === `kn:${txT.id}`).length === 1 && botonesT.find(f => f.some(b => b.callback_data === `pn:${txT.id}`))?.some(b => b.callback_data === `kn:${txT.id}`), JSON.stringify(botonesT.at(-1)))
   const filasLineaT = botonesT.filter(f => f[0]?.callback_data?.startsWith('pl:'))
   check('la sugerida va primera y marcada', /^⭐ /.test(filasLineaT[0]?.[0]?.text || ''), filasLineaT[0]?.[0]?.text)
   check('la sugerida es Niñera', filasLineaT[0]?.[0]?.callback_data === `pl:${txT.id}:11`, filasLineaT[0]?.[0]?.callback_data)
@@ -746,25 +755,28 @@ async function main() {
   const fbDe = tx => feedbacks.find(f => f.transaccionId === tx.id)
   const cbsDe = msg => msg?.buttons?.flat().map(b => b.callback_data).filter(Boolean) || []
 
-  console.log('\n=== CL1: un gasto pregunta si la categoria es correcta ===')
+  console.log('\n=== CL1: un gasto NO pregunta la categoria, pero registra la propuesta ===')
   await post(textUpdate('250 croquetas'))
   const txCL1 = creadas.at(-1)
   const msgCL1 = enviados.at(-1)
   check('registro el gasto con la categoria de las reglas', txCL1?.categoriaId === 3, txCL1?.categoriaId)
-  check('pregunta por la categoria', /¿Es correcta la categoría \*Familia\*\?/.test(msgCL1?.message || ''), msgCL1?.message)
-  check('la primera fila es Si / No', msgCL1?.buttons?.[0]?.map(b => b.callback_data).join() === `ka:${txCL1.id},kn:${txCL1.id}`, JSON.stringify(msgCL1?.buttons?.[0]))
-  check('las lineas siguen ahi, debajo', cbsDe(msgCL1).some(cb => cb.startsWith(`pl:${txCL1.id}:`)), JSON.stringify(cbsDe(msgCL1)))
+  check('no pregunta por la categoria', !/¿Es correcta la categoría/.test(msgCL1?.message || ''), msgCL1?.message)
+  check('sin botones Si / No', !cbsDe(msgCL1).some(cb => /^k[abc]:/.test(cb)), JSON.stringify(cbsDe(msgCL1)))
+  check('ni filas extra: "✏️ Categoría" comparte fila', msgCL1?.buttons?.every(f => !(f.length === 1 && f[0].callback_data === `kn:${txCL1.id}`)), JSON.stringify(msgCL1?.buttons?.at(-1)))
+  check('la primera fila es una linea', msgCL1?.buttons?.[0]?.[0]?.callback_data?.startsWith(`pl:${txCL1.id}:`), JSON.stringify(msgCL1?.buttons?.[0]))
   check('guardo la propuesta pendiente', fbDe(txCL1)?.estado === 'pendiente' && fbDe(txCL1)?.categoriaPropuestaId === 3, JSON.stringify(fbDe(txCL1)))
   check('sin modelo entrenado, la fuente son las reglas', fbDe(txCL1)?.fuente === 'reglas' && fbDe(txCL1)?.confianza == null, JSON.stringify(fbDe(txCL1)))
   check('callback_data cabe en 64 bytes', cbsDe(msgCL1).every(cb => Buffer.byteLength(cb) <= 64))
 
-  console.log('\n=== CL2: "Si" la marca aceptada y pasa a las lineas ===')
+  // CL2-CL4: los botones ka/kn/kc/kb ya no se dibujan, pero siguen
+  // funcionando para los mensajes viejos que todavia los tienen.
+  console.log('\n=== CL2: "Si" (mensaje viejo) la marca aceptada y pasa a las lineas ===')
   const escriturasCL2 = escrituras.length
   await post(callbackUpdate(`ka:${txCL1.id}`))
   check('feedback aceptada', fbDe(txCL1)?.estado === 'aceptada' && fbDe(txCL1)?.categoriaFinalId === 3, JSON.stringify(fbDe(txCL1)))
   check('no toco la transaccion', escrituras.length === escriturasCL2, escrituras.length)
   check('lo confirma en el mensaje', /Categoría confirmada: \*Familia\*/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
-  check('ahora ofrece las lineas, sin la pregunta', cbsDe(editados.at(-1)).some(cb => cb.startsWith('pl:')) && !cbsDe(editados.at(-1)).some(cb => cb.startsWith('k')), JSON.stringify(cbsDe(editados.at(-1))))
+  check('ahora ofrece las lineas, sin la pregunta', cbsDe(editados.at(-1)).some(cb => cb.startsWith('pl:')) && !cbsDe(editados.at(-1)).some(cb => /^k[abc]:/.test(cb)), JSON.stringify(cbsDe(editados.at(-1))))
   await post(callbackUpdate(`ka:${txCL1.id}`))
   check('contestar dos veces no cambia nada', fbDe(txCL1)?.estado === 'aceptada', fbDe(txCL1)?.estado)
 
@@ -778,7 +790,7 @@ async function main() {
   check('no ofrece categorias de otro tipo', !menuCL3.includes(`kc:${txCL3.id}:1`), JSON.stringify(menuCL3))
   check('permite volver', menuCL3.includes(`kb:${txCL3.id}`), JSON.stringify(menuCL3))
   await post(callbackUpdate(`kb:${txCL3.id}`))
-  check('volver repone la pregunta', cbsDe(editados.at(-1))[0] === `ka:${txCL3.id}`, JSON.stringify(cbsDe(editados.at(-1))))
+  check('volver regresa a las lineas', cbsDe(editados.at(-1))[0]?.startsWith(`pl:${txCL3.id}:`), JSON.stringify(cbsDe(editados.at(-1))))
 
   console.log('\n=== CL4: elegir otra categoria la corrige y aprende ===')
   await post(callbackUpdate(`kc:${txCL3.id}:3`))
@@ -838,9 +850,8 @@ async function main() {
   const txCL9 = creadas.at(-1)
   check('lo registro en Familia', txCL9?.categoriaId === 3, txCL9?.categoriaId)
   check('la fuente es el modelo', fbDe(txCL9)?.fuente === 'modelo' && fbDe(txCL9)?.confianza > 0.6, JSON.stringify(fbDe(txCL9)))
-  check('dice que tan seguro esta', /% seguro/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
   check('dejo traza de que difirio de las reglas', logsIncluyen('CLASIFICADOR_DIFIERE: reglas=Personal; modelo=Familia'), 'falta CLASIFICADOR_DIFIERE')
-  check('sigue preguntando', cbsDe(enviados.at(-1))[0] === `ka:${txCL9.id}`, JSON.stringify(cbsDe(enviados.at(-1))))
+  check('tampoco pregunta', !cbsDe(enviados.at(-1)).some(cb => cb.startsWith('ka:')), JSON.stringify(cbsDe(enviados.at(-1))))
 
   console.log('\n=== CL10: si la tabla de feedback falla, el gasto se registra igual ===')
   feedbackFalla = true
@@ -864,6 +875,7 @@ async function main() {
   const filasLineaCL11 = (msgCL11?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
   check('la ⭐ es Colegiatura', filasLineaCL11[0]?.[0]?.callback_data === `pl:${txCL11.id}:12` && /^⭐ /.test(filasLineaCL11[0]?.[0]?.text || ''), JSON.stringify(filasLineaCL11[0]))
   check('el texto la propone con su confianza', /¿Lo mando a \*Colegiatura\*\? _\(\d+ % seguro\)_/.test(msgCL11?.message || ''), msgCL11?.message)
+  check('nunca dice "100 % seguro"', !/100 % seguro/.test(msgCL11?.message || '') && /99 % seguro/.test(msgCL11?.message || ''), msgCL11?.message)
   await post(callbackUpdate(`pp:${txCL11.id}:0`))
   check('paginar conserva la misma ⭐ (orden determinista)', editados.at(-1)?.buttons?.find(f => f[0]?.callback_data?.startsWith('pl:'))?.[0]?.callback_data === `pl:${txCL11.id}:12`, JSON.stringify(editados.at(-1)?.buttons?.[0]))
 
@@ -880,6 +892,71 @@ async function main() {
   const txR3 = creadas.at(-1)
   const filasR3 = (enviados.at(-1)?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
   check('despues de dos toques ya la sugiere', filasR3[0]?.[0]?.callback_data === `pl:${txR3.id}:12` && /^⭐ /.test(filasR3[0]?.[0]?.text || ''), JSON.stringify(filasR3[0]))
+
+  // --- Sesion de entrenamiento (src/entrenamiento.js) ---
+  const gastosSinRespuesta = () => creadas.filter(t => t.tipo === 'Gasto' && !feedbacks.some(f => f.transaccionId === t.id && f.estado !== 'pendiente'))
+
+  console.log('\n=== E1: "vamos a entrenar" muestra el gasto mas reciente sin respuesta ===')
+  const escriturasE1 = escrituras.length
+  const antesE1 = creadas.length
+  await post(textUpdate('Vamos a entrenar'))
+  const esperadoE1 = gastosSinRespuesta().sort((a, b) => b.id - a.id)[0]
+  const msgE1 = enviados.at(-1)
+  check('no registro nada', creadas.length === antesE1 && escrituras.length === escriturasE1, creadas.length)
+  check('es la sesion', /Entrenamiento/.test(msgE1?.message || ''), msgE1?.message)
+  check('el gasto mas reciente sin respuesta', (msgE1?.message || '').includes(esperadoE1.descripcion), `${esperadoE1.descripcion} / ${msgE1?.message}`)
+  const cbsE1 = cbsDe(msgE1)
+  check('botones: Si, Otra, Saltar, Terminar', cbsE1.some(cb => cb.startsWith(`ea:${esperadoE1.id}:`)) && cbsE1.some(cb => cb.startsWith(`eo:${esperadoE1.id}:`)) && cbsE1.includes(`es:${esperadoE1.id}`) && cbsE1.includes('ef:0'), JSON.stringify(cbsE1))
+  check('solo dos filas', msgE1?.buttons?.length === 2, msgE1?.buttons?.length)
+  check('callback_data cabe en 64 bytes', cbsE1.every(cb => Buffer.byteLength(cb) <= 64))
+
+  console.log('\n=== E2: "Si" confirma, aprende y pasa al siguiente (mas viejo) ===')
+  const cbSi = cbsE1.find(cb => cb.startsWith('ea:'))
+  const catE2 = Number(cbSi.split(':')[2])
+  await post(callbackUpdate(cbSi))
+  const fbE2 = feedbacks.find(f => f.transaccionId === esperadoE1.id)
+  check('feedback resuelto con la categoria confirmada', fbE2 && fbE2.estado !== 'pendiente' && fbE2.categoriaFinalId === catE2, JSON.stringify(fbE2))
+  check('el gasto queda en esa categoria', esperadoE1.categoriaId === catE2, esperadoE1.categoriaId)
+  const msgE2 = editados.at(-1)
+  const siguienteE2 = gastosSinRespuesta().filter(t => t.id < esperadoE1.id).sort((a, b) => b.id - a.id)[0]
+  check('edita el MISMO mensaje con el siguiente', (msgE2?.message || '').includes(siguienteE2.descripcion) && cbsDe(msgE2).some(cb => cb.startsWith(`ea:${siguienteE2.id}:`)), msgE2?.message)
+  check('dice lo que acaba de aprender', /✅ «/.test(msgE2?.message || ''), msgE2?.message)
+
+  console.log('\n=== E3: "Otra" -> elegir categoria corrige, aunque el gasto ya tenga linea ===')
+  // Se toma un gasto ya enlazado a la linea 12 (Familia) y se corrige a Personal.
+  const enlazado = creadas.filter(t => t.tipo === 'Gasto' && t.presupuestoId === 12 && t.categoriaId === 3).sort((a, b) => b.id - a.id)[0]
+  await post(callbackUpdate(`eo:${enlazado.id}:3:r`))
+  const menuE3 = cbsDe(editados.at(-1))
+  check('menu de categorias de gasto, sin la propuesta', menuE3.includes(`ec:${enlazado.id}:7:3:r`) && !menuE3.some(cb => cb.startsWith(`ec:${enlazado.id}:3:`)) && !menuE3.some(cb => cb.startsWith(`ec:${enlazado.id}:1:`)), JSON.stringify(menuE3))
+  check('permite volver', menuE3.includes(`eb:${enlazado.id}`), JSON.stringify(menuE3))
+  await post(callbackUpdate(`ec:${enlazado.id}:7:3:r`))
+  check('corrigio la categoria (con linea)', enlazado.categoriaId === 7 && enlazado.presupuestoId === 12, `${enlazado.categoriaId} / ${enlazado.presupuestoId}`)
+  check('feedback corregida', feedbacks.find(f => f.transaccionId === enlazado.id)?.estado === 'corregida', JSON.stringify(feedbacks.find(f => f.transaccionId === enlazado.id)))
+  check('lo dice', /✏️ «.*» → Personal/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== E4: un ec forjado hacia otro TIPO se rechaza ===')
+  const victima = gastosSinRespuesta().sort((a, b) => b.id - a.id)[0]
+  const catVictima = victima.categoriaId
+  await post(callbackUpdate(`ec:${victima.id}:1:${catVictima}:r`))
+  check('no cambio la categoria', victima.categoriaId === catVictima, victima.categoriaId)
+  check('no dejo feedback resuelto', !feedbacks.some(f => f.transaccionId === victima.id && f.estado !== 'pendiente'))
+
+  console.log('\n=== E5: "Saltar" no escribe nada ===')
+  const feedbacksE5 = JSON.stringify(feedbacks)
+  const escriturasE5 = escrituras.length
+  await post(callbackUpdate(`es:${victima.id}`))
+  check('ni feedback ni transacciones', JSON.stringify(feedbacks) === feedbacksE5 && escrituras.length === escriturasE5)
+  check('pasa a uno mas viejo', cbsDe(editados.at(-1)).some(cb => { const id = Number(cb.split(':')[1]); return cb.startsWith('ea:') && id < victima.id }), JSON.stringify(cbsDe(editados.at(-1))))
+
+  console.log('\n=== E6: "Terminar" cierra con el marcador ===')
+  await post(callbackUpdate('ef:0'))
+  check('cierra sin botones', /Entrenamiento terminado/.test(editados.at(-1)?.message || '') && !editados.at(-1)?.buttons, editados.at(-1)?.message)
+  check('dice cuantos lleva y que tanto acerto', /Llevo \d+ gastos? confirmados? y acerté en \d+ %/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== E7: sin nada por revisar, lo dice ===')
+  for (const t of gastosSinRespuesta()) feedbacks.push({ id: nextFeedbackId++, transaccionId: t.id, texto: t.descripcion, categoriaPropuestaId: t.categoriaId, categoriaFinalId: t.categoriaId, estado: 'aceptada', fuente: 'reglas' })
+  await post(textUpdate('/entrenar'))
+  check('"/entrenar" tambien funciona, y avisa que no hay nada', /No hay gastos por revisar/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

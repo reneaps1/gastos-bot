@@ -258,7 +258,12 @@ async function alignTransactionCategory({ transaccionId, presupuestoId }) {
  * permite dentro del MISMO tipo (Gasto -> Gasto): cruzar tipos moveria el monto
  * entre ingresos, gastos y ahorros, y eso no es "corregir la categoria".
  */
-async function correctTransactionCategory({ transaccionId, categoriaId }) {
+//
+// `permitirEnlazada` solo lo usa la sesion de entrenamiento (src/entrenamiento.js):
+// ahi el usuario esta revisando gastos viejos, la mayoria ya con linea, y la
+// categoria que elige es una decision explicita. Puede dejar el gasto cruzado
+// con su linea, que es un estado valido (el mismo que deja `pm`).
+async function correctTransactionCategory({ transaccionId, categoriaId, permitirEnlazada = false }) {
   const txId = Number(transaccionId)
   const catId = Number(categoriaId)
   if (!Number.isInteger(txId)) return { ok: false, reason: RECHAZO.TX_NO_EXISTE }
@@ -277,7 +282,7 @@ async function correctTransactionCategory({ transaccionId, categoriaId }) {
   if (tx.categoriaId === catId) {
     return { ok: true, yaEstaba: true, tx, categoriaAnterior: tx.categoria, categoriaNueva: categoria }
   }
-  if (tx.presupuestoId != null) return { ok: false, reason: RECHAZO.YA_ENLAZADA }
+  if (tx.presupuestoId != null && !permitirEnlazada) return { ok: false, reason: RECHAZO.YA_ENLAZADA }
 
   await prisma.transaccion.update({
     where: { id: txId },
