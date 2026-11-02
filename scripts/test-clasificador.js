@@ -212,6 +212,9 @@ async function main() {
   conLinea = [{ descripcion: 'croquetas', presupuesto: { descripcion: 'Super' } }]
   clasificador._reiniciar()
   check('null', (await clasificador.sugerirLinea('croquetas', CANDIDATAS)) === null)
+  conLinea = []
+  clasificador._reiniciar()
+  check('mejorLinea sin un solo ejemplo -> null (el llamador usa el parecido de texto)', (await clasificador.mejorLinea('croquetas', CANDIDATAS)) === null)
 
   console.log('\n=== L2: linea -- aprende el NOMBRE de la linea, no el id ===')
   conLinea = []
@@ -226,6 +229,13 @@ async function main() {
   check('solo elige entre las candidatas', (await clasificador.sugerirLinea('croquetas', CANDIDATAS.filter(c => c.id !== 31)))?.id !== 31)
   check('texto desconocido -> null', (await clasificador.sugerirLinea('xqzw', CANDIDATAS)) === null)
   check('sin candidatas -> null', (await clasificador.sugerirLinea('croquetas', [])) === null)
+
+  console.log('\n=== L2b: mejorLinea -- siempre da su mejor apuesta, sin umbral ===')
+  check('texto desconocido: sugerirLinea dice null...', (await clasificador.sugerirLinea('xqzw', CANDIDATAS)) === null)
+  const apuesta = await clasificador.mejorLinea('xqzw', CANDIDATAS)
+  check('...pero mejorLinea igual apuesta por una candidata', CANDIDATAS.some(c => c.id === apuesta?.id) && apuesta.confianza > 0 && apuesta.cobertura === 0, JSON.stringify(apuesta))
+  check('con texto conocido coincide con sugerirLinea', (await clasificador.mejorLinea('croquetas gatos', CANDIDATAS))?.id === 31)
+  check('sin candidatas -> null', (await clasificador.mejorLinea('croquetas', [])) === null)
 
   console.log('\n=== L3: linea -- un toque se aprende en el momento ===')
   check('antes: "kermes" no se conoce', (await clasificador.sugerirLinea('kermes', CANDIDATAS)) === null)

@@ -289,6 +289,35 @@ function aprenderEjemplo(texto, lineaDescripcion, categoriaId, { corregida = fal
   }
 }
 
+/**
+ * La MEJOR APUESTA de linea entre `candidatas`, sin umbral: aunque el modelo
+ * no este seguro, dice cual es la mas probable y con que confianza. La usa el
+ * entrenamiento de palabras, donde el usuario siempre confirma (pidio que el
+ * bot "siempre mande la aproximacion"). Null solo si el modelo no tiene ni un
+ * ejemplo o no hay candidatas.
+ *
+ * @returns {Promise<{id:number, confianza:number, cobertura:number}|null>}
+ */
+async function mejorLinea(descripcion, candidatas) {
+  if (!habilitado() || !candidatas?.length) return null
+  try {
+    await asegurarModelo()
+    if (!modeloLineas || modeloLineas.ejemplos === 0) return null
+    const porEtiqueta = new Map()
+    for (const c of candidatas) {
+      const e = etiquetaLinea(c.descripcion)
+      if (e && !porEtiqueta.has(e)) porEtiqueta.set(e, c)
+    }
+    const { ranking, cobertura } = modeloLineas.predecir(descripcion, porEtiqueta.keys())
+    const top = ranking[0]
+    if (!top) return null
+    return { id: porEtiqueta.get(top.etiqueta).id, confianza: top.probabilidad, cobertura }
+  } catch (error) {
+    console.error('CLASIFICADOR_LINEA_ERROR:', error.message)
+    return null
+  }
+}
+
 // El usuario enlazo un gasto a una linea: ese es el ejemplo.
 function aprenderLinea(descripcion, lineaDescripcion) {
   if (!habilitado() || !modeloLineas) return false
@@ -328,6 +357,7 @@ module.exports = {
   confirmar,
   pendiente,
   sugerirLinea,
+  mejorLinea,
   aprenderLinea,
   aprenderEjemplo,
   entrenar,

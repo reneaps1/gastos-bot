@@ -79,25 +79,39 @@ async function quincenaActual() {
 // Las lineas de gasto de la quincena actual, con la sugerida primero. Sin
 // categoria: aqui no hay un gasto con categoria, asi que la regla de texto no
 // opina y la sugerida sale del modelo (por eso es el modo "retador").
+//
+// SIEMPRE HAY UNA SUGERIDA (pedido del usuario: "que siempre me mande la
+// aproximacion y yo confirmo"). Si el modelo no pasa su umbral, se usa su
+// mejor apuesta sin umbral (`aproximada`); si el modelo no tiene ni un
+// ejemplo, la linea que mas se parece por texto (la primera de las
+// candidatas). Solo sin lineas en la quincena no hay nada que proponer.
 async function lineasDe(texto) {
   const quincena = await quincenaActual()
-  if (!quincena) return { candidatas: [], sugeridaId: null, sugeridaConfianza: null }
-  return lineasPara({ quincenaId: quincena.id, categoriaId: null, descripcion: texto, tipo: 'Gasto' })
+  if (!quincena) return { candidatas: [], sugeridaId: null, sugeridaConfianza: null, aproximada: false }
+  const r = await lineasPara({ quincenaId: quincena.id, categoriaId: null, descripcion: texto, tipo: 'Gasto' })
+  if (r.sugeridaId != null || !r.candidatas.length) return { ...r, aproximada: false }
+
+  const mejor = await clasificador.mejorLinea(texto, r.candidatas)
+  const sugeridaId = mejor?.id ?? r.candidatas[0].id
+  return {
+    candidatas: [...r.candidatas.filter(c => c.id === sugeridaId), ...r.candidatas.filter(c => c.id !== sugeridaId)],
+    sugeridaId,
+    sugeridaConfianza: mejor?.confianza ?? null,
+    aproximada: true,
+  }
 }
 
-function vistaPregunta(ejemplo, { candidatas, sugeridaId, sugeridaConfianza }) {
-  const sugerida = candidatas.find(c => c.id === sugeridaId) || null
+function vistaPregunta(ejemplo, { candidatas, sugeridaId, sugeridaConfianza, aproximada }) {
   if (!candidatas.length) {
     return { texto: `🤔 «${esc(ejemplo.texto)}»: no hay líneas en esta quincena para practicar.`, buttons: [[{ text: '🏁 Terminar', callback_data: 'wf:0' }]] }
   }
-  if (!sugerida) {
-    return {
-      texto: `🤔 «${esc(ejemplo.texto)}»: no sé a qué línea va. ¿Me dices?`,
-      buttons: [[{ text: '📂 Elegir línea', callback_data: `wl:${ejemplo.id}:0:0` }, { text: '🏁 Terminar', callback_data: 'wf:0' }]],
-    }
-  }
+  const sugerida = candidatas.find(c => c.id === sugeridaId) || candidatas[0]
+  // Cuando no esta seguro lo dice, pero igual propone: el usuario confirma.
+  const nota = aproximada
+    ? ` _(mi mejor intento${sugeridaConfianza == null ? '' : `, ${Math.min(99, Math.round(sugeridaConfianza * 100))} %`})_`
+    : pct(sugeridaConfianza)
   return {
-    texto: `📂 «${esc(ejemplo.texto)}» → ¿*${esc(sugerida.descripcion)}*?${pct(sugeridaConfianza)}`,
+    texto: `📂 «${esc(ejemplo.texto)}» → ¿*${esc(sugerida.descripcion)}*?${nota}`,
     buttons: [
       [
         { text: '✅ Sí', callback_data: `wa:${ejemplo.id}:${sugerida.id}` },
