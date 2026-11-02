@@ -64,6 +64,7 @@ const aiRouter = require('./aiRouter')
 const clasificador = require('./clasificador')
 const entrenamiento = require('./entrenamiento')
 const entrenamientoPalabras = require('./entrenamientoPalabras')
+const resumenDiario = require('./resumenDiario')
 const { lineasPara } = require('./sugerenciaLinea')
 const financeAgent = require('./financeAgent')
 const { clasificarMensaje } = require('./telegramRouting')
@@ -1687,6 +1688,25 @@ app.get('/', async (req, res) => {
 // problema no es del proceso sino de la base. La verdad va en el cuerpo, y el
 // watchdog la lee para avisar. Un health check que no consulta la base no
 // puede ver caer la base: por eso antes decia "ok" con todo roto.
+// Resumen diario por Telegram (src/resumenDiario.js). Lo llama
+// .github/workflows/resumen-diario.yml a las 8 pm de Mexico. Autenticado con
+// X-Cron-Token = sha256("cron:" + TELEGRAM_BOT_TOKEN): sin el, 403 y no se
+// arma nada. `?dry=1` devuelve el texto sin mandarlo; `?forzar=1` lo manda
+// aunque ya se haya mandado hoy.
+app.post('/cron/resumen-diario', async (req, res) => {
+  if (!resumenDiario.autorizado(req.get('X-Cron-Token'))) {
+    console.warn('RESUMEN_DIARIO_RECHAZADO: X-Cron-Token ausente o incorrecto')
+    return res.sendStatus(403)
+  }
+  try {
+    const r = await resumenDiario.enviar({ dry: req.query.dry === '1', forzar: req.query.forzar === '1' })
+    return res.status(r.ok ? 200 : 500).json(r)
+  } catch (error) {
+    console.error('RESUMEN_DIARIO_ERROR:', error)
+    return res.status(500).json({ ok: false, error: error.message })
+  }
+})
+
 app.get('/health', async (req, res) => {
   const ai = aiRouter.status()
   const database = await db.checkDatabase()

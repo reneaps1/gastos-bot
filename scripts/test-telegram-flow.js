@@ -1091,6 +1091,31 @@ async function main() {
   await post(textUpdate('kermes'))
   check('mi "listo" si la termina', ejemplos.length === ejemplosW9 + 1, ejemplos.length)
 
+  // --- Resumen diario (src/resumenDiario.js) ---
+  console.log('\n=== RD1: POST /cron/resumen-diario exige el token del cron ===')
+  const crypto = require('crypto')
+  const urlCron = `http://localhost:${process.env.PORT}/cron/resumen-diario`
+  const tokenCron = crypto.createHash('sha256').update(`cron:${process.env.TELEGRAM_BOT_TOKEN}`).digest('hex')
+  const enviadosRD = enviados.length
+  check('sin token -> 403', (await fetch(urlCron, { method: 'POST' })).status === 403)
+  check('token incorrecto -> 403', (await fetch(urlCron, { method: 'POST', headers: { 'X-Cron-Token': 'x'.repeat(64) } })).status === 403)
+  check('el token del bot en claro tampoco sirve', (await fetch(urlCron, { method: 'POST', headers: { 'X-Cron-Token': process.env.TELEGRAM_BOT_TOKEN } })).status === 403)
+  check('y nada se mando', enviados.length === enviadosRD)
+
+  console.log('\n=== RD2: con el token, arma y manda el resumen al grupo, una vez al dia ===')
+  const seco = await fetch(`${urlCron}?dry=1`, { method: 'POST', headers: { 'X-Cron-Token': tokenCron } })
+  const cuerpoSeco = await seco.json()
+  check('dry=1 devuelve el texto sin mandarlo', seco.status === 200 && /Resumen del día/.test(cuerpoSeco.texto || '') && enviados.length === enviadosRD, JSON.stringify(cuerpoSeco).slice(0, 200))
+  const real = await fetch(urlCron, { method: 'POST', headers: { 'X-Cron-Token': tokenCron } })
+  const cuerpoReal = await real.json()
+  check('lo manda', real.status === 200 && cuerpoReal.enviado === true && enviados.length === enviadosRD + 1, JSON.stringify(cuerpoReal))
+  check('al grupo de la lista blanca', String(enviados.at(-1)?.chatId) === CHAT_PERMITIDO, enviados.at(-1)?.chatId)
+  check('con el resumen', /Resumen del día/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+  const otra = await (await fetch(urlCron, { method: 'POST', headers: { 'X-Cron-Token': tokenCron } })).json()
+  check('un reintento el mismo dia NO lo repite', otra.yaEnviado === true && enviados.length === enviadosRD + 1, JSON.stringify(otra))
+  const forzado = await (await fetch(`${urlCron}?forzar=1`, { method: 'POST', headers: { 'X-Cron-Token': tokenCron } })).json()
+  check('forzar=1 si lo manda otra vez', forzado.enviado === true && enviados.length === enviadosRD + 2, JSON.stringify(forzado))
+
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
 }
