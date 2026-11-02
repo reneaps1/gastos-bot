@@ -318,6 +318,29 @@ async function mejorLinea(descripcion, candidatas) {
   }
 }
 
+/**
+ * Las candidatas ordenadas de la mas probable a la menos, segun el modelo de
+ * lineas. Para los menus de "elige la linea": las probables salen en la
+ * primera pagina en vez de en la quinta. Si el modelo no tiene ejemplos, deja
+ * el orden que traian. Orden estable (empates conservan el orden de entrada).
+ */
+async function ordenarLineas(descripcion, candidatas) {
+  if (!habilitado() || !candidatas?.length) return candidatas || []
+  try {
+    await asegurarModelo()
+    if (!modeloLineas || modeloLineas.ejemplos === 0) return candidatas
+    const { ranking } = modeloLineas.predecir(descripcion, candidatas.map(c => etiquetaLinea(c.descripcion)))
+    const prob = new Map(ranking.map(r => [r.etiqueta, r.probabilidad]))
+    return candidatas
+      .map((c, i) => ({ c, i, p: prob.get(etiquetaLinea(c.descripcion)) ?? 0 }))
+      .sort((a, b) => b.p - a.p || a.i - b.i)
+      .map(x => x.c)
+  } catch (error) {
+    console.error('CLASIFICADOR_LINEA_ERROR:', error.message)
+    return candidatas
+  }
+}
+
 // El usuario enlazo un gasto a una linea: ese es el ejemplo.
 function aprenderLinea(descripcion, lineaDescripcion) {
   if (!habilitado() || !modeloLineas) return false
@@ -358,6 +381,7 @@ module.exports = {
   pendiente,
   sugerirLinea,
   mejorLinea,
+  ordenarLineas,
   aprenderLinea,
   aprenderEjemplo,
   entrenar,

@@ -12,14 +12,15 @@ Parte de la Fase 8 (Inteligencia y Automatización): *"Este gasto parece Super, 
 ```
 Tú:   100, croquetas
 Milo: Gasto registrado ... Familia ...
-      ¿Lo mando a Super? (99 % seguro) Toca la que corresponda:
-      [Super · Super — $3600.00]   <- primera y marcada
-      [Ballet Dalia · Familia — $550.00] ...
+      ¿Lo mando a Super? (99 % seguro)
+      [Super] [Otra línea]
       [Dejar sin asignar]
 Tú:   (toca Super)
 Milo: Asignado a Super
       Categoría: Familia -> Super
 ```
+
+**Vista compacta** (2/11/2026, «respondió con muchos botones»): cuando hay sugerida, el gasto recién registrado trae solo tres botones: la sugerida (un toque), **Otra línea** (`pp:<tx>:0`, la lista completa de siempre, con páginas, «Buscar por categoría», «Crear línea nueva» y «Dejar sin asignar») y «Dejar sin asignar». Sin sugerida, sale la lista completa directamente.
 
 La categoría propuesta al registrar se guarda en `clasificacion_feedback` como `pendiente`, y el toque de línea la resuelve: `aceptada` si la línea es de la misma categoría, `corregida` si no. Así el modelo de categoría (que propone la categoría de los gastos nuevos, útil para el dashboard) también aprende de cada toque. Si nunca se elige línea, o se toca «Dejar sin asignar», sigue `pendiente` y no entra al entrenamiento.
 
@@ -91,6 +92,7 @@ Milo: Entrenamiento de palabras terminado. Acerté 7 de 10.
 - **Es el único modo con estado** (en memoria, por chat). Mientras está activo, un mensaje **sin números ni «?»** se toma como palabra. Un mensaje con monto («150 super») **se registra como gasto normal** y una pregunta se contesta normal: olvidar que se está entrenando no hace perder un gasto.
 - Termina con «listo» (también «terminar», «salir», «ya»), con el botón Terminar o tras **15 minutos sin escribir**. Si el servicio reinicia, el modo se pierde (hay que volver a entrar), pero **lo aprendido no**: está en `clasificador_ejemplos` y se carga en cada reentreno.
 - Contestar dos veces el mismo mensaje no enseña dos veces.
+- En los menús de «Otra línea» de los dos estilos de entrenamiento, la sugerida va primero y el resto **de la más probable a la menos** según el modelo (`clasificador.ordenarLineas`), así que las que importan salen en la primera página. En producción se vio que, con el orden por parecido de texto, había que paginar 4 o 5 veces por palabra.
 
 | `callback_data` | Qué hace |
 |---|---|

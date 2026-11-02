@@ -237,6 +237,12 @@ async function main() {
   check('con texto conocido coincide con sugerirLinea', (await clasificador.mejorLinea('croquetas gatos', CANDIDATAS))?.id === 31)
   check('sin candidatas -> null', (await clasificador.mejorLinea('croquetas', [])) === null)
 
+  console.log('\n=== L2c: ordenarLineas -- las probables primero, para no paginar ===')
+  const orden = await clasificador.ordenarLineas('helado de chocolate', CANDIDATAS)
+  check('Diversion primero para "helado"', orden[0]?.id === 32, JSON.stringify(orden.map(c => c.id)))
+  check('no pierde ni duplica candidatas', orden.length === CANDIDATAS.length && new Set(orden.map(c => c.id)).size === CANDIDATAS.length)
+  check('sin candidatas -> []', (await clasificador.ordenarLineas('x', [])).length === 0)
+
   console.log('\n=== L3: linea -- un toque se aprende en el momento ===')
   check('antes: "kermes" no se conoce', (await clasificador.sugerirLinea('kermes', CANDIDATAS)) === null)
   clasificador.aprenderLinea('kermes', 'Colegiatura')

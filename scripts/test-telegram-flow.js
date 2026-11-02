@@ -609,9 +609,14 @@ async function main() {
   check('no hay fila de pregunta de categoria', !botonesT.flat().some(b => /^k[abc]:/.test(b.callback_data || '')), JSON.stringify(botonesT[0]))
   check('sin botones de categoria (la categoria sigue a la linea)', !botonesT.flat().some(b => /^k/.test(b.callback_data || '')), JSON.stringify(botonesT.at(-1)))
   const filasLineaT = botonesT.filter(f => f[0]?.callback_data?.startsWith('pl:'))
-  check('la sugerida va primera y marcada', /^⭐ /.test(filasLineaT[0]?.[0]?.text || ''), filasLineaT[0]?.[0]?.text)
+  // Con sugerida, la vista es COMPACTA (2026-11-02): [✅ Niñera] [📂 Otra línea] / [Dejar sin asignar].
+  check('la sugerida va primera, con un solo toque', /^✅ Niñera/.test(filasLineaT[0]?.[0]?.text || ''), filasLineaT[0]?.[0]?.text)
+  check('vista compacta: tres botones', botonesT.flat().length === 3 && botonesT.flat().map(b => b.callback_data).join() === `pl:${txT.id}:11,pp:${txT.id}:0,pn:${txT.id}`, JSON.stringify(botonesT.flat().map(b => b.callback_data)))
   check('la sugerida es Niñera', filasLineaT[0]?.[0]?.callback_data === `pl:${txT.id}:11`, filasLineaT[0]?.[0]?.callback_data)
-  check('ofrece salida si no es ninguna', botonesT.flat().some(b => b.callback_data === `pd:${txT.id}:0`), JSON.stringify(botonesT.flat().map(b => b.callback_data)))
+  await post(callbackUpdate(`pp:${txT.id}:0`))
+  const todasT = editados.at(-1)?.buttons?.flat().map(b => b.callback_data) || []
+  check('"Otra línea" abre la lista completa, con la sugerida marcada primero', /^⭐ /.test(editados.at(-1)?.buttons?.[0]?.[0]?.text || '') && todasT[0] === `pl:${txT.id}:11`, JSON.stringify(editados.at(-1)?.buttons?.[0]))
+  check('y con todas las salidas (crear linea, sin asignar)', todasT.includes(`pd:${txT.id}:0`) && todasT.includes(`pn:${txT.id}`), JSON.stringify(todasT))
 
   console.log('\n=== T: al confirmar, avisa del excedido y ofrece cubrirlo ===')
   // La linea 11 tiene $750. Un gasto de 800 la rebasa por 50. El aviso ya no
@@ -895,7 +900,7 @@ async function main() {
   const txCL11 = creadas.at(-1)
   const msgCL11 = enviados.at(-1)
   const filasLineaCL11 = (msgCL11?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
-  check('la ⭐ es Colegiatura', filasLineaCL11[0]?.[0]?.callback_data === `pl:${txCL11.id}:12` && /^⭐ /.test(filasLineaCL11[0]?.[0]?.text || ''), JSON.stringify(filasLineaCL11[0]))
+  check('la sugerida es Colegiatura (vista compacta)', filasLineaCL11[0]?.[0]?.callback_data === `pl:${txCL11.id}:12` && /^✅ Colegiatura/.test(filasLineaCL11[0]?.[0]?.text || ''), JSON.stringify(filasLineaCL11[0]))
   check('el texto la propone con su confianza', /¿Lo mando a \*Colegiatura\*\? _\(\d+ % seguro\)_/.test(msgCL11?.message || ''), msgCL11?.message)
   check('nunca dice "100 % seguro"', !/100 % seguro/.test(msgCL11?.message || '') && /99 % seguro/.test(msgCL11?.message || ''), msgCL11?.message)
   await post(callbackUpdate(`pp:${txCL11.id}:0`))
@@ -913,7 +918,7 @@ async function main() {
   await post(textUpdate('20 rifa'))
   const txR3 = creadas.at(-1)
   const filasR3 = (enviados.at(-1)?.buttons || []).filter(f => f[0]?.callback_data?.startsWith('pl:'))
-  check('despues de dos toques ya la sugiere', filasR3[0]?.[0]?.callback_data === `pl:${txR3.id}:12` && /^⭐ /.test(filasR3[0]?.[0]?.text || ''), JSON.stringify(filasR3[0]))
+  check('despues de dos toques ya la sugiere', filasR3[0]?.[0]?.callback_data === `pl:${txR3.id}:12` && /^✅ /.test(filasR3[0]?.[0]?.text || ''), JSON.stringify(filasR3[0]))
 
   // --- Sesion de entrenamiento (src/entrenamiento.js): solo la LINEA ---
   const sinLinea = () => creadas.filter(t => t.tipo === 'Gasto' && t.presupuestoId == null && /[a-z]/i.test(t.descripcion)).sort((x, y) => y.id - x.id)

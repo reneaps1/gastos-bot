@@ -206,7 +206,11 @@ async function confirmar(callback, ejemplo, lineaId, sugeridaId) {
 }
 
 async function menuLineas(callback, ejemplo, pagina, sugeridaId) {
-  const { candidatas } = await lineasDe(ejemplo.texto)
+  // La sugerida primero y el resto de la mas probable a la menos: las que
+  // importan salen en la primera pagina, no en la quinta.
+  const r = await lineasDe(ejemplo.texto)
+  const primera = r.candidatas.filter(c => c.id === r.sugeridaId)
+  const candidatas = [...primera, ...(await clasificador.ordenarLineas(ejemplo.texto, r.candidatas.filter(c => c.id !== r.sugeridaId)))]
   const total = Math.max(1, Math.ceil(candidatas.length / LINEAS_POR_PAGINA))
   const p = Math.min(Math.max(0, Number(pagina) || 0), total - 1)
   const sug = Number(sugeridaId) || 0
