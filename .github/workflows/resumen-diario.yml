@@ -1,0 +1,61 @@
+# Resumen diario por Telegram, a las 8 pm de Mexico.
+#
+# El trabajo lo hace el bot (POST /cron/resumen-diario, src/resumenDiario.js):
+# lee los gastos del dia y el estado de la quincena de la base y lo manda al
+# grupo. Este workflow solo lo despierta a la hora.
+#
+# Sin secretos nuevos: usa los mismos del watchdog (TELEGRAM_BOT_TOKEN y
+# TELEGRAM_SERVICE_URL). Manda sha256("cron:" + token) en X-Cron-Token; el
+# token nunca viaja.
+#
+# Reintentos: el plan gratis de Render tarda hasta ~50 s en despertar. Si un
+# intento se corta pero el bot ya lo mando, el reintento no lo repite (el bot
+# recuerda que ya lo mando hoy).
+#
+# Correrlo a mano: pestaña Actions -> Resumen diario -> Run workflow.
+
+name: Resumen diario
+
+on:
+  schedule:
+    # 02:00 UTC = 20:00 en America/Mexico_City (UTC-6 todo el año: Mexico
+    # dejo el horario de verano en 2022). GitHub puede retrasar unos minutos
+    # los crons programados.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: resumen-diario
+  cancel-in-progress: false
+
+jobs:
+  enviar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pedir el resumen al bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_SERVICE_URL: ${{ secrets.TELEGRAM_SERVICE_URL }}
+        run: |
+          set -uo pipefail
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_SERVICE_URL" ]; then
+            echo "::error::Faltan los secrets TELEGRAM_BOT_TOKEN o TELEGRAM_SERVICE_URL"
+            exit 1
+          fi
+          token=$(printf 'cron:%s' "$TELEGRAM_BOT_TOKEN" | sha256sum | cut -d' ' -f1)
+          url="${TELEGRAM_SERVICE_URL%/}/cron/resumen-diario"
+          for intento in 1 2 3; do
+            code=$(curl -sS -o respuesta.json -w '%{http_code}' --max-time 120 -X POST -H "X-Cron-Token: $token" "$url" || echo 000)
+            echo "Intento $intento -> HTTP $code"
+            if [ "$code" = "200" ]; then
+              cat respuesta.json
+              exit 0
+            fi
+            [ -f respuesta.json ] && cat respuesta.json
+            sleep 30
+          done
+          echo "::error::El bot no respondio 200 despues de 3 intentos"
+          exit 1
