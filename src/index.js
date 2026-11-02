@@ -63,11 +63,11 @@ const telegram = require('./telegram')
 const aiRouter = require('./aiRouter')
 const clasificador = require('./clasificador')
 const entrenamiento = require('./entrenamiento')
+const { lineasPara } = require('./sugerenciaLinea')
 const financeAgent = require('./financeAgent')
 const { clasificarMensaje } = require('./telegramRouting')
 const {
   TIPOS_CON_LINEA,
-  resolveBudgetLine,
   resolveBudgetLineByName,
   getBudgetCandidates,
   getBudgetLineStatus,
@@ -1026,52 +1026,9 @@ async function handleReassign(message, { referencia, destino }) {
 async function budgetPickerContext(txId) {
   const tx = await prisma.transaccion.findUnique({ where: { id: Number(txId) } })
   if (!tx) return null
-
-  const lookup = {
-    quincenaId: tx.quincenaId,
-    categoriaId: tx.categoriaId,
-    descripcion: tx.descripcion,
-    // El tipo sale de la transaccion, no hardcodeado: un ingreso o un ahorro
-    // tambien se cuelgan de una linea.
-    tipo: tx.tipo,
-  }
-
-  // resolveBudgetLine YA NO ENLAZA NADA: solo dice cual linea es la apuesta
-  // fuerte, para ponerla primera y marcarla. Antes, cuando acertaba con
-  // confianza, escribia el enlace sola y el mensaje salia SIN BOTONES -- que es
-  // como se juntaban las dos quejas: asignaba sin preguntar y, de paso, nunca
-  // se veian las demas opciones ni el "Ver más".
-  //
-  // Se recalcula aqui, y no se arrastra desde la captura, porque la paginacion
-  // es sin estado: `pp:<tx>:<pagina>` vuelve a pedir la lista y a cortarla. Si
-  // la pagina 0 pusiera la sugerida primero y las demas no, habria lineas
-  // duplicadas entre paginas y otras inalcanzables.
-  const [candidatas, sugerida] = await Promise.all([
-    getBudgetCandidates(lookup),
-    resolveBudgetLine(lookup),
-  ])
-
-  // Primero la regla (cuando opina acierta ~94 %, pero opina en 1 de cada 3
-  // gastos); si no opina, el modelo que aprende de las lineas que el usuario
-  // ya eligio. Ese orden fue el mejor con los datos reales: la ⭐ correcta
-  // pasa de 34 % a 62 % (ver CLASIFICADOR_ML.md). Determinista entre
-  // llamadas mientras no se aprenda nada nuevo, que es lo que la paginacion
-  // sin estado necesita.
-  let sugeridaId = sugerida?.id ?? null
-  let sugeridaConfianza = null
-  if (sugeridaId === null) {
-    const delModelo = await clasificador.sugerirLinea(tx.descripcion, candidatas)
-    if (delModelo) {
-      sugeridaId = delModelo.id
-      sugeridaConfianza = delModelo.confianza
-    }
-  }
-
-  const ordenadas = sugeridaId === null ? candidatas : [
-    ...candidatas.filter(c => c.id === sugeridaId),
-    ...candidatas.filter(c => c.id !== sugeridaId),
-  ]
-  return { tx, candidatas: ordenadas, sugeridaId, sugeridaConfianza }
+  // La ⭐ y el orden se deciden en src/sugerenciaLinea.js, compartido con la
+  // sesion de entrenamiento.
+  return { tx, ...(await lineasPara(tx)) }
 }
 
 // Redibuja el mensaje con las lineas de presupuesto del movimiento, debajo de
