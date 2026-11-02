@@ -1,0 +1,32 @@
+# TEMPORAL: lanza el resumen diario UNA vez, hoy (2026-11-01, Mexico), a
+# pedido del usuario. Solo existe en la rama lanzar/resumen-hoy y corre al
+# hacer push a esa rama. La rama se borra despues; no llega a main.
+name: Resumen diario (lanzamiento unico de hoy)
+
+on:
+  push:
+    branches: [lanzar/resumen-hoy]
+
+permissions: {}
+
+jobs:
+  enviar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Pedir el resumen al bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_SERVICE_URL: ${{ secrets.TELEGRAM_SERVICE_URL }}
+        run: |
+          set -uo pipefail
+          token=$(printf 'cron:%s' "$TELEGRAM_BOT_TOKEN" | sha256sum | cut -d' ' -f1)
+          url="${TELEGRAM_SERVICE_URL%/}/cron/resumen-diario"
+          for intento in 1 2 3; do
+            code=$(curl -sS -o respuesta.json -w '%{http_code}' --max-time 120 -X POST -H "X-Cron-Token: $token" "$url" || echo 000)
+            echo "Intento $intento -> HTTP $code"
+            if [ "$code" = "200" ]; then cat respuesta.json; exit 0; fi
+            [ -f respuesta.json ] && cat respuesta.json
+            sleep 30
+          done
+          exit 1
