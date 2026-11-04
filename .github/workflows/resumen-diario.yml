@@ -12,7 +12,14 @@
 # intento se corta pero el bot ya lo mando, el reintento no lo repite (el bot
 # recuerda que ya lo mando hoy).
 #
-# Correrlo a mano: pestaña Actions -> Resumen diario -> Run workflow.
+# GitHub ATRASA los crons de este repo, a veces horas (el 2026-11-04 el de las
+# 8 pm corrio a las 2:20 am). Por eso el bot no resume "la fecha de hoy" sino
+# el dia que acaba de terminar: antes de mediodia de Mexico resume AYER y el
+# texto dice "Ayer gastaste" (diaDelResumen en src/resumenDiario.js). Llegue
+# cuando llegue, habla del dia correcto.
+#
+# Correrlo a mano: pestaña Actions -> Resumen diario -> Run workflow. Antes de
+# mediodia manda el resumen de ayer; despues, el de hoy.
 
 name: Resumen diario
 

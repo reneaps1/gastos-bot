@@ -1692,7 +1692,8 @@ app.get('/', async (req, res) => {
 // .github/workflows/resumen-diario.yml a las 8 pm de Mexico. Autenticado con
 // X-Cron-Token = sha256("cron:" + TELEGRAM_BOT_TOKEN): sin el, 403 y no se
 // arma nada. `?dry=1` devuelve el texto sin mandarlo; `?forzar=1` lo manda
-// aunque ya se haya mandado hoy.
+// aunque ya se haya mandado. Antes de mediodia de Mexico resume el dia
+// anterior: el cron de GitHub llega a veces horas tarde.
 app.post('/cron/resumen-diario', async (req, res) => {
   if (!resumenDiario.autorizado(req.get('X-Cron-Token'))) {
     console.warn('RESUMEN_DIARIO_RECHAZADO: X-Cron-Token ausente o incorrecto')
