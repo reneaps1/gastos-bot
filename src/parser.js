@@ -131,7 +131,7 @@ function cleanDescription(desc) {
 
 // Atajo que usa Rene a diario para registrar rapido: "<monto>, <codigo>" (ej. "930, 3B").
 // Es puramente numerico + un codigo corto sin mas texto, asi que nunca es una pregunta,
-// tarea o saludo — siempre es un registro de gasto. Se detecta aqui, antes de Gemini,
+// tarea o saludo — siempre es un registro de gasto. Se detecta aqui, antes de la IA,
 // para no depender de que el clasificador lo adivine bien.
 const SHORTHAND_EXPENSE_RE = /^\$?\s*\d+(?:\.\d{1,2})?\s*,\s*[a-záéíóúñ0-9]{1,20}$/i
 
@@ -139,13 +139,13 @@ function isShorthandExpense(text) {
   return SHORTHAND_EXPENSE_RE.test(String(text || '').trim())
 }
 
-function parseMessage(text, senderName, senderPhone, messageId, geminiData = null) {
-  const tipo = geminiData?.tipo || detectType(text)
-  const direccion = geminiData?.direccion || detectDireccionAhorro(text)
-  const monto = (geminiData?.monto > 0 ? geminiData.monto : null) ?? extractAmount(text)
-  const descripcion = cleanDescription(geminiData?.descripcion || extractDescription(text, monto))
-  const categoria = detectCategory(text) || geminiData?.categoria
-  const formaPago = geminiData?.formaPago || detectPaymentMethod(text)
+function parseMessage(text, senderName, senderPhone, messageId, aiData = null) {
+  const tipo = aiData?.tipo || detectType(text)
+  const direccion = aiData?.direccion || detectDireccionAhorro(text)
+  const monto = (aiData?.monto > 0 ? aiData.monto : null) ?? extractAmount(text)
+  const descripcion = cleanDescription(aiData?.descripcion || extractDescription(text, monto))
+  const categoria = detectCategory(text) || aiData?.categoria
+  const formaPago = aiData?.formaPago || detectPaymentMethod(text)
   const clasificacion = getClasificacion(categoria, tipo)
   const quincena = getCurrentQuincena()
   const now = new Date()

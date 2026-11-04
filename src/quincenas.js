@@ -1,7 +1,7 @@
 // Resolucion de quincenas: las fechas viven en la tabla `quincenas` de
 // Postgres (editable desde el dashboard en Configuracion > Periodos de pago),
 // no en un arreglo fijo aqui. Se cachean en memoria (mismo patron que
-// src/gemini.js's cachedContext) para no pegarle a la DB en cada mensaje de
+// el viejo cachedContext de Gemini) para no pegarle a la DB en cada mensaje de
 // WhatsApp, y para que getQuincenaForDate/getCurrentQuincena sigan siendo
 // sincronas -- sus llamadores (parser.js, analytics.js) no cambian.
 //

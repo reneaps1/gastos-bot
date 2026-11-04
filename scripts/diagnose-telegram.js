@@ -77,7 +77,6 @@ async function main() {
   console.log(`TELEGRAM_ALLOWED_CHAT_IDS : ${ALLOWED || 'no configurado'}`)
   console.log(`TELEGRAM_REGISTER_WEBHOOK : ${process.env.TELEGRAM_REGISTER_WEBHOOK ?? '(default: true)'}`)
   console.log(`DEEPSEEK_API_KEY          : ${mask(process.env.DEEPSEEK_API_KEY)}`)
-  console.log(`GEMINI_API_KEY            : ${mask(process.env.GEMINI_API_KEY)}`)
   console.log(`DATABASE_URL              : ${process.env.DATABASE_URL ? 'configurado' : 'no configurado'}`)
   console.log(`RENDER_EXTERNAL_URL       : ${process.env.RENDER_EXTERNAL_URL || 'no configurado'}`)
 

@@ -122,7 +122,7 @@ El modelo es **uno solo para todos los chats**: lo que se enseña en el grupo o 
 
 ## Cómo decide la categoría
 
-1. Las reglas de siempre: palabras clave de `src/parser.js` y, en los mensajes ambiguos, la IA (DeepSeek/Gemini).
+1. Las reglas de siempre: palabras clave de `src/parser.js` y, en los mensajes ambiguos, la IA (DeepSeek, el unico modelo desde el 2026-11-04).
 2. Si las reglas dicen que es un gasto, el modelo opina. **Solo reemplaza a las reglas si está muy seguro**: probabilidad ≥ 80 % **y** cobertura ≥ 50 % (la cobertura es qué parte del texto ya había visto alguna vez). Si no, se queda lo de las reglas.
 3. En los dos casos se registra la propuesta, y la línea que se elija la confirma o la corrige.
 

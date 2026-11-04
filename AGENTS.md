@@ -463,6 +463,19 @@ ninguna era visible desde afuera:
 La regla que sale de ahi: **un health check que no consulta la base no puede ver
 caer la base**, y **un error que nadie ve es un error que no se arregla**.
 
+### Milo: un solo modelo, DeepSeek (2026-11-04)
+
+Entre el 2 y el 4 de noviembre Milo fallo 4 de 7 preguntas con "No pude contestar". En todas habia elegido la herramienta correcta y ya tenia los datos; DeepSeek devolvio vacio al redactar y el respaldo, Gemini, fallaba con 404 porque Google retiro el modelo. Nadie lo vio en dias.
+
+Decision del dueño: **DeepSeek es el unico modelo.** Se borraron `src/gemini.js`, `src/media.js` y `@google/generative-ai`. En WhatsApp, una foto, un audio o un documento recibe "Por ahora solo entiendo texto".
+
+Lo que evita que se repita:
+
+- `src/deepseek.js` registra `DEEPSEEK_VACIO finish_reason=... tokens=...` cuando el contenido viene vacio, para distinguir un corte por `max_tokens` de un vacio del modo JSON.
+- El agente (`src/financeAgent.js`) pide 2000 tokens (antes 900) y reintenta **una** vez si viene vacio o cortado, pidiendo una respuesta mas corta.
+- **Red de seguridad**: si la IA falla despues de traer datos, contesta con la plantilla del ultimo resultado bueno (`src/plantillasMilo.js`). En `TELEGRAM_QA` sale como ruta `agente-plantilla`. "No pude contestar" queda solo para cuando no hay ningun dato.
+- `/health` trae `ai: { ok, error, modelo, revisadoEn }` (un `GET /models` a DeepSeek con cache de 10 min) y el watchdog avisa al chat con `AI_PROVIDER_DOWN`.
+
 ## Stack Oficial
 
 - **Next.js** full-stack

@@ -58,6 +58,8 @@ El resto son sobras normales de una migración (scripts de inspección de Excel 
 
 ### 4. Fase 8 (IA / alertas inteligentes) está programada pero apagada en producción
 
+> Nota del 2026-11-04: esta sección es histórica. Gemini se retiró del repo (Google dio de baja el modelo y fallaba con 404). DeepSeek es el único modelo; las fotos y notas de voz de WhatsApp, que solo entendía Gemini, ahora reciben "solo entiendo texto". Ver "Milo: un solo modelo" en `AGENTS.md`.
+
 - `src/gemini.js` y `src/todoist.js` están completos y conectados en `src/index.js`: si el mensaje de WhatsApp se clasifica como tarea, se crea en Todoist; Gemini también responde preguntas y da contexto.
 - En producción, `gemini.isEnabled()` depende de `GEMINI_API_KEY`, que **no está declarada en `render.yaml`** (sí lo está `TODOIST_API_TOKEN`, curiosamente). Resultado: en el servicio real, todo el bloque de Gemini queda desactivado — no hay clasificación inteligente, no hay respuestas, y por lo tanto tampoco se generan tareas en Todoist (dependen de que Gemini clasifique el mensaje).
 - `GEMINI_API_KEY`, `GEMINI_MODEL`, `TODOIST_API_TOKEN` (este sí está en `render.yaml` pero no en `.env.example`) tampoco están documentadas de forma consistente entre `.env.example` y `render.yaml`.

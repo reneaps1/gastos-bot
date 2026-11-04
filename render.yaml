@@ -26,10 +26,6 @@ services:
         sync: false
       - key: TODOIST_API_TOKEN
         sync: false
-      - key: GEMINI_API_KEY
-        sync: false
-      - key: GEMINI_MODEL
-        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: DEEPSEEK_API_KEY
