@@ -157,6 +157,19 @@ function evaluate({ webhookInfo = null, expectedUrl = null, health = null, statu
     }
   }
 
+  // 3c. El servicio responde pero DeepSeek no. Es el unico modelo desde el
+  //     2026-11-04: sin el, Milo solo contesta lo que tenga plantilla y el
+  //     resto es "No pude contestar". Se avisa para no repetir el caso de
+  //     Gemini, que fallo con 404 durante dias sin que nadie lo viera.
+  if (health && health.ok && health.data && health.data.ai && health.data.ai.ok === false) {
+    problems.push(problem(
+      'AI_PROVIDER_DOWN',
+      'ERROR',
+      `DeepSeek no responde: ${health.data.ai.error || 'sin detalle'}`,
+      'Revisa DEEPSEEK_API_KEY y DEEPSEEK_MODEL en el Environment del servicio, y el saldo de la cuenta de DeepSeek. Los gastos se siguen registrando; las preguntas a Milo fallan.',
+    ))
+  }
+
   // 4. El servicio responde pero esta mal configurado. Este bloque cubre el
   //    caso mas traicionero: todo "verde" y aun asi el bot ignora todo.
   if (status) {

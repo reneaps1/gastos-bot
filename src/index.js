@@ -49,12 +49,10 @@ if (process.env.SKIP_PRISMA_BOOTSTRAP !== '1') {
 const express = require('express')
 const { appendRow, messageExists: sheetsMessageExists } = require('./sheets')
 const { parseMessage, formatConfirmation, cleanDescription, isShorthandExpense } = require('./parser')
-const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, downloadMedia, checkWhatsApp, whatsappStatus } = require('./whatsapp')
-const { handleQuestion, detectIntent, getData } = require('./analytics')
+const { sendWhatsAppMessage, extractPhoneNumber, markAsRead, react, checkWhatsApp, whatsappStatus } = require('./whatsapp')
+const { handleQuestion, detectIntent } = require('./analytics')
 const { getCurrentQuincena, ensureFreshQuincenas } = require('./quincenas')
-const gemini = require('./gemini')
 const todoist = require('./todoist')
-const media = require('./media')
 const db = require('./database')
 const prisma = require('./lib/prisma')
 const { resolverTipoYDireccion } = require('./tipoAhorro')
@@ -110,72 +108,6 @@ async function assuredSend(to, message, context) {
   return result
 }
 
-function parseMessageFromMedia(analysis, senderName, senderPhone, messageId) {
-  const categoria = analysis.categoria || 'Personal'
-  const now = new Date()
-  const fechaMexico = new Date(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T00:00:00.000Z`)
-  return {
-    timestamp: now,
-    fecha: fechaMexico,
-    usuario: senderName || 'Rene',
-    phone: senderPhone || null,
-    monto: analysis.monto || 0,
-    descripcion: analysis.descripcion || 'Sin descripcion',
-    categoria,
-    formaPago: 'Efectivo',
-    tipo: categoria === 'Ingresos' ? 'Ingreso' : categoria === 'Ahorro' ? 'Ahorro' : 'Gasto',
-    clasificacion: CLASIFICACION_POR_CATEGORIA[categoria] || null,
-    quincena: getCurrentQuincena(),
-    estatus: 'Pagado',
-    messageId: messageId || null,
-  }
-}
-
-async function registerAndConfirm(parsed, senderPhone, messageId, senderName, user) {
-  const categoria = await db.findCategoria(parsed.categoria)
-  const metodoPago = await db.findMetodoPago(parsed.formaPago)
-  const quincena = await db.findQuincenaByCodigo(parsed.quincena)
-
-  if (!categoria || !quincena) {
-    console.error(`No se encontro categoria (${parsed.categoria}) o quincena (${parsed.quincena})`)
-    await react(senderPhone, messageId, '❌')
-    await assuredSend(senderPhone, 'Error: categoria o quincena no encontrada.', 'media:error_cat')
-    return
-  }
-
-  const tx = await db.saveTransaccion({
-    fecha: parsed.fecha,
-    quincenaId: quincena.id,
-    userId: user?.id || null,
-    descripcion: parsed.descripcion,
-    categoriaId: categoria.id,
-    clasificacion: parsed.clasificacion,
-    tipo: parsed.tipo,
-    direccion: parsed.direccion,
-    monto: parsed.monto,
-    metodoPagoId: metodoPago?.id || null,
-    estatus: parsed.estatus,
-    notas: null,
-    source: 'whatsapp_media',
-  })
-
-  await db.saveMessage({
-    waMessageId: messageId,
-    fromNumber: senderPhone,
-    fromName: senderName,
-    userId: user?.id || null,
-    body: parsed.descripcion,
-    tipo: parsed.tipo.toLowerCase(),
-    procesado: true,
-    transaccionId: tx.id,
-    fechaMensaje: new Date(),
-  })
-
-  const confirmation = `Registrado desde imagen/audio:\n${parsed.tipo}: $${parsed.monto} - ${parsed.descripcion} (${parsed.categoria})`
-  await assuredSend(senderPhone, confirmation, 'media:success')
-  await react(senderPhone, messageId, '✅')
-  console.log('Media transaccion guardada:', tx.id)
-}
 
 // ---- Telegram ----
 
@@ -223,6 +155,7 @@ function getSimpleConversationReply(text) {
 }
 
 const NO_PUDE_CONTESTAR = 'No pude contestar eso ahora, ¿lo intentas otra vez?'
+const SOLO_TEXTO = 'Por ahora solo entiendo texto: escribe el gasto, por ejemplo "200 super".'
 const NO_SE_SI_ES_GASTO = 'No supe si es un gasto o una pregunta. Si es un gasto, escríbelo empezando con el monto, por ejemplo: “200 super”.'
 
 // Una linea de log por mensaje de Telegram: que ruta tomo, que herramientas
@@ -571,73 +504,26 @@ app.post('/webhook', async (req, res) => {
         const user = await db.findUserByPhone(senderPhone) || await db.findUserByName(senderName)
         await ensureFreshQuincenas()
 
+        // Fotos, audios y documentos: solo los entendia Gemini, que se retiro el
+        // 2026-11-04 (DeepSeek, el unico modelo, solo entiende texto). Se dice
+        // claro en vez de quedarse callado.
         if (mediaMeta) {
-          console.log(`Media from ${senderName} (${senderPhone}): ${mediaMeta.type} ${mediaMeta.id}`)
+          console.log(`Media from ${senderName} (${senderPhone}): ${mediaMeta.type} ${mediaMeta.id} (no soportado: solo texto)`)
           await markAsRead(message.id)
-          await react(senderPhone, message.id, '⏳')
-
-          const dl = await downloadMedia(mediaMeta.id)
-          if (!dl) {
-            await assuredSend(senderPhone, 'No pude descargar ese archivo. Intentá de nuevo.', 'media:download_fail')
-            await react(senderPhone, message.id, '❌')
-            continue
-          }
-
-          if (mediaMeta.type === 'audio') {
-            const transcribed = await media.transcribeAudio(dl.buffer, dl.mimeType || mediaMeta.mimeType)
-            if (transcribed) {
-              text = transcribed
-              console.log(`Audio transcribed: "${text}"`)
-            }
-          } else if (mediaMeta.type === 'image' || mediaMeta.type === 'document') {
-            const analysis = await media.analyzeImage(dl.buffer, dl.mimeType || mediaMeta.mimeType)
-            if (analysis?.type === 'expense' && analysis.monto) {
-              await db.saveMessage({
-                waMessageId: message.id,
-                fromNumber: senderPhone,
-                fromName: senderName,
-                userId: user?.id || null,
-                body: `[${mediaMeta.type}] ${analysis.textoExtraido || analysis.descripcion}`,
-                tipo: 'media',
-                procesado: true,
-                fechaMensaje: new Date(),
-              })
-              const parsed = parseMessageFromMedia(analysis, senderName, senderPhone, message.id)
-              await registerAndConfirm(parsed, senderPhone, message.id, senderName, user)
-              continue
-            } else if (analysis?.type === 'no_financiero') {
-              await db.saveMessage({
-                waMessageId: message.id,
-                fromNumber: senderPhone,
-                fromName: senderName,
-                userId: user?.id || null,
-                body: `[${mediaMeta.type}] imagen no financiera`,
-                tipo: 'media',
-                procesado: false,
-                fechaMensaje: new Date(),
-              })
-              await assuredSend(senderPhone, 'Esa imagen no parece ser un ticket o documento financiero. Mandame un ticket, factura o comprobante y lo registro.', 'media:no_financiero')
-              await react(senderPhone, message.id, '❓')
-              continue
-            }
-          }
-
-          if (!text) {
-            await db.saveMessage({
-              waMessageId: message.id,
-              fromNumber: senderPhone,
-              fromName: senderName,
-              userId: user?.id || null,
-              body: `[${mediaMeta.type}] sin texto extraible`,
-              tipo: 'media',
-              procesado: false,
-              error: 'no se pudo extraer texto del media',
-              fechaMensaje: new Date(),
-            })
-            await assuredSend(senderPhone, 'No pude extraer informacion de ese archivo. Intentá enviar un mensaje de texto o un audio mas claro.', 'media:no_text')
-            await react(senderPhone, message.id, '❌')
-            continue
-          }
+          await db.saveMessage({
+            waMessageId: message.id,
+            fromNumber: senderPhone,
+            fromName: senderName,
+            userId: user?.id || null,
+            body: `[${mediaMeta.type}] no soportado`,
+            tipo: 'media',
+            procesado: false,
+            error: 'media no soportado: solo texto',
+            fechaMensaje: new Date(),
+          })
+          await assuredSend(senderPhone, SOLO_TEXTO, 'media:solo_texto')
+          await react(senderPhone, message.id, '❓')
+          continue
         }
 
         console.log(`Message from ${senderName} (${senderPhone}): ${text}`)
@@ -679,63 +565,43 @@ app.post('/webhook', async (req, res) => {
           }
         }
 
-        // 2. Gemini: clasifica el mensaje (expense / question / chat)
-        // Excepto el atajo "<monto>, <codigo>" (ej. "930, 3B"): siempre es un registro
-        // de gasto y se procesa directo con el parser determinista, sin pasar por
-        // Gemini. Evita que el clasificador lo confunda con chat y responda que ya
-        // quedo registrado sin haber tocado la base de datos.
-        let geminiData = null
-        if (!isShorthandExpense(text) && gemini.isEnabled()) {
+        // 2. DeepSeek clasifica el mensaje (expense / question / chat / task).
+        // Excepto el atajo "<monto>, <codigo>" (ej. "930, 3B"): siempre es un
+        // registro de gasto y va directo al parser determinista. Las preguntas
+        // y la platica las contesta el mismo agente de Telegram
+        // (src/financeAgent.js), con herramientas de solo lectura.
+        let aiData = null
+        if (!isShorthandExpense(text) && aiRouter.isEnabled()) {
           try {
-            const sysCtx = await gemini.getSystemContext(prisma)
-            geminiData = await gemini.classify(text, sysCtx)
+            aiData = await aiRouter.classify(text, null)
 
-            if (geminiData?.type === 'chat') {
-              const chatReply = await gemini.chat(text, senderName, sysCtx)
-              if (chatReply) {
-                await assuredSend(senderPhone, chatReply, 'gemini:chat')
-                await react(senderPhone, message.id, '✅')
-                await db.saveMessage({
-                  waMessageId: message.id,
-                  fromNumber: senderPhone,
-                  fromName: senderName,
-                  userId: user?.id || null,
-                  body: text,
-                  tipo: 'chat',
-                  procesado: true,
-                  fechaMensaje: new Date(),
-                })
-                console.log('Gemini handled chat message')
-                continue
+            if (aiData?.type === 'question' || aiData?.type === 'chat') {
+              let respuesta = null
+              try {
+                respuesta = (await financeAgent.answer(text, { senderName, chatId: `wa:${senderPhone}` }))?.reply || null
+              } catch (error) {
+                console.error('WhatsApp finance agent error:', error)
               }
+              await assuredSend(senderPhone, respuesta || NO_PUDE_CONTESTAR, respuesta ? 'agente:question' : 'agente:fallo')
+              await react(senderPhone, message.id, respuesta ? '✅' : '❓')
+              await db.saveMessage({
+                waMessageId: message.id,
+                fromNumber: senderPhone,
+                fromName: senderName,
+                userId: user?.id || null,
+                body: text,
+                tipo: aiData.type === 'chat' ? 'chat' : 'analytics',
+                procesado: Boolean(respuesta),
+                fechaMensaje: new Date(),
+              })
+              continue
             }
 
-            if (geminiData?.type === 'question') {
-              const data = await getData()
-              const geminiAnswer = await gemini.answer(text, data, senderName, sysCtx)
-              if (geminiAnswer) {
-                await assuredSend(senderPhone, geminiAnswer, 'gemini:question')
-                await react(senderPhone, message.id, '✅')
-                await db.saveMessage({
-                  waMessageId: message.id,
-                  fromNumber: senderPhone,
-                  fromName: senderName,
-                  userId: user?.id || null,
-                  body: text,
-                  tipo: 'analytics',
-                  procesado: true,
-                  fechaMensaje: new Date(),
-                })
-                console.log('Gemini answered free-form question')
-                continue
-              }
-            }
-
-            if (geminiData?.type === 'task' && todoist.isEnabled()) {
+            if (aiData?.type === 'task' && todoist.isEnabled()) {
               const task = await todoist.createTask({
-                content: geminiData.content || text,
-                due_string: geminiData.due_string || null,
-                priority: geminiData.priority || 1,
+                content: aiData.content || text,
+                due_string: aiData.due_string || null,
+                priority: aiData.priority || 1,
               })
               if (task) {
                 const dueText = task.due?.string ? ` para el ${task.due.string}` : ''
@@ -756,21 +622,21 @@ app.post('/webhook', async (req, res) => {
               }
             }
           } catch (error) {
-            console.error('Gemini error:', error)
+            console.error('AI classify error:', error)
           }
         }
 
-        // Si Gemini clasificó como tarea pero Todoist falló, no procesar como gasto
-        if (geminiData?.type === 'task') {
+        // Si se clasificó como tarea pero Todoist falló, no procesar como gasto
+        if (aiData?.type === 'task') {
           await react(senderPhone, message.id, '❌')
           await assuredSend(senderPhone, '❌ No pude crear la tarea en Todoist. Intenta de nuevo.', 'todoist:error')
           continue
         }
 
-        // Si Gemini no lo clasificó como gasto y tampoco hay número en el texto,
+        // Si la IA no lo clasificó como gasto y tampoco hay número en el texto,
         // es un mensaje que no entendemos — responder y no procesar como gasto
         const hasNumber = /\d/.test(text)
-        if (!hasNumber && geminiData?.type !== 'expense') {
+        if (!hasNumber && aiData?.type !== 'expense') {
           await react(senderPhone, message.id, '❓')
           await assuredSend(senderPhone, '🤖 No entendí ese mensaje. Puedes registrar un gasto (ej: "gasté 150 en uber") o hacerme una pregunta sobre tus finanzas.', 'fallback:no_recognize')
           await db.saveMessage({
@@ -790,8 +656,8 @@ app.post('/webhook', async (req, res) => {
         try {
           await react(senderPhone, message.id, '⏳')
 
-          // geminiData mejora el parseo si Gemini detectó un registro
-          const parsed = parseMessage(text, senderName || 'Rene', senderPhone, message.id, geminiData?.type === 'expense' ? geminiData : null)
+          // aiData mejora el parseo si la IA detectó un registro
+          const parsed = parseMessage(text, senderName || 'Rene', senderPhone, message.id, aiData?.type === 'expense' ? aiData : null)
 
           const categoria = await db.findCategoria(parsed.categoria)
           const metodoPago = await db.findMetodoPago(parsed.formaPago)
@@ -1646,7 +1512,9 @@ app.post('/telegram/webhook', async (req, res) => {
       // Texto plano: la respuesta la redacto la IA y un "*" suelto no es formato.
       await telegram.sendTelegramMessage(message.chatId, agentResult.reply, message.messageId, { plain: true })
       logTelegramQA({
-        chatId: message.chatId, ruta: 'agente', inicio, pregunta: message.text, respuesta: agentResult.reply,
+        // 'agente-plantilla': la IA trajo los datos pero no redacto; se
+        // contesto con src/plantillasMilo.js. Cuenta como respuesta, no fallo.
+        chatId: message.chatId, ruta: agentResult.provider === 'plantilla' ? 'agente-plantilla' : 'agente', inicio, pregunta: message.text, respuesta: agentResult.reply,
         herramientas: (agentResult.trace || []).map(t => t.tool), proveedor: agentResult.provider,
       })
       return
@@ -1676,7 +1544,7 @@ app.get('/', async (req, res) => {
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
-    financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
+    financeAgentEnabled: ai.deepseekEnabled,
     telegramWebhookUrl: telegram.getWebhookUrl(),
     database: await db.checkDatabase(),
     timestamp: new Date().toISOString(),
@@ -1710,7 +1578,8 @@ app.post('/cron/resumen-diario', async (req, res) => {
 
 app.get('/health', async (req, res) => {
   const ai = aiRouter.status()
-  const database = await db.checkDatabase()
+  // En paralelo: el ping a DeepSeek (cacheado 10 min) no debe sumar al de la base.
+  const [database, salud] = await Promise.all([db.checkDatabase(), aiRouter.verificar()])
   res.json({
     status: database.ok ? 'ok' : 'degraded',
     telegramEnabled: telegram.isEnabled(),
@@ -1719,8 +1588,10 @@ app.get('/health', async (req, res) => {
     whatsapp: whatsappStatus(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
-    // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
-    financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
+    financeAgentEnabled: ai.deepseekEnabled,
+    // DeepSeek es el unico modelo: si se cae, Milo solo contesta con plantillas.
+    // El watchdog lo lee y avisa con AI_PROVIDER_DOWN.
+    ai: salud,
     database,
     timestamp: new Date().toISOString(),
   })
@@ -1746,14 +1617,13 @@ app.get('/telegram/status', async (req, res) => {
     // cuentas: los ids de chat autorizados no se exponen por HTTP.
     ...telegram.describeAccess(),
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
-    financeAgentEnabled: ai.deepseekEnabled || ai.geminiEnabled,
+    financeAgentEnabled: ai.deepseekEnabled,
     ...ai,
   })
 })
 
 const PORT = process.env.PORT || 3000
 app.listen(PORT, async () => {
-  console.log('GEMINI_ENABLED:', gemini.isEnabled(), 'GEMINI_MODEL:', gemini.GEMINI_MODEL)
   console.log(`Bot de Gastos running on port ${PORT}`)
   console.log(`Webhook URL: http://localhost:${PORT}/webhook`)
 
@@ -1762,7 +1632,7 @@ app.listen(PORT, async () => {
   else console.error(`WHATSAPP_NOT_READY: ${wa.error}${wa.hint ? ` -- ${wa.hint}` : ''}`)
 
   const ai = aiRouter.status()
-  console.log(`Telegram AI providers: primary=${ai.primary || 'none'}; deepseek=${ai.deepseekEnabled}; gemini=${ai.geminiEnabled}`)
+  console.log(`AI: deepseek=${ai.deepseekEnabled} (unico modelo)`)
 
   if (telegram.isEnabled()) {
     // Deja claro en el arranque cual de los dos servicios (gastos-bot /

@@ -1,36 +1,32 @@
 const deepseek = require('./deepseek')
-const gemini = require('./gemini')
 
-// Router de proveedores para la UNICA decision que la IA toma fuera del
-// agente: si un mensaje ambiguo de Telegram ("super 200 ayer") es un gasto,
-// una pregunta o una reasignacion. Las respuestas a preguntas ya no pasan por
-// aqui: las da src/financeAgent.js con herramientas. El viejo `answer` (que
-// pegaba 50 movimientos al prompt y dejaba que el modelo sumara) y `chat` se
-// quitaron con el ruteo nuevo.
+// La UNICA decision que la IA toma fuera del agente: si un mensaje ambiguo
+// ("super 200 ayer") es un gasto, una pregunta, una tarea o una reasignacion.
+// Las respuestas a preguntas las da src/financeAgent.js con herramientas.
+//
+// DeepSeek es el unico modelo (decision del 2026-11-04: Gemini se retiro; su
+// modelo devolvia 404 y el "respaldo" no respaldaba nada). Sin DeepSeek, el
+// bot sigue registrando gastos con el parser de palabras clave.
 async function classify(text, context = null) {
-  if (deepseek.isEnabled()) {
-    const data = await deepseek.classify(text, context)
-    if (data) return { ...data, _provider: 'deepseek' }
-  }
-
-  if (gemini.isEnabled()) {
-    const data = await gemini.classify(text, context)
-    if (data) return { ...data, _provider: 'gemini' }
-  }
-
-  return null
+  if (!deepseek.isEnabled()) return null
+  const data = await deepseek.classify(text, context)
+  return data ? { ...data, _provider: 'deepseek' } : null
 }
 
 function status() {
   return {
     deepseekEnabled: deepseek.isEnabled(),
-    geminiEnabled: gemini.isEnabled(),
-    primary: deepseek.isEnabled() ? 'deepseek' : gemini.isEnabled() ? 'gemini' : null,
+    primary: deepseek.isEnabled() ? 'deepseek' : null,
   }
 }
 
 function isEnabled() {
-  return deepseek.isEnabled() || gemini.isEnabled()
+  return deepseek.isEnabled()
 }
 
-module.exports = { classify, status, isEnabled }
+// Si DeepSeek responde y el modelo configurado sigue existiendo (cache de 10 min).
+function verificar(opts) {
+  return deepseek.verificar(opts)
+}
+
+module.exports = { classify, status, isEnabled, verificar }

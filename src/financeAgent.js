@@ -9,22 +9,27 @@
 // Reglas que no se relajan:
 //   - La IA propone y contesta; NUNCA escribe. Ninguna herramienta escribe.
 //   - Los numeros salen de las herramientas, nunca del modelo.
-//   - Si no puede contestar devuelve null, y quien llama dice "no pude"; jamas
-//     se cae a registrar la pregunta como gasto.
+//   - Si la IA falla despues de traer datos, contesta con la plantilla del
+//     ultimo resultado (src/plantillasMilo.js, provider 'plantilla'). Si no hay
+//     datos devuelve null, y quien llama dice "no pude"; jamas se cae a
+//     registrar la pregunta como gasto.
 
 const deepseek = require('./deepseek')
-const gemini = require('./gemini')
 const { executeTool, getToolDefinitions } = require('./miloTools')
+const plantillas = require('./plantillasMilo')
 const { fechaMexico, ZONA_MEXICO } = require('./financeUtils')
 
 const MAX_STEPS = 6
-// Tope de tiempo de UNA respuesta completa. Cada proveedor tiene su timeout por
-// llamada (15 s DeepSeek, 20 s Gemini), pero son hasta 6 pasos y dos
-// proveedores: sin un tope total, el peor caso eran ~3.5 min de "escribiendo..."
-// antes de "No pude contestar".
+// Tope de tiempo de UNA respuesta completa. DeepSeek tiene su timeout por
+// llamada (15 s), pero son hasta 6 pasos mas un reintento: sin un tope total,
+// el usuario veria minutos de "escribiendo..." antes de la respuesta.
 const TOPE_MS = Number(process.env.FINANCE_AGENT_DEADLINE_MS) || 45000
 const MAX_RESPUESTA = 3500
 const MAX_RESULTADO_HERRAMIENTA = 12000
+// 900 se quedaba corto: con 29 lineas de presupuesto la respuesta en viñetas
+// no cabia. Ver DEEPSEEK_VACIO en src/deepseek.js.
+const MAX_TOKENS = 2000
+const PIDE_MAS_CORTO = 'SYSTEM: Tu respuesta anterior llegó vacía o cortada. Responde más corto: máximo 10 viñetas, y SOLO el objeto JSON.'
 
 // ---- Memoria de conversacion --------------------------------------------------
 //
@@ -62,17 +67,29 @@ function olvidar(chatId) {
 
 // ---- Proveedores ----------------------------------------------------------------
 
-// DeepSeek es el preferido; Gemini entra si DeepSeek no esta configurado o si
-// su llamada falla, incluso a media conversacion.
-function proveedoresDisponibles() {
-  const lista = []
-  if (deepseek.isEnabled() && typeof deepseek.complete === 'function') {
-    lista.push({ nombre: 'deepseek', complete: deepseek.complete })
+// Un solo modelo: DeepSeek (decision del dueño, 2026-11-04; Gemini se retiro
+// porque Google dio de baja el modelo y fallaba con 404). Devuelve una funcion
+// que regresa { content, finishReason }; si el modulo solo trae complete() (un
+// doble de prueba viejo), se envuelve.
+function proveedor() {
+  if (!deepseek.isEnabled()) return null
+  if (typeof deepseek.completeDetallado === 'function') return deepseek.completeDetallado
+  if (typeof deepseek.complete === 'function') {
+    return async (messages, opts) => ({ content: await deepseek.complete(messages, opts), finishReason: null })
   }
-  if (gemini.isEnabled() && typeof gemini.complete === 'function') {
-    lista.push({ nombre: 'gemini', complete: gemini.complete })
+  return null
+}
+
+// Red de seguridad: si la IA ya trajo datos pero no pudo redactar, se arma la
+// respuesta con la plantilla del ultimo resultado bueno que tenga una.
+function respuestaDePlantilla(trace) {
+  for (let i = trace.length - 1; i >= 0; i--) {
+    const paso = trace[i]
+    if (!paso.ok) continue
+    const texto = plantillas.formatear(paso.tool, paso.result)
+    if (texto) return { texto: limpiarRespuesta(texto), tool: paso.tool }
   }
-  return lista
+  return null
 }
 
 function safeJsonParse(raw) {
@@ -216,9 +233,9 @@ function conTope(promesa, ms) {
 async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS } = {}) {
   const limite = Date.now() + deadlineMs
   const quedaTiempo = () => limite - Date.now()
-  const proveedores = proveedoresDisponibles()
-  if (proveedores.length === 0) {
-    console.error('FINANCE_AGENT_SIN_PROVEEDOR: ni DEEPSEEK_API_KEY ni GEMINI_API_KEY configuradas')
+  const completar = proveedor()
+  if (!completar) {
+    console.error('FINANCE_AGENT_SIN_PROVEEDOR: falta DEEPSEEK_API_KEY')
     return null
   }
 
@@ -234,39 +251,54 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
   ]
 
   const seenCalls = new Set()
+  // Cada herramienta que corrio, CON su resultado: si al final la IA no
+  // contesta, de aqui sale la respuesta de plantilla.
   const trace = []
-  let activo = 0
-  let anunciado = null
   let reparado = false
+  let reintentoCorto = false
 
-  // Pide el siguiente paso empezando por el proveedor activo. Si falla, pasa
-  // al siguiente en vez de rendirse: un timeout de DeepSeek a la mitad no debe
-  // tirar una respuesta que Gemini puede terminar con el mismo historial.
+  // Cuando la IA no contesta: si ya hay datos, se responden con plantilla; si
+  // no, null (index.js dice "No pude contestar").
+  function rendirse(motivo) {
+    const plantilla = respuestaDePlantilla(trace)
+    if (!plantilla) {
+      console.error(`FINANCE_AGENT_FALLO: ${motivo}; sin datos para plantilla`)
+      return null
+    }
+    console.log(`FINANCE_AGENT_PLANTILLA: ${motivo}; tool=${plantilla.tool}`)
+    guardarTurno(chatId, question, plantilla.texto)
+    return { reply: plantilla.texto, provider: 'plantilla', trace }
+  }
+
+  // El siguiente paso. Un vacio o un corte por max_tokens se reintenta UNA vez
+  // pidiendo una respuesta mas corta: el 2026-11-04 cuatro preguntas fallaron
+  // asi, con los datos ya en la mano.
   async function pedir() {
-    for (let k = 0; k < proveedores.length; k++) {
+    for (;;) {
       if (quedaTiempo() <= 0) {
         console.error(`FINANCE_AGENT_DEADLINE: se agotaron ${deadlineMs} ms`)
         return null
       }
-      const i = (activo + k) % proveedores.length
-      const proveedor = proveedores[i]
-      const raw = await conTope(proveedor.complete(messages, { json: true, maxTokens: 900 }), quedaTiempo())
-      if (raw) {
-        if (anunciado !== i) {
-          console.log(`FINANCE_AGENT_PROVIDER: ${proveedor.nombre}${anunciado != null ? ' (cambio a media conversacion)' : ''}`)
-          anunciado = i
-        }
-        activo = i
-        return raw
+      const r = await conTope(completar(messages, { json: true, maxTokens: MAX_TOKENS }), quedaTiempo())
+      // null = se agoto el tope de tiempo: reintentar no cabe.
+      if (r == null) return null
+      const content = r.content || null
+      const cortado = r.finishReason === 'length'
+      if (content && !cortado) return content
+      if (reintentoCorto || r.error) {
+        console.error(`FINANCE_AGENT_PROVIDER_FAILED: deepseek (${r.error ? `error: ${r.error}` : cortado ? 'cortado, ya reintentado' : 'vacio, ya reintentado'})`)
+        // Un JSON cortado a veces sigue sirviendo; si no, null.
+        return content
       }
-      console.error(`FINANCE_AGENT_PROVIDER_FAILED: ${proveedor.nombre}`)
+      reintentoCorto = true
+      console.error(`FINANCE_AGENT_REINTENTO: deepseek ${cortado ? 'cortado por max_tokens' : 'vacio'}; se pide mas corto`)
+      messages.push({ role: 'user', content: PIDE_MAS_CORTO })
     }
-    return null
   }
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     const raw = await pedir()
-    if (!raw) return null
+    if (!raw) return rendirse('sin respuesta del modelo')
 
     const plan = safeJsonParse(raw)
 
@@ -280,21 +312,19 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
         messages.push({ role: 'user', content: 'SYSTEM: Tu respuesta no fue JSON válido. Responde SOLO con un objeto JSON: {"action":"tool",...} o {"action":"answer","answer":"..."}.' })
         continue
       }
-      console.error('FINANCE_AGENT_PLAN_ERROR: invalid JSON plan')
-      return null
+      return rendirse('JSON invalido')
     }
 
     if (plan.action === 'answer') {
       const finalAnswer = limpiarRespuesta(typeof plan.answer === 'string' ? plan.answer : '')
-      if (!finalAnswer) return null
+      if (!finalAnswer) return rendirse('respuesta vacia')
       console.log('FINANCE_AGENT_ANSWER:', finalAnswer.substring(0, 180))
       guardarTurno(chatId, question, finalAnswer)
-      return { reply: finalAnswer, provider: `${proveedores[activo].nombre}-agent`, trace }
+      return { reply: finalAnswer, provider: 'deepseek-agent', trace }
     }
 
     if (plan.action !== 'tool' || typeof plan.tool !== 'string') {
-      console.error('FINANCE_AGENT_PLAN_ERROR: invalid action')
-      return null
+      return rendirse('accion invalida')
     }
 
     const args = plan.args && typeof plan.args === 'object' && !Array.isArray(plan.args) ? plan.args : {}
@@ -311,7 +341,7 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
     seenCalls.add(signature)
     console.log('FINANCE_AGENT_TOOL_CALL:', JSON.stringify({ tool: plan.tool, args }))
     const result = await executeTool(plan.tool, args)
-    trace.push({ tool: plan.tool, args, ok: result?.ok !== false })
+    trace.push({ tool: plan.tool, args, ok: result?.ok !== false, result })
 
     messages.push({ role: 'assistant', content: JSON.stringify(plan) })
     messages.push({
@@ -320,13 +350,12 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
     })
   }
 
-  console.error('FINANCE_AGENT_MAX_STEPS reached')
-  return null
+  return rendirse('MAX_STEPS')
 }
 
 module.exports = {
   answer,
   olvidar,
   // Para pruebas.
-  _interno: { recordar, guardarTurno, limpiarRespuesta, safeJsonParse, buildSystemPrompt, MAX_STEPS, TOPE_MS, MEMORIA_TURNOS, MEMORIA_TTL_MS },
+  _interno: { recordar, guardarTurno, limpiarRespuesta, safeJsonParse, buildSystemPrompt, respuestaDePlantilla, MAX_STEPS, MAX_TOKENS, TOPE_MS, MEMORIA_TURNOS, MEMORIA_TTL_MS },
 }

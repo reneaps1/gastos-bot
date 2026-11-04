@@ -129,16 +129,21 @@ const prismaDoble = {
 // delega en el.
 const impl = {
   deepseek: { isEnabled: () => false, complete: async () => null },
-  gemini: { isEnabled: () => false, complete: async () => null },
 }
-const proveedorDeepseek = { isEnabled: () => impl.deepseek.isEnabled(), complete: (...a) => impl.deepseek.complete(...a) }
-const proveedorGemini = { isEnabled: () => impl.gemini.isEnabled(), complete: (...a) => impl.gemini.complete(...a) }
+// Un doble con complete() (el caso comun) o con completeDetallado() (para
+// simular finish_reason). El agente usa completeDetallado.
+const proveedorDeepseek = {
+  isEnabled: () => impl.deepseek.isEnabled(),
+  complete: (...a) => impl.deepseek.complete(...a),
+  completeDetallado: async (...a) => (impl.deepseek.completeDetallado
+    ? impl.deepseek.completeDetallado(...a)
+    : { content: await impl.deepseek.complete(...a), finishReason: 'stop' }),
+}
 
 const requireOriginal = Module.prototype.require
 Module.prototype.require = function (id) {
   if (id === './lib/prisma' || id === '../lib/prisma') return prismaDoble
   if (id === './deepseek') return proveedorDeepseek
-  if (id === './gemini') return proveedorGemini
   return requireOriginal.apply(this, arguments)
 }
 
@@ -190,22 +195,13 @@ async function main() {
 
   console.log('\n=== C: el agente traduce la pregunta en una consulta ===')
   impl.deepseek = proveedorQueConsulta('deepseek')
-  impl.gemini = { isEnabled: () => false, complete: async () => null }
   const r1 = await answer('cual es el gasto mas alto de esta Q?', { senderName: 'Rene' })
   check('responde con el gasto correcto', r1?.reply?.includes('Renta septiembre'), r1?.reply)
   check('uso search_transactions', r1?.trace?.[0]?.tool === 'search_transactions', JSON.stringify(r1?.trace))
   check('reporta el proveedor que respondio', r1?.provider === 'deepseek-agent', r1?.provider)
 
-  console.log('\n=== D: si un proveedor falla, el agente no se apaga ===')
-  impl.deepseek = { isEnabled: () => true, complete: async () => null }  // simula DEEPSEEK_MODEL invalido
-  impl.gemini = proveedorQueConsulta('gemini')
-  const r2 = await answer('cual es el gasto mas alto de esta Q?', { senderName: 'Rene' })
-  check('Gemini toma el relevo y contesta', r2?.reply?.includes('Renta septiembre'), r2?.reply)
-  check('lo reporta como gemini-agent', r2?.provider === 'gemini-agent', r2?.provider)
-
   console.log('\n=== E: sin ningun proveedor, devuelve null sin tronar ===')
   impl.deepseek = { isEnabled: () => false, complete: async () => null }
-  impl.gemini = { isEnabled: () => false, complete: async () => null }
   const r3 = await answer('cual es el gasto mas alto?', { senderName: 'Rene' })
   check('devuelve null', r3 === null, JSON.stringify(r3))
 
@@ -222,7 +218,6 @@ async function main() {
         return JSON.stringify({ action: 'answer', answer: 'La renta.' })
       },
     }
-    impl.gemini = { isEnabled: () => false, complete: async () => null }
     const r = await answer('cual es el gasto mas alto?', { senderName: 'Rene' })
     check('contesta despues de reparar', r?.reply === 'La renta.', JSON.stringify(r))
     check('solo hizo dos llamadas', llamadas === 2, llamadas)
@@ -231,25 +226,6 @@ async function main() {
     impl.deepseek = { isEnabled: () => true, complete: async () => { llamadas++; return 'nunca json' } }
     const r2 = await answer('cual es el gasto mas alto?', { senderName: 'Rene' })
     check('si tampoco repara, null (un solo reintento)', r2 === null && llamadas === 2, `${JSON.stringify(r2)} llamadas=${llamadas}`)
-  }
-
-  console.log('\n=== G: el proveedor falla a media conversacion -> cambia al otro ===')
-  {
-    let pasoDeepseek = 0
-    impl.deepseek = {
-      isEnabled: () => true,
-      complete: async () => {
-        pasoDeepseek++
-        // Pide la herramienta y despues se cae (timeout, saldo, lo que sea).
-        if (pasoDeepseek === 1) return JSON.stringify({ action: 'tool', tool: 'search_transactions', args: { period: 'current', type: 'Gasto', sort: 'amount_desc', limit: 1 } })
-        return null
-      },
-    }
-    impl.gemini = proveedorQueConsulta('gemini')
-    const r = await answer('cual es el gasto mas alto de esta Q?', { senderName: 'Rene' })
-    check('Gemini termina la respuesta con el historial', r?.reply?.includes('Renta septiembre'), JSON.stringify(r))
-    check('reporta gemini-agent', r?.provider === 'gemini-agent', r?.provider)
-    check('la herramienta se ejecuto una sola vez', r?.trace?.length === 1, JSON.stringify(r?.trace))
   }
 
   console.log('\n=== H: memoria por chat: "¿y la pasada?" ve la pregunta anterior ===')
@@ -264,7 +240,6 @@ async function main() {
         return JSON.stringify({ action: 'answer', answer: `respuesta ${vistos.length}` })
       },
     }
-    impl.gemini = { isEnabled: () => false, complete: async () => null }
     await answer('cuanto me queda?', { senderName: 'Rene', chatId: 'chat-1' })
     await answer('y la quincena pasada?', { senderName: 'Rene', chatId: 'chat-1' })
     const segunda = vistos[1].join('\n')
@@ -345,13 +320,11 @@ async function main() {
     const { _interno } = require(path.join(SRC, 'financeAgent'))
     check('el tope por default es 45 s', _interno.TOPE_MS === 45000, _interno.TOPE_MS)
 
-    // Los dos proveedores cuelgan mas que el tope: no se espera a sus timeouts.
-    const colgado = { isEnabled: () => true, complete: () => new Promise(resolve => setTimeout(() => resolve(null), 3000)) }
-    impl.deepseek = colgado
-    impl.gemini = colgado
+    // DeepSeek cuelga mas que el tope: no se espera a su timeout.
+    impl.deepseek = { isEnabled: () => true, complete: () => new Promise(resolve => setTimeout(() => resolve(null), 3000)) }
     let t0 = Date.now()
     const r1 = await answer('cuanto me queda?', { senderName: 'Rene', deadlineMs: 200 })
-    check('proveedores colgados: null dentro del tope', r1 === null && Date.now() - t0 < 1000, `${Date.now() - t0} ms`)
+    check('proveedor colgado: null dentro del tope', r1 === null && Date.now() - t0 < 1000, `${Date.now() - t0} ms`)
 
     // Un proveedor que contesta rapido pero nunca termina (pide herramientas
     // distintas paso tras paso): el tope corta antes de MAX_STEPS.
@@ -364,10 +337,83 @@ async function main() {
         return JSON.stringify({ action: 'tool', tool: 'search_transactions', args: { period: 'current', limit: pasos } })
       },
     }
-    impl.gemini = { isEnabled: () => false, complete: async () => null }
     t0 = Date.now()
     const r2 = await answer('cuanto me queda?', { senderName: 'Rene', deadlineMs: 200 })
-    check('pasos lentos: corta por tiempo, no por MAX_STEPS', r2 === null && pasos < _interno.MAX_STEPS && Date.now() - t0 < 1000, `pasos=${pasos} ${Date.now() - t0} ms`)
+    check('pasos lentos: corta por tiempo, no por MAX_STEPS', pasos < _interno.MAX_STEPS && Date.now() - t0 < 1000, `pasos=${pasos} ${Date.now() - t0} ms`)
+    // Las herramientas si corrieron: en vez de "No pude", contesta con sus datos.
+    check('y contesta con la plantilla de lo que ya trajo', r2?.provider === 'plantilla' && /movimiento/.test(r2?.reply || ''), JSON.stringify(r2))
+  }
+
+  const { _interno } = require(path.join(SRC, 'financeAgent'))
+  // Un DeepSeek guionado: cada llamada toma la siguiente respuesta de la lista.
+  // Una respuesta es { content, finishReason } o una funcion de messages.
+  function guion(pasos) {
+    const vistos = []
+    impl.deepseek = {
+      isEnabled: () => true,
+      completeDetallado: async (messages, opts) => {
+        vistos.push({ ultimo: messages[messages.length - 1].content, opts })
+        const paso = pasos[Math.min(vistos.length - 1, pasos.length - 1)]
+        return typeof paso === 'function' ? paso(messages) : paso
+      },
+    }
+    return vistos
+  }
+  // El otro caso real del 2026-11-04: "¿Qué gastos hay en la línea Gas?".
+  const pideLineas = { content: JSON.stringify({ action: 'tool', tool: 'search_transactions', args: { period: 'current', type: 'Gasto' } }), finishReason: 'stop' }
+  const vacio = { content: null, finishReason: 'stop' }
+
+  console.log('\n=== M: maxTokens 2000 y un reintento si DeepSeek viene vacio (2026-11-04) ===')
+  {
+    const vistos = guion([pideLineas, vacio, { content: JSON.stringify({ action: 'answer', answer: 'Saldos listos.' }), finishReason: 'stop' }])
+    const r = await answer('Dame el listado de los saldos x línea de presupuesto', { senderName: 'Rene', chatId: 'chat-m' })
+    check('contesta despues del reintento', r?.reply === 'Saldos listos.' && r?.provider === 'deepseek-agent', JSON.stringify(r))
+    check('pide 2000 tokens, no 900', vistos.every(v => v.opts?.maxTokens === 2000), JSON.stringify(vistos.map(v => v.opts)))
+    check('el reintento pide una respuesta mas corta', /más corto/.test(vistos[2]?.ultimo || ''), vistos[2]?.ultimo)
+    check('tres llamadas: herramienta, vacio, reintento', vistos.length === 3, vistos.length)
+  }
+
+  console.log('\n=== N: corte por max_tokens (finish_reason length) tambien se reintenta ===')
+  {
+    const vistos = guion([pideLineas, { content: '{"action":"answer","answer":"• Super — quedan', finishReason: 'length' }, { content: JSON.stringify({ action: 'answer', answer: 'Corto.' }), finishReason: 'stop' }])
+    const r = await answer('saldos por linea', { senderName: 'Rene' })
+    check('no usa el JSON cortado: reintenta', r?.reply === 'Corto.' && vistos.length === 3, `${JSON.stringify(r)} llamadas=${vistos.length}`)
+  }
+
+  console.log('\n=== O: red de seguridad: datos en la mano + DeepSeek mudo = plantilla, no "No pude" ===')
+  {
+    // El caso real: la herramienta respondio con los datos y DeepSeek
+    // devolvio vacio dos veces al redactar.
+    const vistos = guion([pideLineas, vacio, vacio])
+    const r = await answer('Que gastos hay en la línea Gas en esta Q?', { senderName: 'Rene', chatId: 'chat-o' })
+    check('contesta con la plantilla', r?.provider === 'plantilla', JSON.stringify(r))
+    check('la respuesta trae los movimientos en viñetas', /^4 movimientos en Q35 por \$16,390\.65\./.test(r?.reply || '') && /\n• Renta septiembre — \$12,000\.00 \(/.test(r?.reply || ''), r?.reply)
+    check('no reintenta sin fin: 3 llamadas', vistos.length === 3, vistos.length)
+    check('el trace guarda el resultado de la herramienta', r?.trace?.[0]?.result?.ok === true && Array.isArray(r?.trace?.[0]?.result?.transactions), JSON.stringify(r?.trace?.[0] ?? null).slice(0, 200))
+    check('la plantilla queda en la memoria del chat (para "¿y la pasada?")', _interno.recordar('chat-o').at(-1)?.respuesta === r?.reply, JSON.stringify(_interno.recordar('chat-o')))
+  }
+
+  console.log('\n=== P: sin datos y DeepSeek mudo = null ("No pude contestar") ===')
+  {
+    const vistos = guion([vacio, vacio])
+    const r = await answer('cuanto me queda?', { senderName: 'Rene', chatId: 'chat-p' })
+    check('devuelve null', r === null, JSON.stringify(r))
+    check('un solo reintento', vistos.length === 2, vistos.length)
+    check('no guarda turno', _interno.recordar('chat-p').length === 0, JSON.stringify(_interno.recordar('chat-p')))
+  }
+
+  console.log('\n=== Q: una herramienta con ok:false no se usa como respuesta ===')
+  {
+    guion([{ content: JSON.stringify({ action: 'tool', tool: 'list_budget_lines', args: { period: 'Q99' } }), finishReason: 'stop' }, vacio, vacio])
+    const r = await answer('saldos de la Q99', { senderName: 'Rene' })
+    check('devuelve null (no plantilla de un error)', r === null, JSON.stringify(r))
+  }
+
+  console.log('\n=== R: un error de DeepSeek (401, red) no se reintenta ===')
+  {
+    const vistos = guion([{ content: null, finishReason: null, error: '401' }])
+    const r = await answer('cuanto me queda?', { senderName: 'Rene' })
+    check('null con una sola llamada', r === null && vistos.length === 1, `${JSON.stringify(r)} llamadas=${vistos.length}`)
   }
 
   console.log('\n=== Formato: las listas van una por renglon (2026-11-02) ===')

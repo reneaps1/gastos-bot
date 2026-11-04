@@ -8,8 +8,14 @@ function isEnabled() {
   return !!DEEPSEEK_API_KEY
 }
 
-async function complete(messages, { json = false, maxTokens = 500 } = {}) {
-  if (!DEEPSEEK_API_KEY) return null
+// La llamada con todo el detalle: `content` (o null), `finishReason` y
+// `tokens`. Existe porque una respuesta VACIA no lanza error: antes solo
+// volvia null y el agente lo registraba como "fallo" sin saber si DeepSeek se
+// corto por max_tokens ("length"), si el modo JSON vino vacio ("stop"), o si
+// hubo error de red. Visto el 2026-11-02/04: 3 de 3 fallos de Milo fueron
+// contenido vacio, sin ningun DEEPSEEK_ERROR.
+async function completeDetallado(messages, { json = false, maxTokens = 500 } = {}) {
+  if (!DEEPSEEK_API_KEY) return { content: null, finishReason: null, tokens: null, error: 'sin DEEPSEEK_API_KEY' }
 
   try {
     const { data } = await axios.post(
@@ -31,13 +37,25 @@ async function complete(messages, { json = false, maxTokens = 500 } = {}) {
       },
     )
 
-    return data?.choices?.[0]?.message?.content?.trim() || null
+    const choice = data?.choices?.[0]
+    const content = choice?.message?.content?.trim() || null
+    const finishReason = choice?.finish_reason || null
+    const tokens = data?.usage?.completion_tokens ?? null
+    if (!content) {
+      console.error(`DEEPSEEK_VACIO finish_reason=${finishReason} tokens=${tokens} max_tokens=${maxTokens} json=${json}`)
+    }
+    return { content, finishReason, tokens, error: null }
   } catch (error) {
     const status = error.response?.status || 'network'
     const detail = error.response?.data?.error?.message || error.message
     console.error(`DEEPSEEK_ERROR status=${status}: ${detail}`)
-    return null
+    return { content: null, finishReason: null, tokens: null, error: `${status}: ${detail}` }
   }
+}
+
+// La forma de siempre: solo el texto, o null.
+async function complete(messages, opciones = {}) {
+  return (await completeDetallado(messages, opciones)).content
 }
 
 function systemSummary(context) {
@@ -158,4 +176,44 @@ Para chat: {"type":"chat"}`
 // answer() y chat() se quitaron: las preguntas de Telegram las contesta
 // src/financeAgent.js con herramientas, no un prompt con movimientos pegados.
 
-module.exports = { isEnabled, complete, classify }
+// ¿DeepSeek esta vivo y el modelo sigue existiendo? GET /models no gasta
+// tokens. Se revisa tambien que DEEPSEEK_MODEL este en la lista: asi murio
+// Gemini (su modelo se retiro y nadie se entero en dias). Cache de 10 min
+// para que /health no le pegue a la API en cada consulta del watchdog.
+const SALUD_TTL_MS = 10 * 60 * 1000
+let salud = null
+
+async function verificar({ ahora = Date.now() } = {}) {
+  if (salud && ahora - salud.t < SALUD_TTL_MS) return salud.r
+  let r
+  if (!DEEPSEEK_API_KEY) {
+    r = { ok: false, error: 'sin DEEPSEEK_API_KEY' }
+  } else {
+    try {
+      const { data } = await axios.get(`${DEEPSEEK_BASE_URL}/models`, {
+        headers: { Authorization: `Bearer ${DEEPSEEK_API_KEY}` },
+        timeout: 8000,
+      })
+      const ids = (data?.data || []).map(m => m.id)
+      if (!ids.length || ids.includes(DEEPSEEK_MODEL)) {
+        r = { ok: true, error: null }
+      } else {
+        // No aparece en la lista (puede ser un alias): antes de declarar el
+        // modelo muerto, una llamada de 1 token lo confirma. Sin esto, un alias
+        // valido daria una falsa alarma en cada corrida del watchdog.
+        const prueba = await completeDetallado([{ role: 'user', content: 'ok' }], { maxTokens: 1 })
+        r = prueba.error
+          ? { ok: false, error: `el modelo ${DEEPSEEK_MODEL} no responde (${prueba.error}); DeepSeek lista: ${ids.join(', ')}` }
+          : { ok: true, error: null }
+      }
+    } catch (error) {
+      const status = error.response?.status || 'network'
+      r = { ok: false, error: `${status}: ${error.response?.data?.error?.message || error.message}` }
+    }
+  }
+  r = { ...r, modelo: DEEPSEEK_MODEL, revisadoEn: new Date(ahora).toISOString() }
+  salud = { t: ahora, r }
+  return r
+}
+
+module.exports = { isEnabled, complete, completeDetallado, classify, verificar, DEEPSEEK_MODEL, _olvidarSalud: () => { salud = null } }

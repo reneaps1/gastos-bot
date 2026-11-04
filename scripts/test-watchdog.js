@@ -220,6 +220,22 @@ console.log('\n=== R: /health viejo, sin el campo database, no dispara la alerta
 const r1 = evaluate({ ...SANO, health: { ok: true, status: 200, data: { status: 'ok' } } })
 check('sin problemas', r1.problems.length === 0, JSON.stringify(codigos(r1)))
 
+console.log('\n=== S: DeepSeek caido (unico modelo desde el 2026-11-04) ===')
+// Gemini fallo con 404 durante dias sin que nadie lo viera. DeepSeek no puede
+// caerse en silencio: /health trae ai.ok y el watchdog avisa.
+const s1 = evaluate({
+  ...SANO,
+  health: { ok: true, status: 200, data: { status: 'ok', database: { ok: true }, ai: { ok: false, error: '401: Authentication Fails' } } },
+})
+check('detecta AI_PROVIDER_DOWN', codigos(s1).includes('AI_PROVIDER_DOWN'), JSON.stringify(codigos(s1)))
+check('es ERROR (avisa al chat)', hasErrors(s1.problems) === true, JSON.stringify(s1.problems))
+check('el mensaje trae el error de DeepSeek', s1.problems.find(x => x.code === 'AI_PROVIDER_DOWN')?.message.includes('401'), JSON.stringify(s1.problems))
+check('la pista dice que revisar DEEPSEEK_API_KEY', /DEEPSEEK_API_KEY/.test(s1.problems.find(x => x.code === 'AI_PROVIDER_DOWN')?.hint || ''))
+const s2 = evaluate({ ...SANO, health: { ok: true, status: 200, data: { status: 'ok', database: { ok: true }, ai: { ok: true, error: null } } } })
+check('DeepSeek sano = sin problemas', s2.problems.length === 0, JSON.stringify(codigos(s2)))
+const s3 = evaluate({ ...SANO, health: { ok: false, status: 502, data: { ai: { ok: false } } } })
+check('servicio caido: avisa SERVICE_DOWN, no AI_PROVIDER_DOWN', !codigos(s3).includes('AI_PROVIDER_DOWN'), JSON.stringify(codigos(s3)))
+
 console.log('\n=== L: el mensaje de alerta es legible y accionable ===')
 const alerta = formatAlert({ problems: d.problems, healed: null, serviceName: 'milo-telegram-bot' })
 check('nombra el servicio', alerta.includes('milo-telegram-bot'), alerta)

@@ -17,9 +17,9 @@ process.env.DATABASE_URL = 'postgresql://x:x@localhost:0/x'
 process.env.GOOGLE_SHEETS_ENABLED = 'false'
 process.env.SKIP_PRISMA_BOOTSTRAP = '1'
 process.env.PORT = process.env.TEST_PORT || '34567'
-// GEMINI_API_KEY / TODOIST_API_TOKEN / META_* quedan sin definir a proposito:
+// DEEPSEEK_API_KEY / TODOIST_API_TOKEN / META_* quedan sin definir a proposito:
 // esas integraciones se deshabilitan solas y nunca intentan salir a la red.
-// Sin Gemini, la categoria sale solo del keyword matching de src/parser.js.
+// Sin DeepSeek, la categoria sale solo del keyword matching de src/parser.js.
 
 const path = require('path')
 const SRC = path.join(__dirname, '..', 'src')
@@ -293,10 +293,36 @@ async function main() {
   check('monto = 300', Number(transacciones.at(-1)?.monto) === 300, transacciones.at(-1)?.monto)
   check('confirmo el registro', ultimaConfirmacion().includes('Gasto registrado'), ultimaConfirmacion())
 
+  console.log('\n=== I: una foto o un audio: "solo entiendo texto" (Gemini se retiro el 2026-11-04) ===')
+  for (const [tipo, media] of [['image', { image: { id: 'IMG1', mime_type: 'image/jpeg' } }], ['audio', { audio: { id: 'AUD1', mime_type: 'audio/ogg' } }]]) {
+    const antesTx = transacciones.length
+    const antesEnv = enviados.length
+    n++
+    await fetch(`http://localhost:${process.env.PORT}/webhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        object: 'whatsapp_business_account',
+        entry: [{ changes: [{ value: {
+          contacts: [{ profile: { name: 'Rene' } }],
+          messages: [{ id: `wamid.MEDIA${n}`, from: PHONE, type: tipo, ...media }],
+        } }] }],
+      }),
+    }).then(r => r.text())
+    await sleep(150)
+    const nuevos = enviados.slice(antesEnv)
+    check(`${tipo}: contesta que solo entiende texto`, nuevos.length === 1 && /solo entiendo texto/.test(nuevos[0].message), JSON.stringify(nuevos))
+    check(`${tipo}: no registra nada`, transacciones.length === antesTx, transacciones.length - antesTx)
+    const guardado = whatsappMessages.find(m => m.waMessageId === `wamid.MEDIA${n}`)
+    check(`${tipo}: el mensaje queda guardado con el motivo`, guardado?.tipo === 'media' && /solo texto/.test(guardado?.error || ''), JSON.stringify(guardado))
+  }
+
   console.log('\n=== H: /health dice si WhatsApp puede enviar (no mas fallos mudos) ===')
   const health = await fetch(`http://localhost:${process.env.PORT}/health`).then(r => r.json())
   check('/health trae el estado de WhatsApp', health.whatsapp && typeof health.whatsapp.ok === 'boolean', JSON.stringify(health.whatsapp))
   check('sin credenciales, WhatsApp sale como NO listo', health.whatsapp?.ok === false, JSON.stringify(health.whatsapp))
+  check('/health trae el estado de DeepSeek (ai.ok)', health.ai && health.ai.ok === false && /DEEPSEEK_API_KEY/.test(health.ai.error || ''), JSON.stringify(health.ai))
+  check('/health ya no habla de Gemini', !('geminiEnabled' in health), JSON.stringify(health))
   const hint133010 = realWa.describeWhatsAppError({ error: { code: 133010, message: '(#133010) Account not registered' } })
   check('el error 133010 explica que hay que registrar el numero', /no esta registrado/.test(hint133010 || ''), hint133010)
   const hint190 = realWa.describeWhatsAppError({ error: { code: 190 } })
