@@ -10,7 +10,7 @@ const SRC = path.join(__dirname, '..', 'src')
 const pp = require.resolve(path.join(SRC, 'lib', 'prisma.js'))
 require.cache[pp] = { id: pp, filename: pp, loaded: true, exports: {} }
 
-const { formatearResumen, autorizado, tokenEsperado } = require(path.join(SRC, 'resumenDiario.js'))
+const { formatearResumen, autorizado, tokenEsperado, diaDelResumen } = require(path.join(SRC, 'resumenDiario.js'))
 
 let pass = 0, fail = 0
 function check(label, cond, extra) {
@@ -69,6 +69,28 @@ check('rechaza uno incorrecto', !autorizado(bueno.replace(/.$/, c => (c === '0' 
 check('rechaza el token del bot en claro', !autorizado('test:token-del-bot'))
 delete process.env.TELEGRAM_BOT_TOKEN
 check('sin TELEGRAM_BOT_TOKEN rechaza todo', !autorizado(bueno))
+
+console.log('\n=== R5: que dia resume (GitHub atrasa el cron horas) ===')
+// Caso real del 2026-11-04: el cron de las 20:00 (02:00 UTC) corrio a las
+// 08:20 UTC = 02:20 de Mexico del dia 4. Resumio el dia 4, que acababa de
+// empezar, y dijo "Hoy no registraste gastos" con el gasto de Gas del dia 3.
+const tarde = diaDelResumen(new Date('2026-11-04T08:20:42Z'))
+check('a las 2:20 am resume el dia anterior', tarde.dia === '2026-11-03' && tarde.esAyer === true, JSON.stringify(tarde))
+const aTiempo = diaDelResumen(new Date('2026-11-04T02:00:00Z'))
+check('a las 8 pm resume ese mismo dia', aTiempo.dia === '2026-11-03' && aTiempo.esAyer === false, JSON.stringify(aTiempo))
+check('a las 11:59 am todavia resume ayer', diaDelResumen(new Date('2026-11-04T17:59:00Z')).dia === '2026-11-03')
+check('a mediodia ya resume hoy', diaDelResumen(new Date('2026-11-04T18:00:00Z')).dia === '2026-11-04')
+check('cruza el mes', diaDelResumen(new Date('2026-12-01T07:00:00Z')).dia === '2026-11-30')
+check('cruza el año', diaDelResumen(new Date('2027-01-01T07:00:00Z')).dia === '2026-12-31')
+
+const gas = [{ monto: 600, descripcion: 'gas', presupuestoId: 40, presupuesto: { descripcion: 'Gas' } }]
+const t11 = formatearResumen({ hoy: '2026-11-03', esAyer: true, gastos: gas, estado: { ...estadoSobra, perDay: 1500 } })
+check('el titulo lleva el dia resumido', /martes, 3 de noviembre/.test(t11), t11.split('\n')[0])
+check('dice "Ayer gastaste", no "Hoy"', /Ayer gastaste \$600\.00\* \(1 gasto\)/.test(t11) && !/Hoy/.test(t11), t11)
+check('con su linea', /Gas — \$600\.00/.test(t11), t11)
+check('el veredicto habla de ayer', /ayer gastaste menos que tu ritmo/.test(t11), t11)
+const t12 = formatearResumen({ hoy: '2026-11-03', esAyer: true, gastos: [], estado: estadoSobra })
+check('sin gastos: "Ayer no registraste gastos"', /Ayer no registraste gastos/.test(t12), t12)
 
 console.log(`\n${pass} pasaron, ${fail} fallaron`)
 process.exit(fail > 0 ? 1 : 0)

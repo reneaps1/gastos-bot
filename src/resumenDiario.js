@@ -13,6 +13,13 @@
 // paridad al centavo en scripts/test-milo-finanzas.js). El resumen no hace
 // cuentas propias de dinero: solo suma los gastos del dia.
 //
+// QUE DIA RESUME: el que acaba de terminar, no la fecha del reloj. El cron de
+// GitHub se programa a las 20:00, pero GitHub atrasa los crons de este repo
+// HORAS (el watchdog "cada 30 min" corre cada 4-8 h). El 2026-11-04 el de las
+// 8 pm corrio a las 2:20 am: resumio el dia 4, que apenas empezaba, y dijo
+// "Hoy no registraste gastos" con el gasto de Gas del dia 3 en la base. Por
+// eso, antes de mediodia (HORA_CORTE) se resume AYER y el texto dice "Ayer".
+//
 // AUTENTICACION SIN SECRETOS NUEVOS: el workflow ya tiene TELEGRAM_BOT_TOKEN
 // (lo usa el watchdog). Manda sha256("cron:" + token) en X-Cron-Token; el bot
 // calcula lo mismo y compara en tiempo constante. El token nunca viaja.
@@ -21,16 +28,32 @@ const crypto = require('crypto')
 const prisma = require('./lib/prisma')
 const telegram = require('./telegram')
 const { executeTool } = require('./miloTools')
-const { fechaMexico, dbDate } = require('./financeUtils')
+const { fechaMexico, dbDate, ZONA_MEXICO } = require('./financeUtils')
 const { formatMXN } = require('./lib/finanzas-quincena')
 
 const MAX_SIN_LINEA_LISTADOS = 5
+// Antes de esta hora (Mexico) el resumen es del dia anterior: un cron de las
+// 8 pm que llega de madrugada o en la manana sigue hablando del dia correcto.
+const HORA_CORTE = 12
 
-// Dia (Mexico) en que ya se mando el resumen. En memoria: sirve para que un
+// Dia (Mexico) cuyo resumen ya se mando. En memoria: sirve para que un
 // reintento del workflow (el primer intento puede tardar mientras Render
 // despierta el servicio) no lo mande dos veces. Un reinicio lo pierde, pero
 // entre reintentos de minutos no hay reinicio.
 let enviadoEl = null
+
+/**
+ * El dia que toca resumir a esta hora: hoy desde mediodia, ayer antes.
+ * Devuelve { dia: 'YYYY-MM-DD', esAyer }.
+ */
+function diaDelResumen(ahora = new Date()) {
+  const hora = Number(new Intl.DateTimeFormat('en-US', { timeZone: ZONA_MEXICO, hour: 'numeric', hourCycle: 'h23' }).format(ahora))
+  const hoy = fechaMexico(ahora)
+  if (hora >= HORA_CORTE) return { dia: hoy, esAyer: false }
+  const ayer = dbDate(hoy)
+  ayer.setUTCDate(ayer.getUTCDate() - 1)
+  return { dia: ayer.toISOString().slice(0, 10), esAyer: true }
+}
 
 function tokenEsperado() {
   const t = process.env.TELEGRAM_BOT_TOKEN
@@ -62,14 +85,15 @@ const plural = (n, uno, varios) => `${n} ${n === 1 ? uno : varios}`
  * Arma el texto. Puro: recibe los gastos del dia y el resultado de
  * get_money_status, para poder probarlo sin base.
  */
-function formatearResumen({ hoy, gastos, estado }) {
+function formatearResumen({ hoy, esAyer = false, gastos, estado }) {
+  const cuando = esAyer ? 'Ayer' : 'Hoy'
   const lineas = [`🌙 *Resumen del día* — ${fechaLarga(hoy)}`, '']
 
   const total = gastos.reduce((s, g) => s + Number(g.monto), 0)
   if (!gastos.length) {
-    lineas.push('💸 Hoy no registraste gastos.')
+    lineas.push(`💸 ${cuando} no registraste gastos.`)
   } else {
-    lineas.push(`💸 *Hoy gastaste ${formatMXN(total)}* (${plural(gastos.length, 'gasto', 'gastos')})`)
+    lineas.push(`💸 *${cuando} gastaste ${formatMXN(total)}* (${plural(gastos.length, 'gasto', 'gastos')})`)
     const porLinea = new Map()
     for (const g of gastos) {
       const nombre = g.presupuesto?.descripcion || null
@@ -111,8 +135,8 @@ function formatearResumen({ hoy, gastos, estado }) {
     if (estado.perDay != null) {
       const dias = plural(estado.daysLeft, 'día', 'días')
       lineas.push('', total <= estado.perDay
-        ? `🟢 *Vas bien:* te alcanza, y hoy gastaste menos que tu ritmo de ${formatMXN(estado.perDay)} al día (quedan ${dias}).`
-        : `🟡 *Te alcanza, pero cuidado:* hoy gastaste más que tu ritmo de ${formatMXN(estado.perDay)} al día (quedan ${dias}).`)
+        ? `🟢 *Vas bien:* te alcanza, y ${cuando.toLowerCase()} gastaste menos que tu ritmo de ${formatMXN(estado.perDay)} al día (quedan ${dias}).`
+        : `🟡 *Te alcanza, pero cuidado:* ${cuando.toLowerCase()} gastaste más que tu ritmo de ${formatMXN(estado.perDay)} al día (quedan ${dias}).`)
     } else {
       lineas.push('', '🟢 *Te alcanza con lo que tienes.*')
     }
@@ -123,7 +147,7 @@ function formatearResumen({ hoy, gastos, estado }) {
   return lineas.join('\n')
 }
 
-async function armarResumen(hoy = fechaMexico()) {
+async function armarResumen({ dia: hoy, esAyer } = diaDelResumen()) {
   const [gastos, estado] = await Promise.all([
     prisma.transaccion.findMany({
       where: { tipo: 'Gasto', fecha: dbDate(hoy) },
@@ -132,27 +156,28 @@ async function armarResumen(hoy = fechaMexico()) {
     }),
     executeTool('get_money_status', {}),
   ])
-  return { texto: formatearResumen({ hoy, gastos, estado }), gastos: gastos.length }
+  return { texto: formatearResumen({ hoy, esAyer, gastos, estado }), gastos: gastos.length }
 }
 
 /**
  * Arma y manda el resumen. `dry` solo lo arma. `forzar` lo manda aunque ya
  * se haya mandado hoy.
  */
-async function enviar({ dry = false, forzar = false } = {}) {
-  const hoy = fechaMexico()
+async function enviar({ dry = false, forzar = false, ahora = new Date() } = {}) {
+  const resumen = diaDelResumen(ahora)
+  const hoy = resumen.dia
   if (!dry && !forzar && enviadoEl === hoy) return { ok: true, yaEnviado: true, hoy }
   const chat = chatDestino()
   if (!dry && !chat) return { ok: false, error: 'No hay chat destino (RESUMEN_CHAT_ID o TELEGRAM_ALLOWED_CHAT_IDS).' }
 
-  const { texto, gastos } = await armarResumen(hoy)
+  const { texto, gastos } = await armarResumen(resumen)
   if (dry) return { ok: true, dry: true, hoy, texto }
 
   const r = await telegram.sendTelegramMessage(chat, texto)
   if (r && r.ok === false) return { ok: false, error: 'Telegram no acepto el mensaje.' }
   enviadoEl = hoy
-  console.log(`RESUMEN_DIARIO_ENVIADO: chat=${chat}; dia=${hoy}; gastos=${gastos}`)
+  console.log(`RESUMEN_DIARIO_ENVIADO: chat=${chat}; dia=${hoy}; esAyer=${resumen.esAyer}; gastos=${gastos}`)
   return { ok: true, enviado: true, hoy, gastos }
 }
 
-module.exports = { autorizado, tokenEsperado, chatDestino, formatearResumen, armarResumen, enviar, _reiniciar: () => { enviadoEl = null } }
+module.exports = { autorizado, tokenEsperado, chatDestino, diaDelResumen, formatearResumen, armarResumen, enviar, _reiniciar: () => { enviadoEl = null } }

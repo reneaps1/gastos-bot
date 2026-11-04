@@ -261,6 +261,14 @@ La logica de "que cuenta como roto" vive en `src/telegramHealth.js` (sin depende
 
 **Limitacion conocida**: cada ping despierta el servicio y Render lo mantiene arriba ~15 min, asi que con corridas cada 30 min el servicio queda despierto aproximadamente la mitad del tiempo (~360 h/mes). Sumado a los otros servicios free puede acercarse al limite de 750 h/mes del workspace. Si eso pasa, baja el cron a cada hora.
 
+### Resumen diario: GitHub atrasa los crons horas
+
+`.github/workflows/resumen-diario.yml` esta programado a las 20:00 de Mexico, pero GitHub atrasa los crons de este repo **horas**, no minutos: el watchdog "cada 30 min" corre en la practica cada 4-8 h, y el resumen de las 8 pm del 2026-11-03 llego a las 2:20 am del dia 4. Como el bot resumia "la fecha de hoy", conto el dia 4 (recien empezado) y dijo "Hoy no registraste gastos" con el gasto de Gas del dia 3 en la base.
+
+Regla: el resumen habla del dia que **acaba de terminar**, no de la fecha del reloj. Antes de mediodia de Mexico resume ayer y el texto dice "Ayer gastaste" (`diaDelResumen()` en `src/resumenDiario.js`, casos R5 en `scripts/test-resumen-diario.js`). El candado contra duplicados va por dia resumido, asi que el de las 8 pm y un reintento atrasado de madrugada no se repiten.
+
+Lo que esto no arregla es la **hora** de llegada: mientras el disparador sea el cron de GitHub, puede llegar tarde. Para que llegue a las 8 pm en punto hace falta un disparador externo confiable (por ejemplo cron-job.org con el header `X-Cron-Token`).
+
 ### Configuración crítica de Render
 
 - `main` es la rama de despliegue: `render.yaml` no declara `branch`, asi que Render usa la rama por defecto del repo con `autoDeploy: true`. Un push a `main` despliega a produccion de inmediato — no es un paso intermedio. Ver la regla de Pull Requests en "Reglas De Código".
