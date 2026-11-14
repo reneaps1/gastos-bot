@@ -169,11 +169,11 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
    - Agregar Push Notifications en Xcode Capabilities
 5. Ejecutar **Issue #33**:
    - Crear app en App Store Connect
-   - URL de privacidad: `https://gastos-dashboard.onrender.com/privacy`
+   - URL de privacidad: `https://gastos-dashboard-tfxp.onrender.com/privacy`
    - Product → Archive → Distribute App
 
 **Configuracion clave:**
-- `capacitor.config.ts` → `server.url` apunta a `https://gastos-dashboard.onrender.com`
+- `capacitor.config.ts` → `server.url` apunta a `https://gastos-dashboard-tfxp.onrender.com`
 - Para desarrollo local en Mac, cambiar a `http://localhost:3000`
 - `webDir` apunta a `public/` (los assets estaticos)
 - Scripts: `npm run cap:dev`, `cap:sync`, `cap:build`, `cap:release`
@@ -186,10 +186,12 @@ Los issues #28, #29, #32 y #34 ya estan completados en Windows. Los 3 issues res
 |----------|------------|--------|-----|
 | gastos-bot | Render Web Service (Node) | Live | gastos-bot-csca.onrender.com |
 | milo-telegram-bot | Render Web Service (Node) | Live | milo-telegram-bot.onrender.com |
-| gastos-dashboard | Render Web Service (Node) | Live | gastos-dashboard.onrender.com |
+| gastos-dashboard | Render Web Service (Node) | Live | gastos-dashboard-tfxp.onrender.com |
 | gastos-db | Render PostgreSQL (Free) | Live | interno: dpg-d8nburernols73dj06j0-a |
 
 > `gastos-bot` vive en **`gastos-bot-csca.onrender.com`**, con sufijo. `gastos-bot.onrender.com` a secas **no es nuestro**: responde un 404 de Flask/Werkzeug (Express contesta `Cannot GET /ruta`). Los subdominios de `onrender.com` son globales y unicos, asi que el nombre limpio lo tenia alguien mas y Render nos asigno otro. Si alguna vez dudas de la URL de un servicio, sale en su log de arranque (`Available at your primary URL ...`) o de `getWebhookInfo`, que refleja lo que el bot registro desde `RENDER_EXTERNAL_URL`.
+
+> Lo mismo con el dashboard: vive en **`gastos-dashboard-tfxp.onrender.com`**. `gastos-dashboard.onrender.com` a secas **no es nuestro** y no contesta. Hasta el 2026-11-14 el repo apuntaba ahi en `capacitor.config.ts` (la app iOS nunca habria cargado), la pagina de privacidad, `render.yaml` y esta documentacion; abrirlo desde el celular da "This page couldn't load". Ademas, en el plan free el dashboard se duerme y al despertar tarda mas de un minuto (su `npm start` corre `prisma generate` y tres pasos de migracion antes de Next): si la pagina no carga, dale Reload despues de un minuto.
 
 ### Dos servicios, un solo webhook de Telegram
 
@@ -378,7 +380,7 @@ Reglas que no se pueden relajar:
 
 **Alcance de lo que el bot escribe**: solo `transaccion.presupuestoId`, el mismo alcance que el `PUT /api/transacciones/[id]` del dashboard. No mueve montos ni escribe en `presupuesto_cambios`.
 
-Los **traspasos** entre lineas (cubrir un excedente moviendo `montoRevisado`) NO estan implementados en el bot y no deben estarlo: esa operacion valida que la linea donante no quede por debajo de lo ya gastado y escribe su bitacora en la misma transaccion de base de datos. Cuando un gasto rebasa su linea, el bot avisa y ofrece un boton `url` al dashboard (`DASHBOARD_URL`, default `https://gastos-dashboard.onrender.com`), que es donde vive `POST /api/presupuestos/[id]/transferir`. Dos implementaciones de una operacion financiera auditada es como terminan desincronizandose.
+Los **traspasos** entre lineas (cubrir un excedente moviendo `montoRevisado`) NO estan implementados en el bot y no deben estarlo: esa operacion valida que la linea donante no quede por debajo de lo ya gastado y escribe su bitacora en la misma transaccion de base de datos. Cuando un gasto rebasa su linea, el bot avisa y ofrece un boton `url` al dashboard (`DASHBOARD_URL`, default `https://gastos-dashboard-tfxp.onrender.com`), que es donde vive `POST /api/presupuestos/[id]/transferir`. Dos implementaciones de una operacion financiera auditada es como terminan desincronizandose.
 
 El canal de WhatsApp **no cambia**: ahi la regla sigue siendo que el bot nunca pregunta ni fija `presupuestoId` (ver `scripts/test-bot-flow.js`). Que esas 18 pruebas sigan verdes es la señal de que no se filtro comportamiento de un canal al otro.
 

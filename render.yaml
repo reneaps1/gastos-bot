@@ -35,7 +35,7 @@ services:
       - key: TELEGRAM_ALLOWED_CHAT_IDS
         sync: false
       - key: DASHBOARD_URL
-        value: https://gastos-dashboard.onrender.com
+        value: https://gastos-dashboard-tfxp.onrender.com
     healthCheckPath: /health
     autoDeploy: true
 

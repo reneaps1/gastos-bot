@@ -104,7 +104,7 @@ export default function PrivacyPage() {
           </p>
           <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed mt-2">
             <strong>Correo:</strong> rene@ejemplo.com<br />
-            <strong>App:</strong> https://gastos-dashboard.onrender.com
+            <strong>App:</strong> https://gastos-dashboard-tfxp.onrender.com
           </p>
         </div>
 

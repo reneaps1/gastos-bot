@@ -31,7 +31,7 @@ El resto son sobras normales de una migración (scripts de inspección de Excel 
 - No existe `middleware.ts`, ni ninguna verificación de sesión/JWT/cookie en `dashboard/src/app/api/**`, ni página de login.
 - `DEVELOPMENT_POLICY.md` ya listaba esto como riesgo conocido ("Falta de autenticación para app web") desde antes de construir el dashboard — sigue sin resolverse hoy, con el sistema ya en producción y con datos financieros reales.
 - **La variable `ADMIN_PASSWORD` existe en `.env.example`, en `dashboard/.env.local` y en `render.yaml` (servicio `gastos-bot`), pero no aparece referenciada en ningún archivo `.js`/`.ts` del repo.** Es una intención de auth que quedó a medio camino — probablemente para proteger el bot o el dashboard con una contraseña simple, y nunca se conectó a nada.
-- Impacto: cualquiera con la URL de `gastos-dashboard.onrender.com` puede ver saldos, editar transacciones, borrar deudas, etc.
+- Impacto: cualquiera con la URL de `gastos-dashboard-tfxp.onrender.com` puede ver saldos, editar transacciones, borrar deudas, etc.
 
 **Sugerencia:** decidir el nivel de protección real que se necesita (¿solo tú y Mariana? ¿basta con una contraseña compartida?) y luego:
 - Opción mínima: usar `ADMIN_PASSWORD` de verdad — un `middleware.ts` en el dashboard que pida una cookie/basic-auth simple.
