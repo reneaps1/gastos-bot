@@ -87,7 +87,9 @@ const { detectReassign } = require('./reassignIntent')
 
 // A donde mandar a la gente cuando hay que cubrir un excedido: el traspaso entre
 // lineas es una operacion auditada que vive en el dashboard, no en el bot.
-const DASHBOARD_URL = (process.env.DASHBOARD_URL || 'https://gastos-dashboard.onrender.com').replace(/\/$/, '')
+// El dashboard real es gastos-dashboard-tfxp.onrender.com: el nombre sin
+// sufijo lo tenia alguien mas en Render (igual que gastos-bot).
+const DASHBOARD_URL = (process.env.DASHBOARD_URL || 'https://gastos-dashboard-tfxp.onrender.com').replace(/\/$/, '')
 
 const app = express()
 app.use(express.json())

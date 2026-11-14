@@ -443,7 +443,7 @@ El bot se autentica contra la API del dashboard con `Authorization: Bearer <MILO
 - Sin la variable en el dashboard, el header no abre nada. Sin la variable en el bot, la propuesta se hace pero al Confirmar dice "Falta MILO_SERVICE_TOKEN" y queda `fallida` (reintentable cuando se configure).
 - Solo abre `/api/*`, nunca paginas, y no emite cookie. No sirve para cambiar la contrasena.
 - El actor queda como `milo:<nombre de quien toco Confirmar>` y el id de la persona viaja en `x-milo-user-id`.
-- `DASHBOARD_URL` del bot tiene que apuntar al dashboard real (default `https://gastos-dashboard.onrender.com`).
+- `DASHBOARD_URL` del bot es **obligatoria** para las acciones y tiene que ser el dashboard real: **`https://gastos-dashboard-tfxp.onrender.com`**. `gastos-dashboard.onrender.com` (sin sufijo) no es nuestro, igual que pasa con `gastos-bot`. `src/dashboardApi.js` no tiene default a proposito: sin la variable (o sin https) no manda el token y la accion queda `fallida` con el motivo. Configurada el 2026-11-13 en `gastos-bot` y `milo-telegram-bot`.
 
 #### audit_log ya se escribe
 
