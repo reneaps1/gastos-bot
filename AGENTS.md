@@ -133,6 +133,8 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 | Bot centrado en la linea: la categoria sigue a la linea sin preguntar; entrenamiento solo de linea | cerrado (#130) | `assignLine` en `src/budgetActions.js`, `src/entrenamiento.js`, `src/sugerenciaLinea.js` |
 | Entrenamiento "Yo te escribo palabras" (menu de estilos, tabla `clasificador_ejemplos`) | cerrado (#131, #132, #133) | `src/entrenamientoPalabras.js`, migracion `20261102120000_clasificador_ejemplos` |
 | Con sugerida, el gasto se manda directo a la linea (boton para cambiarla) | en revision | `registrarGastoTelegram` en `src/index.js` |
+| Milo agente con acciones confirmadas: el agente propone cambios (`proponer_*`) y el boton Confirmar los aplica via la API del dashboard. PR 1: movimientos (registrar, editar, borrar) | en revision | `src/miloAcciones.js`, `src/dashboardApi.js`, migracion `20261113120000_milo_acciones` |
+| Agente con acciones: presupuesto (incl. traspasos), deudas y creditos, liquidez y configuracion | pendiente (PR 2-4) | mismo patron: un tipo nuevo en `TIPOS` de `src/miloAcciones.js` + su `proponer_*` |
 | Fase C (opcional): embeddings para sinonimos | pendiente | |
 
 ### Fase 9 — Issues
@@ -363,6 +365,8 @@ Piezas:
 | `pk:<tx>:<linea>` | confirmar el cambio de categoria (solo mensajes viejos: desde el 2026-11-02 la categoria sigue a la linea sin preguntar) |
 | `pm:<tx>:<linea>` | mantener mi categoria (solo mensajes viejos) |
 | `pd:<tx>:<cat>` | crear linea; `0` = elegir categoria, id real = crearla |
+| `ax:<accion>` | confirmar una propuesta del agente (fila de `milo_acciones`, ver "Milo puede actuar") |
+| `ac:<accion>` | cancelar una propuesta del agente |
 
 Reglas que no se pueden relajar:
 
@@ -374,7 +378,7 @@ Reglas que no se pueden relajar:
 
 **Alcance de lo que el bot escribe**: solo `transaccion.presupuestoId`, el mismo alcance que el `PUT /api/transacciones/[id]` del dashboard. No mueve montos ni escribe en `presupuesto_cambios`.
 
-Los **traspasos** entre lineas (cubrir un excedente moviendo `montoRevisado`) NO estan en el bot y no deben estarlo: esa operacion valida que la linea donante no quede por debajo de lo ya gastado y escribe su bitacora en la misma transaccion de base de datos. Cuando un gasto rebasa su linea, el bot avisa y ofrece un boton `url` al dashboard (`DASHBOARD_URL`, default `https://gastos-dashboard.onrender.com`), que es donde vive `POST /api/presupuestos/[id]/transferir`. Dos implementaciones de una operacion financiera auditada es como terminan desincronizandose.
+Los **traspasos** entre lineas (cubrir un excedente moviendo `montoRevisado`) NO estan implementados en el bot y no deben estarlo: esa operacion valida que la linea donante no quede por debajo de lo ya gastado y escribe su bitacora en la misma transaccion de base de datos. Cuando un gasto rebasa su linea, el bot avisa y ofrece un boton `url` al dashboard (`DASHBOARD_URL`, default `https://gastos-dashboard.onrender.com`), que es donde vive `POST /api/presupuestos/[id]/transferir`. Dos implementaciones de una operacion financiera auditada es como terminan desincronizandose.
 
 El canal de WhatsApp **no cambia**: ahi la regla sigue siendo que el bot nunca pregunta ni fija `presupuestoId` (ver `scripts/test-bot-flow.js`). Que esas 18 pruebas sigan verdes es la señal de que no se filtro comportamiento de un canal al otro.
 
@@ -396,9 +400,54 @@ Como se resuelve la frase:
 | Varios movimientos | Botones `ps:<txId>` para elegir cual, y luego los de linea |
 | Ninguno | Lo dice, sin proponer nada |
 
-**La regla que no se puede relajar**: la IA propone, nunca escribe. Las 14 herramientas del agente (`getToolDefinitions()` en `src/miloTools.js`) siguen siendo de solo lectura, y este flujo tampoco escribe — solo arma botones. Hay una prueba dedicada a eso (`escrituras.length` no cambia hasta que se toca el boton); si algun dia falla, es que se filtro una escritura al camino de la IA.
+**La regla que no se puede relajar**: la IA propone, nunca escribe. Este flujo no escribe — solo arma botones. Hay una prueba dedicada a eso (`escrituras.length` no cambia hasta que se toca el boton); si algun dia falla, es que se filtro una escritura al camino de la IA.
 
-Fuera de alcance por decision: cambiar monto o categoria, borrar movimientos, y varias operaciones en un mismo mensaje.
+Cambiar monto, fecha o categoria, borrar movimientos y registrar con otras palabras ya no van por aqui: los propone el agente con un boton Confirmar (siguiente seccion).
+
+### Milo puede actuar: el agente propone, el boton Confirmar aplica (2026-11-13)
+
+Decision del usuario: Milo debe poder hacer **todo** desde Telegram, y **cada cambio se aplica solo con el toque de "Confirmar"**. Reemplaza "la IA nunca escribe nada" por una regla mas precisa:
+
+> **La IA nunca escribe datos financieros.** Lo unico que escribe el camino de la IA es una fila `pendiente` en `milo_acciones`. El cambio lo aplica el toque humano, y lo aplica la implementacion que ya existe (la API del dashboard), nunca una copia nueva.
+
+Flujo:
+
+1. "cambia el monto del super a 350" llega al agente (`clasificarMensaje` la marca `orden-de-cambio`; sin eso el numero la mandaba a registrar un gasto de $350, o a "mover a la linea 350").
+2. El agente busca el movimiento (`search_transactions`) y llama una herramienta `proponer_*` (`WRITE_TOOL_DEFINITIONS` en `src/miloTools.js`).
+3. `proponer()` en `src/miloAcciones.js` valida contra la base, resuelve nombres a ids y guarda la fila con el **resumen exacto** ("Monto: $85.00 -> $90.00") y la huella del registro. No toca ningun dato financiero.
+4. `index.js` manda cada propuesta en su propio mensaje con `ax:<id>` (Confirmar) y `ac:<id>` (Cancelar).
+5. `confirmar()` reclama la fila con un `UPDATE ... WHERE estado IN ('pendiente','fallida')` condicional, revisa que el movimiento no haya cambiado desde la propuesta y ejecuta con la API del dashboard (`src/dashboardApi.js`).
+
+| Herramienta | Tipo de accion | Se ejecuta con |
+|---|---|---|
+| `proponer_registrar_movimiento` | `transaccion.registrar` | `POST /api/transacciones` |
+| `proponer_editar_movimiento` | `transaccion.editar` | `PUT /api/transacciones/[id]` (solo los campos que cambian) |
+| `proponer_borrar_movimiento` | `transaccion.borrar` | `DELETE /api/transacciones/[id]` |
+
+Presupuesto (incluidos los traspasos), deudas y creditos, liquidez y configuracion siguen el mismo patron en los PR 2-4: un tipo en `TIPOS` de `src/miloAcciones.js` que se ejecuta con la ruta del dashboard que ya existe. Asi el traspaso sigue teniendo una sola implementacion (`POST /api/presupuestos/[id]/transferir`) aunque se pida desde Telegram.
+
+Reglas que no se pueden relajar:
+
+- **Solo Telegram.** Las `proponer_*` existen solo cuando `financeAgent.answer` recibe `acciones` (lo pasa el handler de Telegram). WhatsApp llama al mismo agente sin `acciones`: ni las ve ni las puede ejecutar (`executeTool` las rechaza). El caso "Acciones" de `scripts/test-agente.js` lo fija.
+- **Se ejecuta lo que se vio.** El boton lleva solo el id; el payload y el resumen salen de la fila, no de lo que la IA diga despues.
+- **Un toque, una ejecucion.** El segundo toque responde "ya se habia aplicado". Si el cambio se aplico pero no se pudo marcar la fila, se queda en `ejecutando` (no reclamable) en vez de `fallida`, para que un reintento no duplique un registro.
+- **Si el registro cambio desde la propuesta, no se ejecuta** (huella: monto, descripcion, fecha, categoria, linea, estatus).
+- **Propuestas de otro chat, vencidas (30 min) o canceladas no se ejecutan.** `callback_data` es entrada no confiable, igual que en los botones de linea.
+- **Si el dashboard falla** (dormido, rechazo), la fila queda `fallida` con el error y el mismo boton sirve para reintentar.
+- Las pruebas: casos MA1-MA7 de `scripts/test-telegram-flow.js`, "Acciones" de `scripts/test-agente.js`, ordenes de cambio de `scripts/test-milo-preguntas.js` y `scripts/test-service-auth.mjs`.
+
+#### MILO_SERVICE_TOKEN
+
+El bot se autentica contra la API del dashboard con `Authorization: Bearer <MILO_SERVICE_TOKEN>` (`dashboard/src/lib/service-auth.ts`). **Va con el mismo valor en tres servicios**: `gastos-bot`, `milo-telegram-bot` y `gastos-dashboard`. `openssl rand -hex 32` sirve.
+
+- Sin la variable en el dashboard, el header no abre nada. Sin la variable en el bot, la propuesta se hace pero al Confirmar dice "Falta MILO_SERVICE_TOKEN" y queda `fallida` (reintentable cuando se configure).
+- Solo abre `/api/*`, nunca paginas, y no emite cookie. No sirve para cambiar la contrasena.
+- El actor queda como `milo:<nombre de quien toco Confirmar>` y el id de la persona viaja en `x-milo-user-id`.
+- `DASHBOARD_URL` del bot tiene que apuntar al dashboard real (default `https://gastos-dashboard.onrender.com`).
+
+#### audit_log ya se escribe
+
+Hasta este cambio la tabla `audit_log` existia y **nadie la escribia**. Ahora `POST`, `PUT` y `DELETE` de `/api/transacciones` dejan una fila por campo cambiado (`dashboard/src/lib/audit-log.ts`), en la misma transaccion de base que el cambio: `source = 'dashboard'` desde la web y `'telegram-agente'` desde el bot. Un DELETE guarda todos los campos con `valorNuevo = null`, asi que un movimiento borrado se puede reconstruir.
 
 ### TELEGRAM_WEBHOOK_SECRET
 
@@ -438,6 +487,7 @@ Eso ya no puede pasar: `evaluate()` en `src/telegramHealth.js` anula la reparaci
 | Configurar tokens WhatsApp en gastos-bot | Alta | `META_VERIFY_TOKEN`, `META_ACCESS_TOKEN`, `META_PHONE_NUMBER_ID` en Render Environment. `META_VERIFY_TOKEN` ya esta puesto (el challenge responde), pero los otros dos no se pueden verificar desde fuera: si faltan, el gasto se guarda y no hay confirmacion. |
 | Migrar datos históricos a producción | Media | 239 transacciones + presupuestos + liquidez del Excel |
 | Rotar contraseña de gastos-db | Media | Credencial expuesta en chat — gastos-db → Settings → Reset Password. Al rotarla, actualiza el `DATABASE_URL` de los TRES servicios en el mismo movimiento: si no, el bot se queda mudo sin avisar. |
+| Configurar `MILO_SERVICE_TOKEN` | Alta (al desplegar el agente con acciones) | El mismo valor en `gastos-bot`, `milo-telegram-bot` y `gastos-dashboard`. Sin el, Milo propone los cambios pero el boton Confirmar contesta "Falta MILO_SERVICE_TOKEN". Ver "Milo puede actuar". |
 | Agregar `TELEGRAM_WEBHOOK_SECRET` a los secrets de Actions | Media | Hoy esta vacio. El watchdog repara el webhook con `setWebhook`, y un `setWebhook` sin `secret_token` BORRA el secreto guardado en Telegram: el servicio seguiria exigiendolo y contestaria 403 a todo. |
 
 ### El bot no puede quedarse mudo otra vez (regla del 2026-10-26)

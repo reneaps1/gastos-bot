@@ -5,7 +5,8 @@ import { getSession, hashPassword, verifyPassword } from '@/lib/auth'
 export async function POST(request: Request) {
   try {
     const session = await getSession()
-    if (!session) {
+    // El token de servicio del bot nunca puede cambiar la contrasena.
+    if (!session || session.servicio) {
       return NextResponse.json({ error: 'No autenticado' }, { status: 401 })
     }
 

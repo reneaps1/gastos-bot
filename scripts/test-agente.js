@@ -20,6 +20,8 @@
 //   5. Memoria por chat (6 vueltas, 30 min): "¿y la pasada?" sabe de que se
 //      hablaba, y un chat no ve la conversacion de otro.
 //   6. El prompt trae la fecha de hoy, la quincena y el glosario del dashboard.
+//   7. Las proponer_* solo existen con `acciones` (Telegram) y NUNCA escriben
+//      datos financieros: solo dejan una fila pendiente en milo_acciones.
 
 process.env.TZ = 'America/Mexico_City'
 process.env.DATABASE_URL = 'postgresql://x:x@localhost:0/x'
@@ -92,7 +94,20 @@ function ordenar(lista, orderBy) {
   })
 }
 
+// Cada fila que el agente deja en milo_acciones, y cada escritura financiera
+// (que tiene que ser CERO en el camino de la IA).
+const accionesCreadas = []
+const escriturasFinancieras = []
+const prohibido = nombre => async () => { escriturasFinancieras.push(nombre); throw new Error(`escritura prohibida: ${nombre}`) }
+
 const prismaDoble = {
+  miloAccion: {
+    create: async ({ data }) => {
+      const row = { id: accionesCreadas.length + 1, estado: 'pendiente', ...data }
+      accionesCreadas.push(row)
+      return row
+    },
+  },
   quincena: {
     findFirst: async ({ where } = {}) => (cumpleFechas(QUINCENA, where) ? QUINCENA : null),
     findUnique: async () => QUINCENA,
@@ -102,6 +117,13 @@ const prismaDoble = {
     findMany: async () => CATEGORIAS.map(c => ({ id: c.id, nombre: c.nombre })),
   },
   transaccion: {
+    findUnique: async ({ where }) => {
+      const tx = TXS.find(t => t.id === where.id)
+      return tx ? conRelaciones(tx) : null
+    },
+    create: prohibido('transaccion.create'),
+    update: prohibido('transaccion.update'),
+    delete: prohibido('transaccion.delete'),
     findMany: async ({ orderBy, take } = {}) =>
       ordenar(TXS, orderBy).slice(0, take ?? TXS.length).map(conRelaciones),
     aggregate: async () => ({
@@ -254,7 +276,7 @@ async function main() {
     const viejo = Date.now() - _interno.MEMORIA_TTL_MS - 1000
     _interno.guardarTurno('chat-4', 'vieja', 'respuesta vieja', viejo)
     check('a los 30 min se olvida', _interno.recordar('chat-4').length === 0, _interno.recordar('chat-4').length)
-    check('MAX_STEPS es 6', _interno.MAX_STEPS === 6, _interno.MAX_STEPS)
+    check('MAX_STEPS es 8', _interno.MAX_STEPS === 8, _interno.MAX_STEPS)
   }
 
   console.log('\n=== I: el prompt sabe que dia es y en que quincena va ===')
@@ -428,6 +450,65 @@ async function main() {
     check('trae el ejemplo de lista', /• Renta — \$10,500\.00 \(hoy\)\n\s*• Hosting/.test(prompt))
     const limpio = _interno.limpiarRespuesta('Te faltan $8,163.86.\n- Renta — $10,500.00 (hoy)\n* **Hosting** — $487.00 (hoy)')
     check('la limpieza deja viñetas "• " y cada una en su renglon', limpio === 'Te faltan $8,163.86.\n• Renta — $10,500.00 (hoy)\n• Hosting — $487.00 (hoy)', JSON.stringify(limpio))
+  }
+
+  console.log('\n=== Acciones: las proponer_* solo en Telegram y sin escribir ===')
+  {
+    const { getToolDefinitions } = require(path.join(SRC, 'miloTools'))
+    const { _interno } = require(path.join(SRC, 'financeAgent'))
+    const nombres = defs => defs.map(d => d.name)
+    check('sin acciones (WhatsApp) no hay proponer_*', !nombres(getToolDefinitions()).some(n => n.startsWith('proponer_')))
+    check('con acciones (Telegram) si estan', nombres(getToolDefinitions({ acciones: true })).includes('proponer_borrar_movimiento'))
+
+    const sinPermiso = await executeTool('proponer_borrar_movimiento', { id: 2 })
+    check('ejecutar una proponer_* sin acciones se rechaza', sinPermiso.ok === false && /no permitida/.test(sinPermiso.error), JSON.stringify(sinPermiso))
+    check('y no dejo propuesta', accionesCreadas.length === 0, accionesCreadas.length)
+
+    const promptLectura = _interno.buildSystemPrompt('CONTEXTO')
+    const promptAcciones = _interno.buildSystemPrompt('CONTEXTO', { acciones: true })
+    check('el prompt de WhatsApp sigue diciendo que no puede cambiar nada', /No puedes registrar, borrar ni mover nada/.test(promptLectura))
+    check('el de Telegram dice que nada cambia sin Confirmar', /Nada cambia hasta que el usuario toca "Confirmar"/.test(promptAcciones) && /NUNCA digas que algo ya quedó hecho/.test(promptAcciones))
+
+    // El agente busca, propone y contesta. Lo que sale: la respuesta y el id
+    // de la propuesta, para que index.js le ponga botones.
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async (messages) => {
+        const ultimo = messages[messages.length - 1].content
+        if (ultimo.includes('TOOL_RESULT proponer_borrar_movimiento')) {
+          return JSON.stringify({ action: 'answer', answer: 'Te dejo el borrado de la renta para confirmar.' })
+        }
+        if (ultimo.includes('TOOL_RESULT search_transactions')) {
+          return JSON.stringify({ action: 'tool', tool: 'proponer_borrar_movimiento', args: { id: 2 } })
+        }
+        return JSON.stringify({ action: 'tool', tool: 'search_transactions', args: { search: 'renta' } })
+      },
+    }
+    const r = await answer('borra la renta', { senderName: 'Rene', chatId: 'chat-acciones', acciones: { chatId: 'chat-acciones', userId: 1, solicitante: 'Rene' } })
+    check('contesta', /para confirmar/.test(r?.reply || ''), r?.reply)
+    check('devuelve el id de la propuesta', Array.isArray(r?.acciones) && r.acciones.length === 1 && r.acciones[0] === accionesCreadas[0]?.id, JSON.stringify(r?.acciones))
+    check('la propuesta es del chat y del tipo correctos', accionesCreadas[0]?.chatId === 'chat-acciones' && accionesCreadas[0]?.tipo === 'transaccion.borrar', JSON.stringify(accionesCreadas[0]))
+    check('el resumen nombra el movimiento', /Borrar #2: Renta septiembre/.test(accionesCreadas[0]?.resumen || ''), accionesCreadas[0]?.resumen)
+    check('CERO escrituras financieras en el camino de la IA', escriturasFinancieras.length === 0, JSON.stringify(escriturasFinancieras))
+
+    // Si la IA propone y luego no redacta, la propuesta igual sale con botones.
+    let paso = 0
+    impl.deepseek = {
+      isEnabled: () => true,
+      complete: async () => {
+        paso++
+        if (paso === 1) return JSON.stringify({ action: 'tool', tool: 'proponer_borrar_movimiento', args: { id: 3 } })
+        return null
+      },
+    }
+    const r2 = await answer('borra la gasolina', { senderName: 'Rene', chatId: 'chat-acciones-2', acciones: { chatId: 'chat-acciones-2' } })
+    check('sin texto de la IA, igual entrega la propuesta', r2?.provider === 'propuesta' && r2?.acciones?.length === 1, JSON.stringify(r2 && { provider: r2.provider, acciones: r2.acciones }))
+
+    // Una propuesta invalida vuelve al agente como error, sin fila.
+    const antes = accionesCreadas.length
+    const mala = await executeTool('proponer_borrar_movimiento', { id: 999 }, { acciones: { chatId: 'x' } })
+    check('id inexistente -> error para el agente', mala.ok === false && /No existe el movimiento #999/.test(mala.error), JSON.stringify(mala))
+    check('y no deja fila', accionesCreadas.length === antes)
   }
 
   console.log(`\n${pass} pasaron, ${fail} fallaron`)

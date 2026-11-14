@@ -65,6 +65,7 @@ const entrenamientoPalabras = require('./entrenamientoPalabras')
 const resumenDiario = require('./resumenDiario')
 const { lineasPara } = require('./sugerenciaLinea')
 const financeAgent = require('./financeAgent')
+const miloAcciones = require('./miloAcciones')
 const { clasificarMensaje } = require('./telegramRouting')
 const {
   TIPOS_CON_LINEA,
@@ -961,6 +962,40 @@ async function handleCategoriaCallback(callback, accion, txId, arg) {
 // `callback.data` es entrada NO CONFIABLE: viajo por el cliente del usuario y un
 // cliente modificado puede mandar cualquier par de ids. Por eso aqui solo se
 // parsea la forma, y quien valida contra la base es budgetActions.
+// ax:<id> confirma y ac:<id> cancela una propuesta del agente. Todas las
+// validaciones (mismo chat, pendiente, vigente, un solo toque) viven en
+// miloAcciones; aqui solo se edita el mensaje.
+async function handleAccionCallback(callback, accion, accionId) {
+  const resumen = await miloAcciones.resumenDe(accionId).catch(() => null)
+  const encabezado = resumen ? `${resumen}
+
+` : ''
+
+  if (accion === miloAcciones.PREFIJO_CANCELAR) {
+    const r = await miloAcciones.cancelar({ accionId, chatId: callback.chatId })
+    await telegram.editMessageText(callback.chatId, callback.messageId, `${encabezado}${r.texto}`, { plain: true })
+    return
+  }
+
+  // El dashboard puede tardar en despertar: que se vea que algo esta pasando
+  // y que el boton ya no se puede volver a tocar.
+  await telegram.editMessageText(callback.chatId, callback.messageId, `${encabezado}⏳ Aplicando…`, { plain: true })
+  const user = await resolveMiloUser(callback).catch(() => null)
+  const r = await miloAcciones.confirmar({
+    accionId,
+    chatId: callback.chatId,
+    userId: user?.id ?? null,
+    actor: user?.nombre || callback.senderName || 'telegram',
+  })
+  await telegram.editMessageText(
+    callback.chatId,
+    callback.messageId,
+    `${encabezado}${r.texto}`,
+    // Si fallo (dashboard dormido, rechazo), el mismo boton sirve para reintentar.
+    { plain: true, ...(r.reintentable ? { buttons: miloAcciones.botonesDeAccion(accionId) } : {}) },
+  )
+}
+
 async function handleBudgetCallback(callback) {
   // Acusar recibo primero: Telegram deja el boton en "cargando" ~10s si no se
   // contesta, aunque la accion ya haya corrido.
@@ -979,6 +1014,12 @@ async function handleBudgetCallback(callback) {
     }
     if (entrenamientoPalabras.ACCIONES.has(accion)) {
       await entrenamientoPalabras.handleCallback(callback)
+      return
+    }
+
+    // Confirmar / cancelar una propuesta del agente (src/miloAcciones.js).
+    if (miloAcciones.ACCIONES_CALLBACK.has(accion)) {
+      await handleAccionCallback(callback, accion, txId)
       return
     }
 
@@ -1503,7 +1544,12 @@ app.post('/telegram/webhook', async (req, res) => {
     // 3. Todo lo demas: el agente. Si falla, se dice; JAMAS se cae al parser.
     let agentResult = null
     try {
-      agentResult = await financeAgent.answer(message.text, { senderName, chatId: message.chatId })
+      agentResult = await financeAgent.answer(message.text, {
+        senderName,
+        chatId: message.chatId,
+        // Habilita las proponer_*: solo Telegram, que tiene botones.
+        acciones: { chatId: message.chatId, userId: user?.id ?? null, solicitante: senderName },
+      })
     } catch (error) {
       console.error('Telegram finance agent error:', error)
     }
@@ -1511,6 +1557,16 @@ app.post('/telegram/webhook', async (req, res) => {
     if (agentResult?.reply) {
       // Texto plano: la respuesta la redacto la IA y un "*" suelto no es formato.
       await telegram.sendTelegramMessage(message.chatId, agentResult.reply, message.messageId, { plain: true })
+      // Cada propuesta va en su propio mensaje con su resumen y sus botones:
+      // asi lo que se confirma es exactamente lo que se ve.
+      for (const accionId of agentResult.acciones || []) {
+        const resumen = await miloAcciones.resumenDe(accionId)
+        if (!resumen) continue
+        await telegram.sendTelegramMessage(message.chatId, resumen, null, {
+          plain: true,
+          buttons: miloAcciones.botonesDeAccion(accionId),
+        })
+      }
       logTelegramQA({
         // 'agente-plantilla': la IA trajo los datos pero no redacto; se
         // contesto con src/plantillasMilo.js. Cuenta como respuesta, no fallo.

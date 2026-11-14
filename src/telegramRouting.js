@@ -23,7 +23,12 @@
 //   'quiza-reasignar' -> trae un verbo de mover que detectReassign no entiende
 //                        ("pon el uber en transporte"); classify decide si es
 //                        una reasignacion y, si no, va al agente
-//   'agente'          -> financeAgent
+//   'agente'          -> financeAgent. Tambien las ORDENES DE CAMBIO ("borra
+//                        el uber de ayer", "cambia el monto del super a 350"):
+//                        el agente solo las propone con un boton Confirmar. Van
+//                        antes que el gasto porque casi siempre traen un numero
+//                        y, sin esto, "cambia el super a 350" se registraba
+//                        como un gasto nuevo de $350.
 
 const { detectReassign, VERBOS_REASIGNAR } = require('./reassignIntent')
 
@@ -93,6 +98,31 @@ const MULETILLAS_AL_INICIO = /^(?:(?:y|oye|oiga|milo|hey|bueno|entonces|ok|oki|v
 // que detectReassign no entiende, para que el clasificador pueda proponerlo.
 const VERBO_DE_MOVER = new RegExp(`\\b(?:${VERBOS_REASIGNAR})\\b.*\\b(?:a|al|en|para)\\b`)
 
+// Verbo de cambio en imperativo AL INICIO (despues de muletillas). Solo al
+// inicio: "pague 200 de la cuota de cambio" no es una orden.
+const ORDEN_DE_CAMBIO = new RegExp(
+  `^${MULETILLAS}(?:por favor[,\\s]+)?(?:borra|borrale|borralo|borrala|elimina|eliminalo|eliminala|quita|quitale|quitalo|quitala|` +
+    'cambia|cambiale|cambialo|cambiala|corrige|corrigele|corrigelo|edita|editalo|modifica|modificalo|actualiza|actualizalo|' +
+    'marca|marcalo|marcala|ponle|ponlo como|registra un|registra una|anota un|anota una)\\b',
+)
+
+function esOrdenDeCambio(texto) {
+  return ORDEN_DE_CAMBIO.test(sinAcentos(texto))
+}
+
+// "cambia el monto del super a 350" tiene la forma de una reasignacion
+// ("cambia X a Y") pero cambia un CAMPO, no la linea. Si la referencia nombra
+// un campo, o el destino es un monto, una fecha o un estatus, no es mover a una
+// linea: lo propone el agente.
+const CAMPO_EN_REFERENCIA = /^(?:el |la |los |las )?(?:monto|cantidad|precio|importe|fecha|dia|descripcion|concepto|nombre|estatus|status|forma de pago|metodo de pago|metodo)\b/
+const DESTINO_NO_ES_LINEA = /^(?:\$?\s?\d|hoy\b|ayer\b|antier\b|pagad|pendiente)/
+
+function esCambioDeCampo(reasignacion) {
+  if (!reasignacion) return false
+  return CAMPO_EN_REFERENCIA.test(sinAcentos(reasignacion.referencia)) ||
+    DESTINO_NO_ES_LINEA.test(sinAcentos(reasignacion.destino))
+}
+
 function esPregunta(texto) {
   const crudo = String(texto || '')
   if (/[¿?]/.test(crudo)) return true
@@ -116,7 +146,9 @@ function clasificarMensaje(texto) {
   if (!n) return { ruta: 'agente', motivo: 'vacio' }
   // "mandalo a X" va primero, como en main: habla de un gasto que ya existe,
   // aunque empiece con monto ("30 suerox mandalo a diversion").
-  if (detectReassign(texto)) return { ruta: 'reasignar', motivo: 'reasignar' }
+  const reasignacion = detectReassign(texto)
+  if (reasignacion && !esCambioDeCampo(reasignacion)) return { ruta: 'reasignar', motivo: 'reasignar' }
+  if (reasignacion || esOrdenDeCambio(texto)) return { ruta: 'agente', motivo: 'orden-de-cambio' }
   // La pregunta gana SIEMPRE, aunque traiga un monto: "5000 me alcanza?" no
   // es un gasto. Si trae un verbo de mover ("puedes mandar el gasto de suerox
   // a diversion?"), primero lo ve el clasificador.
@@ -131,4 +163,4 @@ function clasificarMensaje(texto) {
   return { ruta: 'agente', motivo: 'texto-libre' }
 }
 
-module.exports = { clasificarMensaje, esPregunta, esGastoClaro, sinAcentos }
+module.exports = { clasificarMensaje, esPregunta, esGastoClaro, esOrdenDeCambio, sinAcentos }

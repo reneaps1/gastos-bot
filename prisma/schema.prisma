@@ -559,6 +559,28 @@ model ClasificadorEjemplo {
   @@map("clasificador_ejemplos")
 }
 
+// Acciones que el agente de Milo propone en Telegram; solo se ejecutan con el
+// toque de "Confirmar" (src/miloAcciones.js). Ver la migracion
+// 20261113120000_milo_acciones.
+model MiloAccion {
+  id          Int       @id @default(autoincrement())
+  chatId      String    @map("chat_id") @db.VarChar(40)
+  userId      Int?      @map("user_id")
+  solicitante String?   @db.VarChar(60)
+  tipo        String    @db.VarChar(40)
+  payload     Json
+  resumen     String
+  // 'pendiente' | 'ejecutando' | 'ejecutada' | 'fallida' | 'cancelada' | 'expirada'
+  estado      String    @default("pendiente") @db.VarChar(15)
+  resultado   Json?
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz()
+  expiraEn    DateTime  @map("expira_en") @db.Timestamptz()
+  ejecutadaEn DateTime? @map("ejecutada_en") @db.Timestamptz()
+
+  @@index([chatId, estado], name: "idx_milo_acciones_chat_estado")
+  @@map("milo_acciones")
+}
+
 model LiquidezSnapshot {
   id            Int      @id @default(autoincrement())
   fechaCorte    DateTime @map("fecha_corte") @db.Timestamptz()

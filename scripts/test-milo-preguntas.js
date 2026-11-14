@@ -320,8 +320,21 @@ const REASIGNACIONES = [
   '200 de uber pasalo a transporte', 'gaste 350 en gasolina, ponlo en transporte',
 ]
 
+// Ordenes de cambio: el agente solo las PROPONE con un boton Confirmar. Casi
+// todas traen un numero, y sin la ruta propia se registraban como gasto nuevo
+// ("cambia el super a 350" -> gasto de $350) o se leian como mover a una linea
+// llamada "350".
+const ORDENES_DE_CAMBIO = [
+  'cambia el monto del super a 350', 'cambia la fecha del uber a ayer', 'borra el uber de ayer',
+  'oye milo marca la renta como pagada', 'registra un ingreso de 5000 de nomina', 'corrige el gasto de 200 a 250',
+  'elimina el gasto de 85 del uber', 'quita la linea al gasto de la farmacia',
+]
+
 async function main() {
   console.log('\n[1] Ruteo de frases reales (sin red)')
+  for (const o of ORDENES_DE_CAMBIO) check(`orden de cambio -> agente: "${o}"`, clasificarMensaje(o).ruta === 'agente', JSON.stringify(clasificarMensaje(o)))
+  check('"cambia el uber a transporte" sigue siendo reasignar', clasificarMensaje('cambia el uber a transporte').ruta === 'reasignar', JSON.stringify(clasificarMensaje('cambia el uber a transporte')))
+  check('"pague 200 de la cuota de cambio" sigue siendo gasto', clasificarMensaje('pague 200 de la cuota de cambio').ruta === 'gasto', JSON.stringify(clasificarMensaje('pague 200 de la cuota de cambio')))
   for (const p of PREGUNTAS) check(`pregunta -> agente: "${p}"`, clasificarMensaje(p).ruta === 'agente', JSON.stringify(clasificarMensaje(p)))
   for (const p of PREGUNTAS_CON_MONTO) check(`pregunta con monto -> agente: "${p}"`, clasificarMensaje(p).ruta === 'agente', JSON.stringify(clasificarMensaje(p)))
   for (const g of GASTOS) check(`gasto -> parser: "${g.texto}"`, clasificarMensaje(g.texto).ruta === 'gasto', JSON.stringify(clasificarMensaje(g.texto)))
