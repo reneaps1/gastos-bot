@@ -23,6 +23,7 @@ process.env.TELEGRAM_ALLOWED_CHAT_IDS = '-1001111111111'
 // Sin DEEPSEEK_API_KEY ni GEMINI_API_KEY: aiRouter queda deshabilitado y el
 // mensaje lo resuelve el parser local, sin salir a la red.
 delete process.env.DEEPSEEK_API_KEY
+delete process.env.ANTHROPIC_API_KEY
 delete process.env.GEMINI_API_KEY
 
 const path = require('path')

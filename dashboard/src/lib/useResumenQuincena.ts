@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { cuentaParaAgregados, quincenasPendientesDeCierre, type GrupoCierre } from '@/lib/cierre-quincena'
 import { normalizeMontos, sumLiquidez } from '@/lib/liquidez'
+import { useAlCambiarDatosMilo } from '@/lib/milo-eventos'
 import {
   calcularCuadre,
   calcularFaltaPorPagar,
@@ -189,6 +190,8 @@ export function useResumenQuincena(quincenaId: string, today: string) {
   }, [listo, version, today])
 
   const recargar = useCallback(() => setVersion(v => v + 1), [])
+  // Una accion confirmada en el chat de Milo cambia estos numeros.
+  useAlCambiarDatosMilo(recargar)
 
   return {
     cargando: !listo,

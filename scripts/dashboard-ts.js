@@ -55,7 +55,7 @@ const STUBS = {
   },
   // Para cargar utils.ts, useResumenQuincena.ts y CuadraTuDinero.tsx sin las
   // node_modules del dashboard (el CI solo instala las de la raiz).
-  react: { useState: v => [v, () => {}], useEffect: () => {}, useCallback: f => f, useMemo: f => f() },
+  react: { useState: v => [v, () => {}], useEffect: () => {}, useCallback: f => f, useMemo: f => f(), useRef: v => ({ current: v }) },
   'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: FRAGMENT },
   'next/link': { __esModule: true, default: props => ({ type: 'a', props }) },
   'lucide-react': new Proxy({}, { get: () => componenteVacio }),

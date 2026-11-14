@@ -19,6 +19,7 @@
 //     registrar la pregunta como gasto.
 
 const deepseek = require('./deepseek')
+const claude = require('./claude')
 const { executeTool, getToolDefinitions, esHerramientaDePropuesta } = require('./miloTools')
 const plantillas = require('./plantillasMilo')
 const { fechaMexico, ZONA_MEXICO } = require('./financeUtils')
@@ -73,17 +74,30 @@ function olvidar(chatId) {
 
 // ---- Proveedores ----------------------------------------------------------------
 
-// Un solo modelo: DeepSeek (decision del dueño, 2026-11-04; Gemini se retiro
-// porque Google dio de baja el modelo y fallaba con 404). Devuelve una funcion
-// que regresa { content, finishReason }; si el modulo solo trae complete() (un
-// doble de prueba viejo), se envuelve.
-function proveedor() {
+// Claude Sonnet 5.5 primero y DeepSeek de respaldo (decision del dueño,
+// 2026-11-13; antes, desde el 2026-11-04, solo DeepSeek, porque Gemini se
+// retiro cuando Google dio de baja su modelo). Cada proveedor es una funcion
+// que regresa { content, finishReason, error }; si el modulo de DeepSeek solo
+// trae complete() (un doble de prueba viejo), se envuelve.
+//
+// El respaldo existe para que Milo no se quede mudo si Anthropic falla (llave
+// invalida, limite de uso, caida). Sin ANTHROPIC_API_KEY la lista arranca en
+// DeepSeek y todo funciona como antes.
+function proveedorDeepseek() {
   if (!deepseek.isEnabled()) return null
   if (typeof deepseek.completeDetallado === 'function') return deepseek.completeDetallado
   if (typeof deepseek.complete === 'function') {
     return async (messages, opts) => ({ content: await deepseek.complete(messages, opts), finishReason: null })
   }
   return null
+}
+
+function proveedores() {
+  const lista = []
+  if (claude.isEnabled()) lista.push({ nombre: 'claude', completar: claude.completeDetallado })
+  const ds = proveedorDeepseek()
+  if (ds) lista.push({ nombre: 'deepseek', completar: ds })
+  return lista
 }
 
 // Red de seguridad: si la IA ya trajo datos pero no pudo redactar, se arma la
@@ -250,9 +264,12 @@ function conTope(promesa, ms) {
 async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS, acciones = null } = {}) {
   const limite = Date.now() + deadlineMs
   const quedaTiempo = () => limite - Date.now()
-  const completar = proveedor()
-  if (!completar) {
-    console.error('FINANCE_AGENT_SIN_PROVEEDOR: falta DEEPSEEK_API_KEY')
+  const lista = proveedores()
+  // Indice del proveedor en uso. Si uno falla con error, el resto de ESTA
+  // respuesta sigue con el siguiente: no se vuelve a pegar al que fallo.
+  let actual = 0
+  if (!lista.length) {
+    console.error('FINANCE_AGENT_SIN_PROVEEDOR: falta ANTHROPIC_API_KEY o DEEPSEEK_API_KEY')
     return null
   }
 
@@ -307,19 +324,27 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
         console.error(`FINANCE_AGENT_DEADLINE: se agotaron ${deadlineMs} ms`)
         return null
       }
-      const r = await conTope(completar(messages, { json: true, maxTokens: MAX_TOKENS }), quedaTiempo())
+      const prov = lista[actual]
+      const r = await conTope(prov.completar(messages, { json: true, maxTokens: MAX_TOKENS }), quedaTiempo())
       // null = se agoto el tope de tiempo: reintentar no cabe.
       if (r == null) return null
       const content = r.content || null
       const cortado = r.finishReason === 'length'
       if (content && !cortado) return content
+      // Un error (no un vacio) del proveedor principal: el mismo paso se pide
+      // al siguiente, sin gastar el reintento "mas corto".
+      if (r.error && actual < lista.length - 1) {
+        console.error(`FINANCE_AGENT_RESPALDO: ${prov.nombre} fallo (${r.error}); sigue ${lista[actual + 1].nombre}`)
+        actual += 1
+        continue
+      }
       if (reintentoCorto || r.error) {
-        console.error(`FINANCE_AGENT_PROVIDER_FAILED: deepseek (${r.error ? `error: ${r.error}` : cortado ? 'cortado, ya reintentado' : 'vacio, ya reintentado'})`)
+        console.error(`FINANCE_AGENT_PROVIDER_FAILED: ${prov.nombre} (${r.error ? `error: ${r.error}` : cortado ? 'cortado, ya reintentado' : 'vacio, ya reintentado'})`)
         // Un JSON cortado a veces sigue sirviendo; si no, null.
         return content
       }
       reintentoCorto = true
-      console.error(`FINANCE_AGENT_REINTENTO: deepseek ${cortado ? 'cortado por max_tokens' : 'vacio'}; se pide mas corto`)
+      console.error(`FINANCE_AGENT_REINTENTO: ${prov.nombre} ${cortado ? 'cortado por max_tokens' : 'vacio'}; se pide mas corto`)
       messages.push({ role: 'user', content: PIDE_MAS_CORTO })
     }
   }
@@ -348,7 +373,7 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
       if (!finalAnswer) return rendirse('respuesta vacia')
       console.log('FINANCE_AGENT_ANSWER:', finalAnswer.substring(0, 180))
       guardarTurno(chatId, question, finalAnswer)
-      return { reply: finalAnswer, provider: 'deepseek-agent', trace, acciones: propuestas() }
+      return { reply: finalAnswer, provider: `${lista[actual].nombre}-agent`, trace, acciones: propuestas() }
     }
 
     if (plan.action !== 'tool' || typeof plan.tool !== 'string') {

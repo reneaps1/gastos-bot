@@ -389,7 +389,7 @@ const TIPOS = {
 async function proponer(tipo, args, ctx = {}) {
   const def = TIPOS[tipo]
   if (!def) return { ok: false, error: `Acción desconocida: ${tipo}` }
-  if (ctx.chatId == null) return { ok: false, error: 'Solo puedo proponer cambios desde Telegram.' }
+  if (ctx.chatId == null) return { ok: false, error: 'Solo puedo proponer cambios desde un chat con botones (Telegram o el dashboard).' }
 
   const preparado = await def.preparar(args || {}, ctx)
   if (!preparado.ok) return { ok: false, error: preparado.error }
