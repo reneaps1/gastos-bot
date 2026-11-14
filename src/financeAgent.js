@@ -22,6 +22,7 @@ const deepseek = require('./deepseek')
 const claude = require('./claude')
 const { executeTool, getToolDefinitions, esHerramientaDePropuesta } = require('./miloTools')
 const plantillas = require('./plantillasMilo')
+const memoriaMilo = require('./memoriaMilo')
 const { fechaMexico, ZONA_MEXICO } = require('./financeUtils')
 
 // 8: un cambio necesita buscar el movimiento (o la categoria) y luego
@@ -40,37 +41,10 @@ const PIDE_MAS_CORTO = 'SYSTEM: Tu respuesta anterior llegó vacía o cortada. R
 
 // ---- Memoria de conversacion --------------------------------------------------
 //
-// Las ultimas vueltas por chat, en memoria del proceso. Es lo que hace que
-// "¿y la quincena pasada?" sepa de que se hablaba. Se pierde al reiniciar o
-// cuando Render duerme el servicio, y a proposito no toca la base: no requiere
-// migracion y no guarda conversaciones para siempre.
-const MEMORIA_TURNOS = 6
-const MEMORIA_TTL_MS = 30 * 60 * 1000
-const memoria = new Map() // chatId -> { turnos: [{ pregunta, respuesta }], actualizado }
-
-function recordar(chatId, ahora = Date.now()) {
-  if (chatId == null) return []
-  const entrada = memoria.get(String(chatId))
-  if (!entrada) return []
-  if (ahora - entrada.actualizado > MEMORIA_TTL_MS) {
-    memoria.delete(String(chatId))
-    return []
-  }
-  return entrada.turnos
-}
-
-function guardarTurno(chatId, pregunta, respuesta, ahora = Date.now()) {
-  if (chatId == null) return
-  const turnos = [...recordar(chatId, ahora), { pregunta, respuesta }].slice(-MEMORIA_TURNOS)
-  memoria.set(String(chatId), { turnos, actualizado: ahora })
-  // Limpieza perezosa: que un chat abandonado no se quede para siempre.
-  for (const [id, e] of memoria) if (ahora - e.actualizado > MEMORIA_TTL_MS) memoria.delete(id)
-}
-
-function olvidar(chatId) {
-  if (chatId == null) memoria.clear()
-  else memoria.delete(String(chatId))
-}
+// Las ultimas vueltas por chat viven en src/memoriaMilo.js: un cache en el
+// proceso respaldado por la tabla milo_conversacion, para que un reinicio o
+// que Render duerma el servicio no corte la platica.
+const { recordar, guardarTurno: guardarTurnoEnMemoria, olvidar, MEMORIA_TURNOS, MEMORIA_TTL_MS } = memoriaMilo
 
 // ---- Proveedores ----------------------------------------------------------------
 
@@ -195,7 +169,8 @@ const REGLAS_DE_CAMBIOS = `- Puedes PROPONER cambios con las herramientas propon
 - Para editar o borrar necesitas el id: primero search_transactions. Si hay más de un candidato y no es obvio cuál, NO propongas: lista los candidatos (con fecha y monto) y pregunta cuál.
 - Una propuesta por cosa. Si piden varias, propone cada una (hasta 3).
 - Si la herramienta de propuesta devuelve un error, corrige con otra herramienta o pregunta lo que falta; no lo inventes.
-- Un gasto con formato "200 super" el bot ya lo registra solo; usa proponer_registrar_movimiento solo cuando te lo pidan con otras palabras.`
+- Un gasto con formato "200 super" el bot ya lo registra solo; usa proponer_registrar_movimiento cuando te lo pidan con otras palabras, o cuando el mensaje sea claramente un gasto nuevo que no responde a tu pregunta anterior.
+- Lo ÚNICO que puedes proponer es registrar, editar o borrar movimientos. Corte de liquidez o saldos de cuentas, presupuesto, traspasos, deudas, créditos y configuración todavía NO se pueden cambiar desde aquí: dilo en una línea y manda al dashboard. No empieces a pedir saldos ni datos "cuenta por cuenta" para algo que no puedes guardar.`
 
 function buildSystemPrompt(contexto, { acciones = false } = {}) {
   const tools = getToolDefinitions({ acciones })
@@ -209,6 +184,8 @@ REGLAS:
 - Para cualquier dato financiero consulta una herramienta antes de responder. Puedes usar varias.
 - Si no dicen periodo, usa la quincena actual. "La pasada"/"la anterior" = period "anterior".
 - Si la pregunta es de seguimiento ("¿y la pasada?", "¿y en super?"), usa la conversación previa para saber de qué se habla.
+- Si tu mensaje anterior terminó con una pregunta, lee el mensaje nuevo como su respuesta, aunque sea solo un número ("0", "4690.34") o un par de palabras. No lo trates como un tema nuevo ni vuelvas a preguntar lo que ya te contestaron.
+- Solo pregunta algo si de verdad lo necesitas para contestar o proponer. No pidas datos para algo que no puedes hacer.
 ${acciones ? REGLAS_DE_CAMBIOS : REGLA_SOLO_LECTURA}
 - Si una herramienta no tiene el dato, dilo claro en una línea.
 
@@ -261,7 +238,7 @@ function conTope(promesa, ms) {
 // `acciones` ({ chatId, userId, solicitante }) solo lo pasa Telegram: habilita
 // las proponer_*. Devuelve tambien `acciones: [id...]`, las propuestas que
 // quedaron pendientes en este turno, para que index.js les ponga botones.
-async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS, acciones = null } = {}) {
+async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS, acciones = null, autor = null } = {}) {
   const limite = Date.now() + deadlineMs
   const quedaTiempo = () => limite - Date.now()
   const lista = proveedores()
@@ -273,6 +250,12 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
     return null
   }
 
+  // Quien hablo queda en cada vuelta: en un grupo, la respuesta a una pregunta
+  // de Milo solo cuenta si viene de la misma persona.
+  const guardarTurno = (id, pregunta, respuesta) => guardarTurnoEnMemoria(id, pregunta, respuesta, Date.now(), { autor })
+
+  // Si el proceso reinicio, las vueltas recientes salen de la base.
+  await memoriaMilo.cargar(chatId)
   const historial = recordar(chatId).flatMap(t => [
     { role: 'user', content: t.pregunta },
     { role: 'assistant', content: JSON.stringify({ action: 'answer', answer: t.respuesta }) },
@@ -410,5 +393,5 @@ module.exports = {
   answer,
   olvidar,
   // Para pruebas.
-  _interno: { recordar, guardarTurno, limpiarRespuesta, safeJsonParse, buildSystemPrompt, respuestaDePlantilla, MAX_STEPS, MAX_TOKENS, TOPE_MS, MEMORIA_TURNOS, MEMORIA_TTL_MS },
+  _interno: { recordar, guardarTurno: guardarTurnoEnMemoria, limpiarRespuesta, safeJsonParse, buildSystemPrompt, respuestaDePlantilla, MAX_STEPS, MAX_TOKENS, TOPE_MS, MEMORIA_TURNOS, MEMORIA_TTL_MS },
 }

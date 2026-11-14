@@ -1239,6 +1239,45 @@ async function main() {
   const forzado = await (await fetch(`${urlCron}?forzar=1`, { method: 'POST', headers: { 'X-Cron-Token': tokenCron } })).json()
   check('forzar=1 si lo manda otra vez', forzado.enviado === true && enviados.length === enviadosRD + 2, JSON.stringify(forzado))
 
+  // --- Hilo de la conversacion (src/memoriaMilo.js) ---
+  const memoriaMilo = require(path.join(SRC, 'memoriaMilo.js'))
+
+  console.log('\n=== HC1: un numero suelto despues de una pregunta de Milo es RESPUESTA, no gasto ===')
+  // El 2026-11-14 Milo pregunto "¿que saldo hay en BBVA?" y el "0" de
+  // respuesta se fue al parser. Aqui el agente no tiene IA y dice que no pudo:
+  // lo que se fija es que NO se registro y que fue al agente.
+  memoriaMilo.olvidar(null)
+  memoriaMilo.guardarTurno(CHAT_PERMITIDO, 'vamos cuenta por cuenta', 'Empecemos con BBVA: ¿qué saldo hay hoy?', Date.now(), { autor: '42' })
+  const creadasHC1 = creadas.length
+  await post(textUpdate('4690.34'))
+  check('no registro un gasto de $4,690.34', creadas.length === creadasHC1, JSON.stringify(creadas.at(-1)))
+  check('lo atendio el agente', /No pude contestar/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+  check('dejo rastro en el log', logsIncluyen('TELEGRAM_RESPUESTA_A_MILO'))
+
+  console.log('\n=== HC2: en el grupo, el gasto de OTRA persona se registra normal ===')
+  memoriaMilo.olvidar(null)
+  memoriaMilo.guardarTurno(CHAT_PERMITIDO, 'vamos cuenta por cuenta', 'Empecemos con BBVA: ¿qué saldo hay hoy?', Date.now(), { autor: '42' })
+  const creadasHC2 = creadas.length
+  await post(textUpdate('55, tortillas', CHAT_PERMITIDO, { id: 77, first_name: 'Mariana', username: 'mariana' }))
+  check('se registro', creadas.length === creadasHC2 + 1 && Number(creadas.at(-1)?.monto) === 55, JSON.stringify(creadas.at(-1)))
+
+  console.log('\n=== HC3: sin pregunta pendiente, el gasto se registra y queda en la memoria ===')
+  memoriaMilo.olvidar(null)
+  memoriaMilo.guardarTurno(CHAT_PERMITIDO, 'cuanto me queda?', 'Te sobran $1,092.12 esta quincena.', Date.now(), { autor: '42' })
+  const creadasHC3 = creadas.length
+  await post(textUpdate('80, pan'))
+  check('se registro', creadas.length === creadasHC3 + 1, creadas.length)
+  const ultimoHC3 = memoriaMilo.recordar(CHAT_PERMITIDO).at(-1)
+  check('la memoria sabe que movimiento fue ("cambia ese a 90")', ultimoHC3?.pregunta === '80, pan' && ultimoHC3.respuesta.includes(`#${creadas.at(-1)?.id}`), JSON.stringify(ultimoHC3))
+
+  console.log('\n=== HC4: una pregunta vieja ya no espera respuesta ===')
+  memoriaMilo.olvidar(null)
+  memoriaMilo.guardarTurno(CHAT_PERMITIDO, 'vamos cuenta por cuenta', '¿Qué saldo hay en BBVA?', Date.now() - memoriaMilo.ESPERA_TTL_MS - 1000, { autor: '42' })
+  const creadasHC4 = creadas.length
+  await post(textUpdate('45, refresco'))
+  check('se registro', creadas.length === creadasHC4 + 1, creadas.length)
+  memoriaMilo.olvidar(null)
+
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)
 }

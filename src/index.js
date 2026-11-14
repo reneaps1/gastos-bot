@@ -68,6 +68,15 @@ const financeAgent = require('./financeAgent')
 const miloAcciones = require('./miloAcciones')
 const agenteWeb = require('./agenteWeb')
 const { clasificarMensaje } = require('./telegramRouting')
+const memoriaMilo = require('./memoriaMilo')
+
+// Un gasto registrado tambien es parte de la platica: sin esto, "cambia ese a
+// 250" justo despues de "200 super" no sabia de que movimiento se hablaba.
+function recordarGasto(message, tx) {
+  if (!tx) return
+  const texto = `Registré el movimiento #${tx.id}: ${tx.descripcion ?? ''} — $${Number(tx.monto).toFixed(2)}.`
+  memoriaMilo.guardarTurno(message.chatId, message.text, texto, Date.now(), { autor: message.telegramUserId })
+}
 const {
   TIPOS_CON_LINEA,
   resolveBudgetLineByName,
@@ -1481,7 +1490,19 @@ app.post('/telegram/webhook', async (req, res) => {
     // Ruteo simple (ver src/telegramRouting.js). Los regex solo deciden lo
     // inequivoco; las preguntas las contesta el agente y NADA que tenga cara
     // de pregunta puede terminar registrado como gasto.
-    const { ruta } = clasificarMensaje(message.text)
+    let { ruta } = clasificarMensaje(message.text)
+
+    // Si Milo le acaba de preguntar algo a esta persona, un numero suelto es
+    // su RESPUESTA, no un gasto: "0" o "4690.34" despues de "¿que saldo hay en
+    // BBVA?" se iba al parser y la platica se cortaba (2026-11-14). El agente
+    // lee el mensaje con la conversacion a la vista; si de verdad era un gasto
+    // nuevo, lo propone con su boton Confirmar.
+    await memoriaMilo.cargar(message.chatId)
+    if ((ruta === 'gasto' || ruta === 'ambiguo') &&
+        memoriaMilo.preguntaPendiente(message.chatId, { autor: message.telegramUserId })) {
+      console.log(`TELEGRAM_RESPUESTA_A_MILO: chat=${message.chatId} ruta=${ruta} -> agente (Milo esperaba respuesta)`)
+      ruta = 'agente'
+    }
 
     // 1. "el gasto de suerox mandalo a diversion" (o "30 suerox mandalo a
     // diversion"): habla de un gasto que ya existe. Va ANTES que el gasto, como
@@ -1517,12 +1538,14 @@ app.post('/telegram/webhook', async (req, res) => {
 
       if (ruta !== 'quiza-reasignar' && aiData?.type === 'expense') {
         const tx = await registrarGastoTelegram(message, user, senderName, aiData)
+        recordarGasto(message, tx)
         logTelegramQA({ chatId: message.chatId, ruta: `${ruta}-clasificado`, inicio, pregunta: message.text, respuesta: tx ? `registrado #${tx.id}` : 'sin registrar', proveedor: aiData._provider || null })
         return
       }
 
       if (ruta === 'gasto') {
         const tx = await registrarGastoTelegram(message, user, senderName, null)
+        recordarGasto(message, tx)
         logTelegramQA({ chatId: message.chatId, ruta: 'gasto', inicio, pregunta: message.text, respuesta: tx ? `registrado #${tx.id}` : 'sin registrar', proveedor: aiData?._provider || null })
         return
       }
@@ -1550,6 +1573,9 @@ app.post('/telegram/webhook', async (req, res) => {
       agentResult = await financeAgent.answer(message.text, {
         senderName,
         chatId: message.chatId,
+        // Quien pregunta: en un grupo, solo su siguiente mensaje cuenta como
+        // respuesta a lo que Milo le pregunte.
+        autor: message.telegramUserId,
         // Habilita las proponer_*: solo Telegram, que tiene botones.
         acciones: { chatId: message.chatId, userId: user?.id ?? null, solicitante: senderName },
       })

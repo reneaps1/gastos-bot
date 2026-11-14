@@ -581,6 +581,22 @@ model MiloAccion {
   @@map("milo_acciones")
 }
 
+// Memoria de conversacion de Milo (src/memoriaMilo.js): las ultimas vueltas
+// por chat, para que un reinicio no corte la platica. Se borra a las 24 horas.
+// Ver la migracion 20261114120000_milo_conversacion.
+model MiloConversacion {
+  id        Int      @id @default(autoincrement())
+  chatId    String   @map("chat_id") @db.VarChar(40)
+  // Id de quien escribio en su canal (en Telegram, el id de usuario).
+  autor     String?  @db.VarChar(40)
+  pregunta  String
+  respuesta String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz()
+
+  @@index([chatId, createdAt], name: "idx_milo_conversacion_chat_fecha")
+  @@map("milo_conversacion")
+}
+
 model LiquidezSnapshot {
   id            Int      @id @default(autoincrement())
   fechaCorte    DateTime @map("fecha_corte") @db.Timestamptz()
