@@ -13,6 +13,8 @@
 // COLUMNAS aqui.
 
 process.env.TZ = 'America/Mexico_City'
+// Nunca a la API real de Anthropic en pruebas (src/claude.js lee esta llave).
+delete process.env.ANTHROPIC_API_KEY
 process.env.DATABASE_URL = 'postgresql://x:x@localhost:0/x'
 process.env.GOOGLE_SHEETS_ENABLED = 'false'
 process.env.SKIP_PRISMA_BOOTSTRAP = '1'
