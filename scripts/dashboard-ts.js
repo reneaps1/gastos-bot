@@ -41,6 +41,18 @@ const STUBS = {
   '@/lib/prisma': { get prisma() { return prismaActual.valor } },
   '@/lib/auth': { getSession: async () => null },
   '@/lib/presupuesto-cambios': { registrarCreacionPresupuesto: async () => {} },
+  // La bitacora de audit_log (POST/PUT/DELETE de transacciones) lee
+  // next/headers, que no existe fuera de Next ni en el CI (solo instala las
+  // node_modules de la raiz). Estas pruebas comparan lecturas, no la bitacora.
+  '@/lib/audit-log': {
+    CAMPOS_TRANSACCION: [],
+    origenDeLaPeticion: async () => ({ userId: null, source: 'prueba' }),
+    registrarAuditoria: async () => 0,
+  },
+  'next/headers': {
+    headers: async () => ({ get: () => null }),
+    cookies: async () => ({ get: () => undefined, set: () => {}, delete: () => {} }),
+  },
   // Para cargar utils.ts, useResumenQuincena.ts y CuadraTuDinero.tsx sin las
   // node_modules del dashboard (el CI solo instala las de la raiz).
   react: { useState: v => [v, () => {}], useEffect: () => {}, useCallback: f => f, useMemo: f => f() },
