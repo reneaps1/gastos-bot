@@ -18,7 +18,9 @@
 // No guarda conversaciones para siempre: al escribir se borra lo que tenga
 // mas de RETENCION_MS.
 
-const MEMORIA_TURNOS = 6
+// 12 y no 6: un corte de liquidez cuenta por cuenta son 7 u 8 vueltas, y con 6
+// Milo olvidaba los primeros saldos antes de proponer.
+const MEMORIA_TURNOS = 12
 const MEMORIA_TTL_MS = 30 * 60 * 1000
 // Cuanto tiempo una pregunta de Milo sigue "esperando respuesta".
 const ESPERA_TTL_MS = 10 * 60 * 1000

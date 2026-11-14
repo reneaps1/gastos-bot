@@ -1726,7 +1726,11 @@ app.listen(PORT, async () => {
   else console.error(`WHATSAPP_NOT_READY: ${wa.error}${wa.hint ? ` -- ${wa.hint}` : ''}`)
 
   const ai = aiRouter.status()
-  console.log(`AI: deepseek=${ai.deepseekEnabled} (unico modelo)`)
+  // El agente usa Claude si hay ANTHROPIC_API_KEY y DeepSeek de respaldo; el
+  // clasificador de mensajes es siempre DeepSeek. Sin esta linea no habia forma
+  // de saber desde el log si la llave de Claude habia quedado puesta.
+  const claudeActivo = require('./claude').isEnabled()
+  console.log(`AI: agente=${claudeActivo ? `claude (${require('./claude').CLAUDE_MODEL})${ai.deepseekEnabled ? ' con respaldo deepseek' : ''}` : ai.deepseekEnabled ? 'deepseek (sin ANTHROPIC_API_KEY)' : 'APAGADO'} clasificador=${ai.deepseekEnabled ? 'deepseek' : 'apagado'}`)
 
   if (telegram.isEnabled()) {
     // Deja claro en el arranque cual de los dos servicios (gastos-bot /

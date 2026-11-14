@@ -170,7 +170,8 @@ const REGLAS_DE_CAMBIOS = `- Puedes PROPONER cambios con las herramientas propon
 - Una propuesta por cosa. Si piden varias, propone cada una (hasta 3).
 - Si la herramienta de propuesta devuelve un error, corrige con otra herramienta o pregunta lo que falta; no lo inventes.
 - Un gasto con formato "200 super" el bot ya lo registra solo; usa proponer_registrar_movimiento cuando te lo pidan con otras palabras, o cuando el mensaje sea claramente un gasto nuevo que no responde a tu pregunta anterior.
-- Lo ÚNICO que puedes proponer es registrar, editar o borrar movimientos. Corte de liquidez o saldos de cuentas, presupuesto, traspasos, deudas, créditos y configuración todavía NO se pueden cambiar desde aquí: dilo en una línea y manda al dashboard. No empieces a pedir saldos ni datos "cuenta por cuenta" para algo que no puedes guardar.`
+- Puedes proponer cambios a MOVIMIENTOS (registrar, editar, borrar) y a CORTES DE LIQUIDEZ (nuevo, corregir, borrar). Presupuesto, traspasos, deudas, créditos, cuentas y configuración todavía NO se pueden cambiar desde aquí: dilo en una línea y manda al dashboard, sin pedir datos para algo que no puedes guardar.
+- Corte de liquidez: consulta list_accounts para saber qué cuentas hay. Si el usuario no dio los saldos, pídeselos: puede mandarlos todos en un mensaje o cuenta por cuenta, como prefiera. Junta lo que ya te dijo en la conversación (no lo vuelvas a preguntar) y, cuando tengas todas las cuentas, propone UNA sola vez con proponer_corte_liquidez. "0", "nada" o "no hay" es saldo 0. Para corregir un saldo de un corte ya guardado usa proponer_editar_corte_liquidez, no uno nuevo.`
 
 function buildSystemPrompt(contexto, { acciones = false } = {}) {
   const tools = getToolDefinitions({ acciones })

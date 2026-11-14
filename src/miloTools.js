@@ -670,6 +670,7 @@ async function getLiquidity(args = {}) {
 
   return {
     ok: true,
+    snapshotId: snapshot.id,
     period: snapshot.quincena?.codigo || null,
     cutDate,
     cutAgeDays: finanzas.diasEntre(cutDate, fechaMexico()),
@@ -683,6 +684,28 @@ async function getLiquidity(args = {}) {
     forecastExpensesAtCut: num(snapshot.gastosPronosticados),
     accounts,
     note: 'cash es el saldo real del último corte. remainingToPay es el por pagar EN VIVO; los campos *AtCut son lo que se guardó al capturar el corte. Para "cuánto me queda" usa get_money_status.',
+  }
+}
+
+// Los ultimos cortes, para elegir cual corregir o borrar.
+async function listLiquidityCuts(args = {}) {
+  const limit = Math.min(Math.max(Number.parseInt(args.limit, 10) || 5, 1), 20)
+  const cortes = await prisma.liquidezSnapshot.findMany({
+    include: { quincena: true, montos: true },
+    orderBy: [{ fechaCorte: 'desc' }, { fechaRegistro: 'desc' }, { id: 'desc' }],
+    take: limit,
+  })
+  return {
+    ok: true,
+    count: cortes.length,
+    cuts: cortes.map(c => ({
+      snapshotId: c.id,
+      cutDate: finanzas.fechaISO(c.fechaCorte),
+      period: c.quincena?.codigo || null,
+      cash: redondear(finanzas.sumLiquidez(c.montos)),
+      validated: c.validado,
+      notes: c.notas || null,
+    })),
   }
 }
 
@@ -909,8 +932,13 @@ const TOOL_DEFINITIONS = [
     args: { period: 'opcional: ' + PERIODO },
   },
   {
+    name: 'list_liquidity_cuts',
+    description: 'Los últimos cortes de liquidez (id, fecha, quincena, total, validado). Para elegir cuál corregir o borrar.',
+    args: { limit: 'opcional, default 5' },
+  },
+  {
     name: 'list_accounts',
-    description: 'Catálogo de cuentas financieras configuradas en Milo.',
+    description: 'Catálogo de cuentas financieras configuradas en Milo. Son las cuentas de un corte de liquidez.',
     args: { includeInactive: 'boolean opcional' },
   },
   {
@@ -949,6 +977,7 @@ const TOOL_HANDLERS = {
   get_budget_summary: getBudgetSummary,
   search_transactions: searchTransactions,
   get_liquidity: getLiquidity,
+  list_liquidity_cuts: listLiquidityCuts,
   list_accounts: listAccounts,
   list_categories: listCategories,
   list_debts: listDebts,
@@ -978,6 +1007,21 @@ const WRITE_TOOL_DEFINITIONS = [
     description: 'Propone BORRAR un movimiento. Necesita el id: búscalo antes con search_transactions. Si hay varios candidatos, NO adivines: lista los candidatos y pregunta cuál. No se borra hasta que el usuario toca Confirmar.',
     args: { id: 'id del movimiento, requerido' },
   },
+  {
+    name: 'proponer_corte_liquidez',
+    description: 'Propone un corte de liquidez NUEVO: el saldo de hoy de cada cuenta. Va UNA sola propuesta con TODAS las cuentas activas (list_accounts). Si faltan saldos la herramienta te dice cuáles: pregúntalos. Si el usuario dice "las demás igual que el corte pasado" manda others="previous"; si dice que las demás están en cero, others="zero". No se guarda hasta que el usuario toca Confirmar.',
+    args: { balances: 'requerido: lista [{"account":"BBVA","amount":0,"note":"opcional"}]', date: 'YYYY-MM-DD, hoy o ayer; default hoy', others: 'opcional: "previous" o "zero" para las cuentas que no vienen en balances', notes: 'opcional', validated: 'boolean opcional (default false)' },
+  },
+  {
+    name: 'proponer_editar_corte_liquidez',
+    description: 'Propone CORREGIR un corte de liquidez existente: el saldo de una o varias cuentas, la fecha, las notas o marcarlo validado. Sin id corrige el último corte. Manda solo lo que cambia. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'opcional: snapshotId (get_liquidity o list_liquidity_cuts); default el último corte', balances: 'opcional: lista [{"account":"Banamex","amount":4690.34}] solo con las cuentas que cambian', date: 'opcional', notes: 'opcional', validated: 'boolean opcional' },
+  },
+  {
+    name: 'proponer_borrar_corte_liquidez',
+    description: 'Propone BORRAR un corte de liquidez. Necesita el id (snapshotId de get_liquidity o list_liquidity_cuts). No se borra hasta que el usuario toca Confirmar.',
+    args: { id: 'snapshotId, requerido' },
+  },
 ]
 
 function herramientaDePropuesta(tipo) {
@@ -988,6 +1032,9 @@ const WRITE_TOOL_HANDLERS = {
   proponer_registrar_movimiento: herramientaDePropuesta('transaccion.registrar'),
   proponer_editar_movimiento: herramientaDePropuesta('transaccion.editar'),
   proponer_borrar_movimiento: herramientaDePropuesta('transaccion.borrar'),
+  proponer_corte_liquidez: herramientaDePropuesta('liquidez.registrar'),
+  proponer_editar_corte_liquidez: herramientaDePropuesta('liquidez.editar'),
+  proponer_borrar_corte_liquidez: herramientaDePropuesta('liquidez.borrar'),
 }
 
 // `ctx.acciones` solo lo pasa Telegram (chatId, userId, solicitante). Sin el,

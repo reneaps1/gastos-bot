@@ -158,6 +158,80 @@ async function cargarMovimiento(id) {
   })
 }
 
+// ---- Liquidez ---------------------------------------------------------------------
+
+// Un saldo puede ser 0 o negativo (a diferencia de un monto de movimiento).
+function parseSaldo(value) {
+  if (value == null || value === '') return null
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.round(value * 100) / 100 : null
+  const texto = String(value).toLowerCase().replace(/[$\s]/g, '')
+  const mil = /(?:mil|k)$/.test(texto)
+  const m = texto.replace(/,/g, '').match(/^-?\d+(?:\.\d+)?/)
+  if (!m) return null
+  const n = Number(m[0]) * (mil ? 1000 : 1)
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null
+}
+
+function aBooleano(value) {
+  if (value == null || value === '') return null
+  if (typeof value === 'boolean') return value
+  const t = normalize(String(value))
+  if (['true', 'si', 'sí', '1', 'validado'].includes(t)) return true
+  if (['false', 'no', '0'].includes(t)) return false
+  return null
+}
+
+async function cuentasActivas() {
+  return prisma.cuenta.findMany({ where: { activo: true }, orderBy: [{ orden: 'asc' }, { nombre: 'asc' }] })
+}
+
+// `balances` llega del modelo como lista [{ account, amount, note }] o como
+// objeto { "BBVA": 0, "Banamex": 4690.34 }. Devuelve un Map cuentaId -> saldo.
+async function resolverSaldos(balances, cuentas) {
+  let lista = balances
+  if (lista && !Array.isArray(lista) && typeof lista === 'object') {
+    lista = Object.entries(lista).map(([account, amount]) => ({ account, amount }))
+  }
+  if (!Array.isArray(lista) || lista.length === 0) {
+    return { ok: false, error: 'Faltan los saldos. Manda balances como lista: [{"account":"BBVA","amount":0}, ...].' }
+  }
+  const porCuenta = new Map()
+  for (const item of lista) {
+    const nombre = item?.account ?? item?.cuenta ?? item?.name
+    const r = elegirPorNombre(cuentas, nombre, 'cuenta')
+    if (!r.ok) return r
+    const monto = parseSaldo(item.amount ?? item.monto ?? item.saldo)
+    if (monto == null) return { ok: false, error: `No entendí el saldo de ${r.valor.nombre}. Pregúntalo.` }
+    if (porCuenta.has(r.valor.id)) return { ok: false, error: `La cuenta ${r.valor.nombre} viene dos veces.` }
+    const nota = item.note ?? item.nota
+    porCuenta.set(r.valor.id, { monto, nota: nota ? String(nota).trim().slice(0, 200) : null })
+  }
+  return { ok: true, porCuenta }
+}
+
+const ORDEN_DE_CORTES = [{ fechaCorte: 'desc' }, { fechaRegistro: 'desc' }, { id: 'desc' }]
+
+// Con id, ese corte; sin id, el mas reciente.
+async function cargarCorte(id) {
+  const include = { quincena: true, montos: { include: { cuenta: true } } }
+  if (id) return prisma.liquidezSnapshot.findUnique({ where: { id }, include })
+  return prisma.liquidezSnapshot.findFirst({ include, orderBy: ORDEN_DE_CORTES })
+}
+
+function totalDeCorte(corte) {
+  return (corte?.montos || []).reduce((s, m) => s + (Number(m.monto) || 0), 0)
+}
+
+function huellaCorte(corte) {
+  return {
+    fecha: dateOnly(corte.fechaCorte),
+    quincenaId: corte.quincenaId,
+    validado: Boolean(corte.validado),
+    notas: corte.notas || null,
+    montos: (corte.montos || []).map(m => [m.cuentaId, Number(m.monto)]).sort((a, b) => a[0] - b[0]),
+  }
+}
+
 // ---- Tipos de accion --------------------------------------------------------------
 //
 // Cada tipo tiene:
@@ -382,6 +456,192 @@ const TIPOS = {
       return { mensaje: `Listo: borré ${tx.descripcion} por ${formatMXN(Number(tx.monto))}.`, resultado: { transaccionId: payload.id } }
     },
   },
+
+  // ---- Liquidez: cortes de caja ---------------------------------------------------
+  //
+  // Un corte es UNA propuesta con todas las cuentas: el agente junta los saldos
+  // en la platica y el usuario confirma una sola vez. Se ejecuta con
+  // /api/liquidez, que recalcula por pagar y gastos al corte en el servidor.
+
+  'liquidez.registrar': {
+    async preparar(args) {
+      const hoy = fechaMexico()
+      const fecha = args.date ? parseFecha(args.date, hoy) : hoy
+      if (!fecha) return { ok: false, error: `No entendí la fecha "${args.date}". Usa YYYY-MM-DD, hoy o ayer.` }
+      if (fecha > hoy) return { ok: false, error: 'Un corte no puede tener fecha futura.' }
+      const quincena = await quincenaParaFecha(fecha)
+      if (!quincena) return { ok: false, error: `No hay quincena dada de alta para el ${fecha}.` }
+
+      const cuentas = await cuentasActivas()
+      if (cuentas.length === 0) return { ok: false, error: 'No hay cuentas activas. Se dan de alta en el dashboard (Configuración > Cuentas).' }
+
+      const saldos = await resolverSaldos(args.balances, cuentas)
+      if (!saldos.ok) return saldos
+
+      const previo = await cargarCorte(null)
+      const previoPorCuenta = new Map((previo?.montos || []).map(m => [m.cuentaId, Number(m.monto)]))
+      const resto = normalize(args.others || '')
+      const faltan = cuentas.filter(c => !saldos.porCuenta.has(c.id))
+      if (faltan.length && !['previous', 'anterior', 'igual', 'zero', 'cero'].includes(resto)) {
+        return {
+          ok: false,
+          error: `Faltan los saldos de: ${faltan.map(c => c.nombre).join(', ')}. Pregúntalos (0 si no hay nada). Si el usuario dijo que siguen igual que el corte anterior manda others="previous"; si dijo que las demás están en cero, others="zero".`,
+        }
+      }
+      const heredar = ['previous', 'anterior', 'igual'].includes(resto)
+
+      const montos = []
+      const renglones = []
+      for (const c of cuentas) {
+        const dado = saldos.porCuenta.get(c.id)
+        const monto = dado ? dado.monto : heredar ? (previoPorCuenta.get(c.id) ?? 0) : 0
+        montos.push({ cuentaId: c.id, monto, nota: dado?.nota || null })
+        const marca = dado ? '' : heredar ? ' (igual que el corte anterior)' : ' (sin saldo)'
+        renglones.push(`• ${c.nombre} — ${formatMXN(monto)}${marca}${dado?.nota ? ` · ${dado.nota}` : ''}`)
+      }
+      const total = montos.reduce((s, m) => s + m.monto, 0)
+
+      const lineas = [`Corte de liquidez al ${fechaCorta(fecha)} (${quincena.codigo})`, ...renglones, `Total en cuentas: ${formatMXN(total)}`]
+      if (previo) {
+        lineas.push(`Corte anterior (${fechaCorta(dateOnly(previo.fechaCorte))}): ${formatMXN(totalDeCorte(previo))}`)
+        if (dateOnly(previo.fechaCorte) === fecha) {
+          lineas.push(`\nOjo: ya hay un corte con esa fecha (#${previo.id}). Este se guardaría como uno nuevo.`)
+        }
+      }
+      const notas = args.notes ? String(args.notes).trim().slice(0, 500) : null
+      if (notas) lineas.push(`Notas: ${notas}`)
+
+      return {
+        ok: true,
+        payload: { fecha, quincenaId: quincena.id, montos, notas, validado: aBooleano(args.validated) === true },
+        resumen: lineas.join('\n'),
+      }
+    },
+
+    async ejecutar(payload, ctx) {
+      const creado = await dashboardApi.llamar('POST', '/api/liquidez', {
+        body: {
+          fechaCorte: payload.fecha,
+          quincenaId: payload.quincenaId,
+          montos: payload.montos,
+          notas: payload.notas,
+          validado: payload.validado,
+        },
+        actor: ctx.actor,
+        userId: ctx.userId,
+      })
+      const total = payload.montos.reduce((s, m) => s + m.monto, 0)
+      return {
+        mensaje: `Listo: guardé el corte del ${fechaCorta(payload.fecha)}. Total en cuentas: ${formatMXN(total)}.`,
+        resultado: { snapshotId: creado?.id ?? null },
+      }
+    },
+  },
+
+  'liquidez.editar': {
+    async preparar(args) {
+      const id = args.id == null || args.id === '' ? null : parseId(args.id)
+      if (args.id != null && args.id !== '' && !id) return { ok: false, error: 'El id del corte no es válido. Sale de get_liquidity (snapshotId) o list_liquidity_cuts.' }
+      const corte = await cargarCorte(id)
+      if (!corte) return { ok: false, error: id ? `No existe el corte #${id}.` : 'No hay ningún corte de liquidez todavía.' }
+
+      const body = {}
+      const renglones = []
+      const fechaActual = dateOnly(corte.fechaCorte)
+
+      if (args.balances != null) {
+        const cuentas = await cuentasActivas()
+        // Tambien las cuentas que ya estan en el corte aunque hoy esten inactivas.
+        const conocidas = new Map(cuentas.map(c => [c.id, c]))
+        for (const m of corte.montos) if (m.cuenta && !conocidas.has(m.cuentaId)) conocidas.set(m.cuentaId, m.cuenta)
+        const saldos = await resolverSaldos(args.balances, [...conocidas.values()])
+        if (!saldos.ok) return saldos
+
+        const finales = new Map(corte.montos.map(m => [m.cuentaId, { cuentaId: m.cuentaId, monto: Number(m.monto), nota: m.nota || null }]))
+        for (const [cuentaId, dado] of saldos.porCuenta) {
+          const antes = finales.get(cuentaId)
+          const nombre = conocidas.get(cuentaId).nombre
+          if (antes && antes.monto === dado.monto && (dado.nota == null || dado.nota === antes.nota)) continue
+          finales.set(cuentaId, { cuentaId, monto: dado.monto, nota: dado.nota ?? antes?.nota ?? null })
+          renglones.push(`• ${nombre}: ${antes ? formatMXN(antes.monto) : 'sin saldo'} → ${formatMXN(dado.monto)}`)
+        }
+        if (renglones.length) {
+          body.montos = [...finales.values()]
+          const totalNuevo = body.montos.reduce((s, m) => s + m.monto, 0)
+          renglones.push(`• Total en cuentas: ${formatMXN(totalDeCorte(corte))} → ${formatMXN(totalNuevo)}`)
+        }
+      }
+
+      if (args.date) {
+        const fecha = parseFecha(args.date)
+        if (!fecha) return { ok: false, error: `No entendí la fecha "${args.date}". Usa YYYY-MM-DD, hoy o ayer.` }
+        if (fecha > fechaMexico()) return { ok: false, error: 'Un corte no puede tener fecha futura.' }
+        if (fecha !== fechaActual) {
+          const q = await quincenaParaFecha(fecha)
+          if (!q) return { ok: false, error: `No hay quincena dada de alta para el ${fecha}.` }
+          body.fechaCorte = fecha
+          if (q.id !== corte.quincenaId) body.quincenaId = q.id
+          renglones.push(`• Fecha: ${fechaCorta(fechaActual)} → ${fechaCorta(fecha)}${q.id !== corte.quincenaId ? ` (pasa a ${q.codigo})` : ''}`)
+        }
+      }
+
+      if (args.notes != null) {
+        const notas = String(args.notes).trim().slice(0, 500) || null
+        if (notas !== (corte.notas || null)) {
+          body.notas = notas
+          renglones.push(`• Notas: ${corte.notas || '—'} → ${notas || '—'}`)
+        }
+      }
+
+      const validado = aBooleano(args.validated)
+      if (validado != null && validado !== corte.validado) {
+        body.validado = validado
+        renglones.push(`• Validado: ${corte.validado ? 'sí' : 'no'} → ${validado ? 'sí' : 'no'}`)
+      }
+
+      if (renglones.length === 0) return { ok: false, error: 'No hay nada que cambiar: el corte ya tiene esos valores.' }
+
+      return {
+        ok: true,
+        payload: { id: corte.id, body, huella: huellaCorte(corte) },
+        resumen: [`Editar el corte #${corte.id} del ${fechaCorta(fechaActual)} (${corte.quincena?.codigo || '—'})`, ...renglones].join('\n'),
+      }
+    },
+
+    async ejecutar(payload, ctx) {
+      const corte = await cargarCorte(payload.id)
+      if (!corte) throw new Error(`El corte #${payload.id} ya no existe.`)
+      if (!mismaHuella(huellaCorte(corte), payload.huella)) {
+        throw new Error('El corte cambió desde que te lo propuse. Pídemelo otra vez para ver los datos actuales.')
+      }
+      await dashboardApi.llamar('PUT', `/api/liquidez/${payload.id}`, { body: payload.body, actor: ctx.actor, userId: ctx.userId })
+      return { mensaje: `Listo: actualicé el corte #${payload.id}.`, resultado: { snapshotId: payload.id } }
+    },
+  },
+
+  'liquidez.borrar': {
+    async preparar(args) {
+      const id = parseId(args.id)
+      if (!id) return { ok: false, error: 'Falta el id del corte. Sale de get_liquidity (snapshotId) o list_liquidity_cuts.' }
+      const corte = await cargarCorte(id)
+      if (!corte) return { ok: false, error: `No existe el corte #${id}.` }
+      return {
+        ok: true,
+        payload: { id, huella: huellaCorte(corte) },
+        resumen: `Borrar el corte #${id} del ${fechaCorta(dateOnly(corte.fechaCorte))} (${corte.quincena?.codigo || '—'})\n• Total en cuentas: ${formatMXN(totalDeCorte(corte))}${corte.validado ? '\n• Está validado' : ''}\n\nNo se puede deshacer.`,
+      }
+    },
+
+    async ejecutar(payload, ctx) {
+      const corte = await cargarCorte(payload.id)
+      if (!corte) throw new Error(`El corte #${payload.id} ya no existe.`)
+      if (!mismaHuella(huellaCorte(corte), payload.huella)) {
+        throw new Error('El corte cambió desde que te lo propuse. Pídemelo otra vez para ver los datos actuales.')
+      }
+      await dashboardApi.llamar('DELETE', `/api/liquidez/${payload.id}`, { actor: ctx.actor, userId: ctx.userId })
+      return { mensaje: `Listo: borré el corte del ${fechaCorta(dateOnly(corte.fechaCorte))}.`, resultado: { snapshotId: payload.id } }
+    },
+  },
 }
 
 // ---- Proponer / confirmar / cancelar ------------------------------------------------
@@ -514,5 +774,5 @@ module.exports = {
   PREFIJO_CONFIRMAR,
   PREFIJO_CANCELAR,
   TIPOS_DISPONIBLES: Object.keys(TIPOS),
-  _interno: { parseFecha, parseMonto, parseId, elegirPorNombre, huella, TTL_MS },
+  _interno: { parseFecha, parseMonto, parseSaldo, parseId, elegirPorNombre, huella, huellaCorte, TTL_MS },
 }
