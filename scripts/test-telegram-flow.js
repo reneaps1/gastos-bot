@@ -90,10 +90,45 @@ function cumpleFeedback(f, where = {}) {
   return Object.entries(where).every(([k, v]) => (v && typeof v === 'object' && Array.isArray(v.in) ? v.in.includes(f[k]) : f[k] === v))
 }
 
+// Propuestas del agente (milo_acciones). El doble respeta el UPDATE
+// condicional de reclamar(): es lo que impide ejecutar dos veces.
+const miloAccionesTabla = []
+let nextAccionId = 1
+function cumpleAccion(a, where = {}) {
+  return Object.entries(where).every(([k, v]) => {
+    if (v && typeof v === 'object' && Array.isArray(v.in)) return v.in.includes(a[k])
+    if (v && typeof v === 'object' && v.gt instanceof Date) return a[k] > v.gt
+    return a[k] === v
+  })
+}
+
+// La API del dashboard, cortada: cada llamada queda aqui. `dashboardFalla`
+// simula el dashboard dormido o un rechazo.
+const llamadasDashboard = []
+let dashboardFalla = null
+
 // Palabras sueltas del modo "Yo te escribo palabras" (clasificador_ejemplos).
 const ejemplos = []
 let nextEjemploId = 1
 const fakePrisma = {
+  miloAccion: {
+    create: async ({ data }) => {
+      const row = { id: nextAccionId++, estado: 'pendiente', resultado: null, ejecutadaEn: null, createdAt: new Date(), ...data }
+      miloAccionesTabla.push(row)
+      return row
+    },
+    findUnique: async ({ where }) => miloAccionesTabla.find(a => a.id === where.id) || null,
+    updateMany: async ({ where, data }) => {
+      const filas = miloAccionesTabla.filter(a => cumpleAccion(a, where))
+      for (const f of filas) Object.assign(f, data)
+      return { count: filas.length }
+    },
+    update: async ({ where, data }) => {
+      const f = miloAccionesTabla.find(a => a.id === where.id)
+      Object.assign(f, data)
+      return f
+    },
+  },
   clasificadorEjemplo: {
     create: async ({ data }) => {
       const row = { id: nextEjemploId++, estado: 'pendiente', lineaDescripcion: null, categoriaId: null, acerto: null, createdAt: new Date(), resueltoEn: null, ...data }
@@ -275,7 +310,18 @@ const fakeTelegram = {
   checkGroupPrivacyMode: async () => ({ ok: true, skipped: true }),
 }
 
+const fakeDashboardApi = {
+  isEnabled: () => true,
+  DashboardApiError: Error,
+  llamar: async (metodo, ruta, opts = {}) => {
+    llamadasDashboard.push({ metodo, ruta, ...opts })
+    if (dashboardFalla) throw new Error(dashboardFalla)
+    return { id: 999 }
+  },
+}
+
 for (const [rel, exports] of [
+  ['dashboardApi.js', fakeDashboardApi],
   ['database.js', fakeDb],
   ['lib/prisma.js', fakePrisma],
   ['telegram.js', fakeTelegram],
@@ -1090,6 +1136,82 @@ async function main() {
   await post(textUpdate('listo'))
   await post(textUpdate('kermes'))
   check('mi "listo" si la termina', ejemplos.length === ejemplosW9 + 1, ejemplos.length)
+
+  // --- Acciones del agente: Confirmar / Cancelar (src/miloAcciones.js) ---
+  const miloAcciones = require(path.join(SRC, 'miloAcciones.js'))
+
+  console.log('\n=== MA1: una orden de cambio con numero NUNCA se registra como gasto ===')
+  // "cambia el monto del super a 350" tiene un numero y antes caia en
+  // 'reasignar' (destino "350"). Va al agente, que solo propone.
+  const creadasMA1 = creadas.length
+  await post(textUpdate('cambia el monto del super a 350'))
+  check('no registro $350', creadas.length === creadasMA1, JSON.stringify(creadas.at(-1)))
+  check('lo mando al agente (sin IA: dice que no pudo)', /No pude contestar/.test(enviados.at(-1)?.message || ''), enviados.at(-1)?.message)
+
+  const txMA = await fakePrisma.transaccion.create({ data: {
+    descripcion: 'Uber aeropuerto', monto: 85, categoriaId: 7, quincenaId: 1,
+    fecha: new Date(), estatus: 'Pagado', presupuestoId: null, tipo: 'Gasto',
+  } })
+
+  console.log('\n=== MA2: proponer NO escribe; Confirmar ejecuta UNA vez ===')
+  const escriturasMA2 = escrituras.length
+  const prop = await miloAcciones.proponer('transaccion.borrar', { id: txMA.id }, { chatId: CHAT_PERMITIDO, userId: null, solicitante: 'Rene' })
+  check('la propuesta queda pendiente', prop.ok && miloAccionesTabla.find(a => a.id === prop.accionId)?.estado === 'pendiente', JSON.stringify(prop))
+  check('el resumen dice que se borra y cual', /Borrar #\d+: Uber aeropuerto/.test(prop.resumen || ''), prop.resumen)
+  check('proponer no llamo al dashboard ni escribio', llamadasDashboard.length === 0 && escrituras.length === escriturasMA2)
+
+  await post(callbackUpdate(`ax:${prop.accionId}`))
+  check('llamo DELETE al dashboard una vez', llamadasDashboard.length === 1 && llamadasDashboard[0].metodo === 'DELETE' && llamadasDashboard[0].ruta === `/api/transacciones/${txMA.id}`, JSON.stringify(llamadasDashboard))
+  check('con el actor de quien toco', llamadasDashboard[0]?.actor === 'Rene', llamadasDashboard[0]?.actor)
+  check('quedo ejecutada', miloAccionesTabla.find(a => a.id === prop.accionId).estado === 'ejecutada')
+  check('el mensaje dice que se hizo y quita los botones', /Listo: borré Uber aeropuerto/.test(editados.at(-1)?.message || '') && !editados.at(-1)?.buttons, JSON.stringify(editados.at(-1)))
+
+  await post(callbackUpdate(`ax:${prop.accionId}`))
+  check('el segundo toque NO vuelve a ejecutar', llamadasDashboard.length === 1, llamadasDashboard.length)
+  check('y lo dice', /ya se había aplicado/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== MA3: una accion de otro chat no se ejecuta desde este ===')
+  const ajena = await miloAcciones.proponer('transaccion.borrar', { id: txMA.id }, { chatId: '-1002222222222' })
+  await post(callbackUpdate(`ax:${ajena.accionId}`))
+  check('no llamo al dashboard', llamadasDashboard.length === 1, llamadasDashboard.length)
+  check('sigue pendiente en su chat', miloAccionesTabla.find(a => a.id === ajena.accionId).estado === 'pendiente')
+  check('dice que no existe', /no existe/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+
+  console.log('\n=== MA4: una propuesta vencida no se ejecuta ===')
+  const vieja = await miloAcciones.proponer('transaccion.borrar', { id: txMA.id }, { chatId: CHAT_PERMITIDO })
+  miloAccionesTabla.find(a => a.id === vieja.accionId).expiraEn = new Date(Date.now() - 1000)
+  await post(callbackUpdate(`ax:${vieja.accionId}`))
+  check('no llamo al dashboard', llamadasDashboard.length === 1, llamadasDashboard.length)
+  check('dice que vencio', /venció/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  check('queda expirada', miloAccionesTabla.find(a => a.id === vieja.accionId).estado === 'expirada')
+
+  console.log('\n=== MA5: Cancelar no escribe y bloquea el Confirmar ===')
+  const cancelable = await miloAcciones.proponer('transaccion.editar', { id: txMA.id, amount: 90 }, { chatId: CHAT_PERMITIDO })
+  check('el resumen muestra antes y despues', /Monto: \$85\.00 → \$90\.00/.test(cancelable.resumen || ''), cancelable.resumen)
+  await post(callbackUpdate(`ac:${cancelable.accionId}`))
+  check('cancelada', miloAccionesTabla.find(a => a.id === cancelable.accionId).estado === 'cancelada')
+  check('dice que no cambio nada', /Cancelado\. No cambié nada/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
+  await post(callbackUpdate(`ax:${cancelable.accionId}`))
+  check('el Confirmar posterior no ejecuta', llamadasDashboard.length === 1, llamadasDashboard.length)
+
+  console.log('\n=== MA6: si el dashboard falla, queda fallida y el mismo boton reintenta ===')
+  const editar = await miloAcciones.proponer('transaccion.editar', { id: txMA.id, amount: 90 }, { chatId: CHAT_PERMITIDO })
+  dashboardFalla = 'El dashboard no contestó en 90 s.'
+  await post(callbackUpdate(`ax:${editar.accionId}`))
+  check('quedo fallida', miloAccionesTabla.find(a => a.id === editar.accionId).estado === 'fallida')
+  check('dice por que y deja el boton para reintentar', /No se aplicó: El dashboard no contestó/.test(editados.at(-1)?.message || '') && /^ax:/.test(editados.at(-1)?.buttons?.[0]?.[0]?.callback_data || ''), JSON.stringify(editados.at(-1)))
+  dashboardFalla = null
+  await post(callbackUpdate(`ax:${editar.accionId}`))
+  check('el reintento manda el PUT con solo el campo que cambia', llamadasDashboard.at(-1)?.metodo === 'PUT' && JSON.stringify(llamadasDashboard.at(-1)?.body) === '{"monto":90}', JSON.stringify(llamadasDashboard.at(-1)))
+  check('quedo ejecutada', miloAccionesTabla.find(a => a.id === editar.accionId).estado === 'ejecutada')
+
+  console.log('\n=== MA7: si el movimiento cambio despues de la propuesta, no se ejecuta ===')
+  const llamadasMA7 = llamadasDashboard.length
+  const desfasada = await miloAcciones.proponer('transaccion.borrar', { id: txMA.id }, { chatId: CHAT_PERMITIDO })
+  await fakePrisma.transaccion.update({ where: { id: txMA.id }, data: { monto: 120 } })
+  await post(callbackUpdate(`ax:${desfasada.accionId}`))
+  check('no llamo al dashboard', llamadasDashboard.length === llamadasMA7, llamadasDashboard.length)
+  check('explica que cambio', /cambió desde que te lo propuse/.test(editados.at(-1)?.message || ''), editados.at(-1)?.message)
 
   // --- Resumen diario (src/resumenDiario.js) ---
   console.log('\n=== RD1: POST /cron/resumen-diario exige el token del cron ===')

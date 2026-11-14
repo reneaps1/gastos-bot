@@ -260,16 +260,18 @@ async function answerCallbackQuery(callbackQueryId, text = null) {
 // Reescribe el mensaje original en vez de mandar uno nuevo: el historial del
 // chat queda con una sola confirmacion, ya resuelta. Quitar los botones
 // (buttons vacio) es lo que impide que alguien vuelva a tocarlos.
-async function editMessageText(chatId, messageId, text, { buttons = null } = {}) {
+// `plain`: sin parse_mode, para textos con datos del usuario (descripciones
+// con "_" o "*") que Markdown interpretaria como formato.
+async function editMessageText(chatId, messageId, text, { buttons = null, plain = false } = {}) {
   if (!isEnabled()) return { ok: false, error: 'TELEGRAM_BOT_TOKEN not configured' }
 
   const payload = {
     chat_id: chatId,
     message_id: messageId,
     text,
-    parse_mode: 'Markdown',
     reply_markup: { inline_keyboard: buttons || [] },
   }
+  if (!plain) payload.parse_mode = 'Markdown'
 
   try {
     const response = await axios.post(

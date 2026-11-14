@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { SESSION_COOKIE_NAME, decryptSession, reissueSessionToken, sessionCookieOptions } from '@/lib/auth'
+import { sesionDeServicio } from '@/lib/service-auth'
 
 // Rutas alcanzables sin sesion. /privacy es exigida por Apple para el listado en
 // App Store y /api/health es lo que usa Render para el healthcheck del servicio.
@@ -15,6 +16,12 @@ export default async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   if (isPublicPath(pathname)) {
+    return NextResponse.next()
+  }
+
+  // El bot ejecuta acciones confirmadas con un token de servicio. Solo abre
+  // la API, nunca paginas, y no emite cookie: cada llamada se autentica sola.
+  if (pathname.startsWith('/api/') && sesionDeServicio(request.headers)) {
     return NextResponse.next()
   }
 

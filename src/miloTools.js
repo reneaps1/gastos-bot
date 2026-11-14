@@ -1,6 +1,10 @@
-// Herramientas del agente de Milo (src/financeAgent.js). TODAS son de solo
-// lectura: el agente propone y contesta, nunca escribe. Lo unico que el bot
-// escribe sale de un toque humano en un boton (ver budgetActions.js).
+// Herramientas del agente de Milo (src/financeAgent.js).
+//
+// Las de consulta son de solo lectura. Las proponer_* (WRITE_TOOLS, solo en
+// Telegram) tampoco escriben datos financieros: dejan una propuesta pendiente
+// en milo_acciones y el cambio ocurre solo cuando el usuario toca "Confirmar"
+// (ver src/miloAcciones.js). Lo unico que el bot escribe sale de un toque
+// humano en un boton.
 //
 // Los numeros de dinero salen de src/lib/finanzas-quincena.js, la copia
 // probada al centavo de la matematica del dashboard
@@ -10,6 +14,7 @@
 const prisma = require('./lib/prisma')
 const { fechaMexico, dbDate, normalize } = require('./financeUtils')
 const finanzas = require('./lib/finanzas-quincena')
+const miloAcciones = require('./miloAcciones')
 
 const { formatMXN } = finanzas
 
@@ -952,20 +957,62 @@ const TOOL_HANDLERS = {
   get_system_overview: getSystemOverview,
 }
 
-async function executeTool(name, args = {}) {
-  const handler = TOOL_HANDLERS[name]
+// ---- Proponer cambios (solo Telegram) ---------------------------------------
+//
+// Ninguna escribe datos financieros: validan, resuelven nombres a ids y dejan
+// una fila pendiente en milo_acciones. El usuario confirma con un boton.
+
+const WRITE_TOOL_DEFINITIONS = [
+  {
+    name: 'proponer_registrar_movimiento',
+    description: 'Propone REGISTRAR un movimiento nuevo (gasto, ingreso o ahorro; el tipo sale de la categoría). Úsalo cuando pidan anotar algo que no tiene el formato "200 super", p. ej. "registra un ingreso de 5000 de nómina ayer". No se guarda hasta que el usuario toca Confirmar.',
+    args: { amount: 'monto, requerido', description: 'texto corto, requerido', category: 'nombre de la categoría, requerido (list_categories)', date: 'YYYY-MM-DD, hoy o ayer; default hoy', paymentMethod: 'opcional', status: 'Pagado (default) o Pendiente', budgetLine: 'nombre de la línea, opcional', user: 'persona, opcional (default quien escribe)' },
+  },
+  {
+    name: 'proponer_editar_movimiento',
+    description: 'Propone CAMBIAR un movimiento existente: monto, descripción, fecha, categoría, forma de pago, estatus (Pagado/Pendiente) o línea (budgetLine="ninguna" la quita). Necesita el id: búscalo antes con search_transactions. Manda solo los campos que cambian. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id del movimiento, requerido', amount: 'opcional', description: 'opcional', date: 'opcional', category: 'opcional', paymentMethod: 'opcional', status: 'Pagado|Pendiente opcional', budgetLine: 'opcional; "ninguna" para quitarla' },
+  },
+  {
+    name: 'proponer_borrar_movimiento',
+    description: 'Propone BORRAR un movimiento. Necesita el id: búscalo antes con search_transactions. Si hay varios candidatos, NO adivines: lista los candidatos y pregunta cuál. No se borra hasta que el usuario toca Confirmar.',
+    args: { id: 'id del movimiento, requerido' },
+  },
+]
+
+function herramientaDePropuesta(tipo) {
+  return (args, ctx) => miloAcciones.proponer(tipo, args, ctx)
+}
+
+const WRITE_TOOL_HANDLERS = {
+  proponer_registrar_movimiento: herramientaDePropuesta('transaccion.registrar'),
+  proponer_editar_movimiento: herramientaDePropuesta('transaccion.editar'),
+  proponer_borrar_movimiento: herramientaDePropuesta('transaccion.borrar'),
+}
+
+// `ctx.acciones` solo lo pasa Telegram (chatId, userId, solicitante). Sin el,
+// las proponer_* no existen: WhatsApp sigue siendo de solo lectura.
+async function executeTool(name, args = {}, ctx = {}) {
+  const esPropuesta = Object.prototype.hasOwnProperty.call(WRITE_TOOL_HANDLERS, name)
+  const handler = esPropuesta
+    ? (ctx.acciones ? WRITE_TOOL_HANDLERS[name] : null)
+    : TOOL_HANDLERS[name]
   if (!handler) return { ok: false, error: `Herramienta no permitida: ${name}` }
 
   try {
-    return await handler(args || {})
+    return esPropuesta ? await handler(args || {}, ctx.acciones) : await handler(args || {})
   } catch (error) {
     console.error(`MILO_TOOL_ERROR ${name}:`, error.message)
     return { ok: false, error: `No pude ejecutar ${name}: ${error.message}` }
   }
 }
 
-function getToolDefinitions() {
-  return TOOL_DEFINITIONS
+function getToolDefinitions({ acciones = false } = {}) {
+  return acciones ? [...TOOL_DEFINITIONS, ...WRITE_TOOL_DEFINITIONS] : TOOL_DEFINITIONS
 }
 
-module.exports = { executeTool, getToolDefinitions, resolvePeriod, infoPeriodo, parseMonto }
+function esHerramientaDePropuesta(name) {
+  return Object.prototype.hasOwnProperty.call(WRITE_TOOL_HANDLERS, name)
+}
+
+module.exports = { executeTool, getToolDefinitions, esHerramientaDePropuesta, resolvePeriod, infoPeriodo, parseMonto }

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { CAMPOS_TRANSACCION, origenDeLaPeticion, registrarAuditoria } from '@/lib/audit-log'
 import { prisma } from '@/lib/prisma'
 import { shiftMonth } from '@/lib/periodo'
 import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
@@ -191,6 +192,7 @@ export async function POST(request: Request) {
       }
     }
 
+    const origen = await origenDeLaPeticion()
     const transaccion = await prisma.$transaction(async (tx) => {
       const created = await tx.transaccion.create({
         data: {
@@ -213,6 +215,11 @@ export async function POST(request: Request) {
           source: source ?? 'api',
         },
         include: { categoria: true, user: true, quincena: true, presupuesto: true },
+      })
+
+      await registrarAuditoria(tx, {
+        tabla: 'transacciones', registroId: created.id, operacion: 'INSERT',
+        antes: null, despues: created, campos: CAMPOS_TRANSACCION, origen,
       })
 
       if (pagosData.length > 0) {

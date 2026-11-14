@@ -1,13 +1,17 @@
 // El agente de Milo: el UNICO cerebro para preguntas de Telegram.
 //
-// Recibe una pregunta en espanol libre, decide que herramientas de solo
-// lectura consultar (src/miloTools.js) y contesta con esos datos. Antes de el
+// Recibe una pregunta en espanol libre, decide que herramientas consultar
+// (src/miloTools.js) y contesta con esos datos. En Telegram tambien puede
+// PROPONER cambios (proponer_*), que se aplican solo con el boton Confirmar. Antes de el
 // habia siete capas en cascada (regex, clasificadores, intents fijos, un
 // prompt con 50 movimientos pegados) y cualquiera podia comerse la pregunta:
 // "cuanto queda de dinero" caia en un regex que buscaba la linea "dinero".
 //
 // Reglas que no se relajan:
-//   - La IA propone y contesta; NUNCA escribe. Ninguna herramienta escribe.
+//   - La IA propone y contesta; NUNCA escribe datos financieros. Las
+//     proponer_* solo dejan una propuesta pendiente (src/miloAcciones.js) y el
+//     cambio lo aplica el toque humano en "Confirmar". Fuera de Telegram (sin
+//     `acciones`) ni siquiera existen.
 //   - Los numeros salen de las herramientas, nunca del modelo.
 //   - Si la IA falla despues de traer datos, contesta con la plantilla del
 //     ultimo resultado (src/plantillasMilo.js, provider 'plantilla'). Si no hay
@@ -15,11 +19,13 @@
 //     registrar la pregunta como gasto.
 
 const deepseek = require('./deepseek')
-const { executeTool, getToolDefinitions } = require('./miloTools')
+const { executeTool, getToolDefinitions, esHerramientaDePropuesta } = require('./miloTools')
 const plantillas = require('./plantillasMilo')
 const { fechaMexico, ZONA_MEXICO } = require('./financeUtils')
 
-const MAX_STEPS = 6
+// 8: un cambio necesita buscar el movimiento (o la categoria) y luego
+// proponer; con 6 no quedaba aire para una pregunta de seguimiento.
+const MAX_STEPS = 8
 // Tope de tiempo de UNA respuesta completa. DeepSeek tiene su timeout por
 // llamada (15 s), pero son hasta 6 pasos mas un reintento: sin un tope total,
 // el usuario veria minutos de "escribiendo..." antes de la respuesta.
@@ -169,10 +175,18 @@ const FORMATO = `FORMATO DE LA RESPUESTA:
 - Texto plano: sin asteriscos, sin guiones bajos, sin Markdown, sin tablas.
 - Sin preámbulos ("Claro", "Según los datos"). Español mexicano, natural.`
 
-function buildSystemPrompt(contexto) {
-  const tools = getToolDefinitions()
+const REGLA_SOLO_LECTURA = '- No puedes registrar, borrar ni mover nada. Si te piden registrar un gasto, di que lo manden empezando con el monto, por ejemplo "200 super". Si piden mover un gasto a otra línea, di que lo escriban así: "el gasto de <qué> mándalo a <línea>" (eso arma un botón para confirmar).'
+
+const REGLAS_DE_CAMBIOS = `- Puedes PROPONER cambios con las herramientas proponer_*. Nada cambia hasta que el usuario toca "Confirmar" en el mensaje: NUNCA digas que algo ya quedó hecho; di "Te dejo el cambio para confirmar" o similar.
+- Para editar o borrar necesitas el id: primero search_transactions. Si hay más de un candidato y no es obvio cuál, NO propongas: lista los candidatos (con fecha y monto) y pregunta cuál.
+- Una propuesta por cosa. Si piden varias, propone cada una (hasta 3).
+- Si la herramienta de propuesta devuelve un error, corrige con otra herramienta o pregunta lo que falta; no lo inventes.
+- Un gasto con formato "200 super" el bot ya lo registra solo; usa proponer_registrar_movimiento solo cuando te lo pidan con otras palabras.`
+
+function buildSystemPrompt(contexto, { acciones = false } = {}) {
+  const tools = getToolDefinitions({ acciones })
   return `Eres Milo, el asistente financiero de una familia mexicana, conectado a sus datos reales.
-Entiendes la pregunta, consultas herramientas de solo lectura y contestas con esos datos.
+Entiendes lo que te piden, consultas herramientas y contestas con esos datos.${acciones ? ' También puedes proponer cambios que el usuario confirma con un botón.' : ''}
 
 ${contexto}
 
@@ -181,7 +195,7 @@ REGLAS:
 - Para cualquier dato financiero consulta una herramienta antes de responder. Puedes usar varias.
 - Si no dicen periodo, usa la quincena actual. "La pasada"/"la anterior" = period "anterior".
 - Si la pregunta es de seguimiento ("¿y la pasada?", "¿y en super?"), usa la conversación previa para saber de qué se habla.
-- No puedes registrar, borrar ni mover nada. Si te piden registrar un gasto, di que lo manden empezando con el monto, por ejemplo "200 super". Si piden mover un gasto a otra línea, di que lo escriban así: "el gasto de <qué> mándalo a <línea>" (eso arma un botón para confirmar).
+${acciones ? REGLAS_DE_CAMBIOS : REGLA_SOLO_LECTURA}
 - Si una herramienta no tiene el dato, dilo claro en una línea.
 
 ${GLOSARIO}
@@ -230,7 +244,10 @@ function conTope(promesa, ms) {
   return Promise.race([Promise.resolve(promesa), tope]).finally(() => clearTimeout(timer))
 }
 
-async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS } = {}) {
+// `acciones` ({ chatId, userId, solicitante }) solo lo pasa Telegram: habilita
+// las proponer_*. Devuelve tambien `acciones: [id...]`, las propuestas que
+// quedaron pendientes en este turno, para que index.js les ponga botones.
+async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS, acciones = null } = {}) {
   const limite = Date.now() + deadlineMs
   const quedaTiempo = () => limite - Date.now()
   const completar = proveedor()
@@ -245,7 +262,7 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
   ])
 
   const messages = [
-    { role: 'system', content: buildSystemPrompt(await contextoDelDia(senderName)) },
+    { role: 'system', content: buildSystemPrompt(await contextoDelDia(senderName), { acciones: Boolean(acciones) }) },
     ...historial,
     { role: 'user', content: question },
   ]
@@ -256,10 +273,21 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
   const trace = []
   let reparado = false
   let reintentoCorto = false
+  const propuestas = () => trace
+    .filter(t => esHerramientaDePropuesta(t.tool) && t.result?.ok && t.result.accionId)
+    .map(t => t.result.accionId)
 
   // Cuando la IA no contesta: si ya hay datos, se responden con plantilla; si
   // no, null (index.js dice "No pude contestar").
   function rendirse(motivo) {
+    // Si ya quedo una propuesta, se manda aunque la IA no haya redactado: el
+    // resumen de cada propuesta va en su propio mensaje con sus botones.
+    if (propuestas().length) {
+      const texto = 'Te dejo el cambio para confirmar:'
+      console.log(`FINANCE_AGENT_PROPUESTA_SIN_TEXTO: ${motivo}`)
+      guardarTurno(chatId, question, texto)
+      return { reply: texto, provider: 'propuesta', trace, acciones: propuestas() }
+    }
     const plantilla = respuestaDePlantilla(trace)
     if (!plantilla) {
       console.error(`FINANCE_AGENT_FALLO: ${motivo}; sin datos para plantilla`)
@@ -320,7 +348,7 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
       if (!finalAnswer) return rendirse('respuesta vacia')
       console.log('FINANCE_AGENT_ANSWER:', finalAnswer.substring(0, 180))
       guardarTurno(chatId, question, finalAnswer)
-      return { reply: finalAnswer, provider: 'deepseek-agent', trace }
+      return { reply: finalAnswer, provider: 'deepseek-agent', trace, acciones: propuestas() }
     }
 
     if (plan.action !== 'tool' || typeof plan.tool !== 'string') {
@@ -340,7 +368,7 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
 
     seenCalls.add(signature)
     console.log('FINANCE_AGENT_TOOL_CALL:', JSON.stringify({ tool: plan.tool, args }))
-    const result = await executeTool(plan.tool, args)
+    const result = await executeTool(plan.tool, args, { acciones })
     trace.push({ tool: plan.tool, args, ok: result?.ok !== false, result })
 
     messages.push({ role: 'assistant', content: JSON.stringify(plan) })

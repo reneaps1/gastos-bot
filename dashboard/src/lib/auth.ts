@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose'
-import { cookies } from 'next/headers'
+import { cookies, headers } from 'next/headers'
 import bcrypt from 'bcryptjs'
+import { sesionDeServicio } from '@/lib/service-auth'
 
 export const SESSION_COOKIE_NAME = 'milo_session'
 const SESSION_DURATION_SECONDS = 60 * 60 * 24 * 180 // 180 dias: sesion que se mantiene abierta entre dispositivos
@@ -17,6 +18,8 @@ function getSecretKey() {
 
 interface SessionPayload {
   username: string
+  /** true cuando la peticion la hizo el bot con MILO_SERVICE_TOKEN. */
+  servicio?: boolean
 }
 
 async function encryptSession(payload: SessionPayload) {
@@ -61,7 +64,11 @@ export async function destroySession() {
 
 export async function getSession(): Promise<SessionPayload | null> {
   const store = await cookies()
-  return decryptSession(store.get(SESSION_COOKIE_NAME)?.value)
+  const deCookie = await decryptSession(store.get(SESSION_COOKIE_NAME)?.value)
+  if (deCookie) return deCookie
+  // El bot de Telegram ejecuta las acciones confirmadas con un token de
+  // servicio (ver @/lib/service-auth). El actor queda como "milo:<nombre>".
+  return sesionDeServicio(await headers())
 }
 
 /** Emite un token nuevo con la expiracion renovada, para la sesion deslizante del proxy. */

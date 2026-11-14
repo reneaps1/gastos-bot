@@ -552,6 +552,7 @@ Entregables:
 - Reglas automáticas.
 - Resúmenes inteligentes.
 - Bot más útil.
+- Milo agente con acciones confirmadas (2026-11-13): desde Telegram el agente propone cualquier cambio (movimientos, presupuesto, deudas y créditos, liquidez, configuración) y solo se aplica con el botón Confirmar, usando la API del dashboard como única implementación y dejando rastro en `audit_log`. Ver "Milo puede actuar" en `AGENTS.md`.
 
 ### Créditos Y Deudas (Fase 8 - Decisión)
 

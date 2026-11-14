@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { resolverTipoYDireccion } from '@/lib/transaccion-ahorro'
 import { validarEnlacePresupuesto } from '@/lib/validar-enlace-presupuesto'
+import { CAMPOS_TRANSACCION, origenDeLaPeticion, registrarAuditoria } from '@/lib/audit-log'
 
 export async function GET(
   request: Request,
@@ -131,26 +132,41 @@ export async function PUT(
       }
     }
 
-    const transaccion = await prisma.transaccion.update({
-      where: { id },
-      data: {
-        ...(fecha && { fecha: new Date(fecha) }),
-        ...(quincenaId && { quincenaId: parseInt(quincenaId) }),
-        ...(userId !== undefined && { userId: userId ? parseInt(userId) : null }),
-        ...(descripcion && { descripcion }),
-        ...(categoriaId && { categoriaId: parseInt(categoriaId) }),
-        ...(tipoResuelto !== undefined && { tipo: tipoResuelto, direccion: direccionResuelta }),
-        ...(apartadoId !== undefined && { apartadoId: apartadoId ? parseInt(apartadoId) : null }),
-        ...(monto !== undefined && { monto: parseFloat(monto) }),
-        ...(metodoPagoId !== undefined && { metodoPagoId: metodoPagoId ? parseInt(metodoPagoId) : null }),
-        ...(estatus && { estatus }),
-        ...(notas !== undefined && { notas }),
-        ...(presupuestoIdFinal !== undefined && { presupuestoId: presupuestoIdFinal }),
-      },
-      // metodoPago va incluido igual que en el GET de la lista: quien parchea
-      // su copia local con esta respuesta (la edicion inline de la tabla)
-      // necesita el nombre, no solo el metodoPagoId.
-      include: { categoria: true, user: true, quincena: true, metodoPago: true, presupuesto: true },
+    const antes = await prisma.transaccion.findUnique({ where: { id } })
+    if (!antes) {
+      return NextResponse.json({ error: 'Transacción not found' }, { status: 404 })
+    }
+    const origen = await origenDeLaPeticion()
+
+    // El cambio y su bitacora van en la misma transaccion de base: un cambio
+    // financiero sin rastro es justo lo que audit_log existe para evitar.
+    const transaccion = await prisma.$transaction(async tx => {
+      const actualizada = await tx.transaccion.update({
+        where: { id },
+        data: {
+          ...(fecha && { fecha: new Date(fecha) }),
+          ...(quincenaId && { quincenaId: parseInt(quincenaId) }),
+          ...(userId !== undefined && { userId: userId ? parseInt(userId) : null }),
+          ...(descripcion && { descripcion }),
+          ...(categoriaId && { categoriaId: parseInt(categoriaId) }),
+          ...(tipoResuelto !== undefined && { tipo: tipoResuelto, direccion: direccionResuelta }),
+          ...(apartadoId !== undefined && { apartadoId: apartadoId ? parseInt(apartadoId) : null }),
+          ...(monto !== undefined && { monto: parseFloat(monto) }),
+          ...(metodoPagoId !== undefined && { metodoPagoId: metodoPagoId ? parseInt(metodoPagoId) : null }),
+          ...(estatus && { estatus }),
+          ...(notas !== undefined && { notas }),
+          ...(presupuestoIdFinal !== undefined && { presupuestoId: presupuestoIdFinal }),
+        },
+        // metodoPago va incluido igual que en el GET de la lista: quien parchea
+        // su copia local con esta respuesta (la edicion inline de la tabla)
+        // necesita el nombre, no solo el metodoPagoId.
+        include: { categoria: true, user: true, quincena: true, metodoPago: true, presupuesto: true },
+      })
+      await registrarAuditoria(tx, {
+        tabla: 'transacciones', registroId: id, operacion: 'UPDATE',
+        antes, despues: actualizada, campos: CAMPOS_TRANSACCION, origen,
+      })
+      return actualizada
     })
 
     return NextResponse.json(transaccion)
@@ -171,8 +187,20 @@ export async function DELETE(
       return NextResponse.json({ error: 'Invalid ID' }, { status: 400 })
     }
 
-    await prisma.transaccion.delete({
-      where: { id },
+    const antes = await prisma.transaccion.findUnique({ where: { id } })
+    if (!antes) {
+      return NextResponse.json({ error: 'Transacción not found' }, { status: 404 })
+    }
+    const origen = await origenDeLaPeticion()
+
+    // Se guarda el movimiento completo en la bitacora antes de borrarlo, en la
+    // misma transaccion: asi un borrado siempre se puede reconstruir.
+    await prisma.$transaction(async tx => {
+      await registrarAuditoria(tx, {
+        tabla: 'transacciones', registroId: id, operacion: 'DELETE',
+        antes, despues: null, campos: CAMPOS_TRANSACCION, origen,
+      })
+      await tx.transaccion.delete({ where: { id } })
     })
 
     return NextResponse.json({ message: 'Transacción deleted' })
