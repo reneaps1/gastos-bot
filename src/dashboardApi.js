@@ -11,7 +11,11 @@
 // dashboard, ver dashboard/src/lib/service-auth.ts). El actor viaja en
 // x-milo-actor y el id del usuario en x-milo-user-id, para la bitacora.
 
-const DASHBOARD_URL = () => (process.env.DASHBOARD_URL || 'https://gastos-dashboard.onrender.com').replace(/\/$/, '')
+// SIN default a proposito: el token de servicio solo viaja a una URL que
+// alguien configuro. El dashboard real vive en gastos-dashboard-tfxp.onrender.com;
+// gastos-dashboard.onrender.com (sin sufijo) NO es nuestro, y un default
+// equivocado mandaria el token a un host ajeno (ver AGENTS.md).
+const DASHBOARD_URL = () => (process.env.DASHBOARD_URL || '').trim().replace(/\/$/, '')
 
 // El plan free de Render tarda hasta ~50 s en despertar el dashboard.
 const TIMEOUT_MS = Number(process.env.DASHBOARD_API_TIMEOUT_MS) || 90000
@@ -33,6 +37,9 @@ async function llamar(metodo, ruta, { body, actor, userId } = {}) {
   const token = process.env.MILO_SERVICE_TOKEN
   if (!token) {
     throw new DashboardApiError('Falta MILO_SERVICE_TOKEN en el servicio del bot: no puedo aplicar cambios en el dashboard.')
+  }
+  if (!/^https:\/\//.test(DASHBOARD_URL()) && !/^http:\/\/localhost(:\d+)?$/.test(DASHBOARD_URL())) {
+    throw new DashboardApiError('Falta DASHBOARD_URL (https) en el servicio del bot: no mando el token a una dirección que nadie configuró.')
   }
 
   const headers = {
