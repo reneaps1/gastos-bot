@@ -272,7 +272,7 @@ async function main() {
     await answer('hola', { senderName: 'Rene', chatId: 'chat-2' })
     check('otro chat no ve esa conversacion', !vistos[2].join('\n').includes('cuanto me queda?'))
 
-    for (let i = 0; i < 10; i++) await answer(`pregunta ${i}`, { senderName: 'Rene', chatId: 'chat-3' })
+    for (let i = 0; i < _interno.MEMORIA_TURNOS + 4; i++) await answer(`pregunta ${i}`, { senderName: "Rene", chatId: "chat-3" })
     check(`guarda solo las ultimas ${_interno.MEMORIA_TURNOS} vueltas`, _interno.recordar('chat-3').length === _interno.MEMORIA_TURNOS, _interno.recordar('chat-3').length)
 
     const viejo = Date.now() - _interno.MEMORIA_TTL_MS - 1000

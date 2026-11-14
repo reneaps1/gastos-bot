@@ -68,12 +68,13 @@ async function main() {
   m.olvidar(null)
   filas.length = 0
   const base = Date.now() - 60_000
-  for (let i = 0; i < 9; i++) await m.guardarTurno('chat-3', `pregunta ${i}`, `respuesta ${i}`, base + i * 1000)
+  const N = m.MEMORIA_TURNOS + 3
+  for (let i = 0; i < N; i++) await m.guardarTurno('chat-3', `pregunta ${i}`, `respuesta ${i}`, base + i * 1000)
   m.olvidar(null)
   await m.cargar('chat-3')
   const t = m.recordar('chat-3')
   check(`trae solo las ultimas ${m.MEMORIA_TURNOS}`, t.length === m.MEMORIA_TURNOS, t.length)
-  check('en orden cronologico', t[0].pregunta === 'pregunta 3' && t.at(-1).pregunta === 'pregunta 8', t.map(x => x.pregunta).join(','))
+  check('en orden cronologico', t[0].pregunta === 'pregunta 3' && t.at(-1).pregunta === `pregunta ${N - 1}`, t.map(x => x.pregunta).join(','))
 
   console.log('\n=== M3: no lee lo vencido ni guarda para siempre ===')
   m.olvidar(null)

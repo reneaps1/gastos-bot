@@ -134,7 +134,8 @@ El proyecto esta en **Fase 8 / Fase 9**. Las fases pueden ejecutarse en paralelo
 | Entrenamiento "Yo te escribo palabras" (menu de estilos, tabla `clasificador_ejemplos`) | cerrado (#131, #132, #133) | `src/entrenamientoPalabras.js`, migracion `20261102120000_clasificador_ejemplos` |
 | Con sugerida, el gasto se manda directo a la linea (boton para cambiarla) | en revision | `registrarGastoTelegram` en `src/index.js` |
 | Milo agente con acciones confirmadas: el agente propone cambios (`proponer_*`) y el boton Confirmar los aplica via la API del dashboard. PR 1: movimientos (registrar, editar, borrar) | en revision | `src/miloAcciones.js`, `src/dashboardApi.js`, migracion `20261113120000_milo_acciones` |
-| Agente con acciones: presupuesto (incl. traspasos), deudas y creditos, liquidez y configuracion | pendiente (PR 2-4) | mismo patron: un tipo nuevo en `TIPOS` de `src/miloAcciones.js` + su `proponer_*` |
+| Agente con acciones: cortes de liquidez (nuevo, corregir, borrar) | en revision | `liquidez.*` en `src/miloAcciones.js`, `scripts/test-milo-liquidez.js` |
+| Agente con acciones: presupuesto (incl. traspasos), deudas y creditos, cuentas y configuracion | pendiente (PR 3-4) | mismo patron: un tipo nuevo en `TIPOS` de `src/miloAcciones.js` + su `proponer_*` |
 | Fase C (opcional): embeddings para sinonimos | pendiente | |
 
 ### Fase 9 — Issues
@@ -423,8 +424,13 @@ Flujo:
 | `proponer_registrar_movimiento` | `transaccion.registrar` | `POST /api/transacciones` |
 | `proponer_editar_movimiento` | `transaccion.editar` | `PUT /api/transacciones/[id]` (solo los campos que cambian) |
 | `proponer_borrar_movimiento` | `transaccion.borrar` | `DELETE /api/transacciones/[id]` |
+| `proponer_corte_liquidez` | `liquidez.registrar` | `POST /api/liquidez` |
+| `proponer_editar_corte_liquidez` | `liquidez.editar` | `PUT /api/liquidez/[id]` (manda el corte completo: la ruta reemplaza todas las lineas) |
+| `proponer_borrar_corte_liquidez` | `liquidez.borrar` | `DELETE /api/liquidez/[id]` |
 
-Presupuesto (incluidos los traspasos), deudas y creditos, liquidez y configuracion siguen el mismo patron en los PR 2-4: un tipo en `TIPOS` de `src/miloAcciones.js` que se ejecuta con la ruta del dashboard que ya existe. Asi el traspaso sigue teniendo una sola implementacion (`POST /api/presupuestos/[id]/transferir`) aunque se pida desde Telegram.
+**Corte de liquidez (PR 2, 2026-11-14).** Un corte es UNA propuesta con todas las cuentas activas: el agente junta los saldos en la platica (todos en un mensaje o cuenta por cuenta) y se confirma una sola vez. Si faltan cuentas, la herramienta contesta cuales para que el agente pregunte; `others="previous"` hereda las demas del corte anterior y el resumen marca cuales se heredaron. Un saldo de 0 es valido. `faltaPagar`, `pagosQuincena` y los gastos al corte nunca salen del bot: los calcula el dashboard al guardar. Por esto la memoria subio de 6 a 12 vueltas (un corte cuenta por cuenta son 7 u 8). Pruebas: `scripts/test-milo-liquidez.js`.
+
+Presupuesto (incluidos los traspasos), deudas y creditos, cuentas y configuracion siguen el mismo patron en los PR 3-4: un tipo en `TIPOS` de `src/miloAcciones.js` que se ejecuta con la ruta del dashboard que ya existe. Asi el traspaso sigue teniendo una sola implementacion (`POST /api/presupuestos/[id]/transferir`) aunque se pida desde Telegram.
 
 Reglas que no se pueden relajar:
 
@@ -474,10 +480,10 @@ El 2026-11-14 Milo pregunto "¿que saldo hay en BBVA?" y el "0" de respuesta nun
 1. **Un numero suelto se iba al parser de gastos antes de que el agente lo viera.** Ahora, si la ultima respuesta de Milo en ese chat termino con "?", tiene menos de 10 minutos y contesta la misma persona, un mensaje con ruta `gasto` o `ambiguo` va al agente (log `TELEGRAM_RESPUESTA_A_MILO`). Si de verdad era un gasto nuevo, el agente lo propone con su boton Confirmar. En un grupo, el gasto de otra persona se registra normal.
 2. **La memoria vivia solo en el proceso** y se perdia cada vez que Render dormia el servicio (15 min sin trafico) o habia un deploy. Ahora `src/memoriaMilo.js` la respalda en la tabla `milo_conversacion` (migracion `20261114120000_milo_conversacion`): al recibir un mensaje, si el proceso no tiene la platica, la trae de la base.
 
-- Siguen siendo 6 vueltas y 30 minutos. La tabla no es un historial: se borra lo que tenga mas de 24 horas en cada escritura.
+- Son 12 vueltas y 30 minutos. La tabla no es un historial: se borra lo que tenga mas de 24 horas en cada escritura.
 - La base es respaldo, no requisito: si falla, Milo contesta igual con el cache y deja `MILO_MEMORIA_ERROR`.
 - Un gasto registrado tambien queda en la memoria ("200 super" y luego "cambia ese a 250").
-- El agente tiene prohibido pedir datos para algo que no puede guardar: mientras no existan las acciones de liquidez (PR 3), un corte de liquidez lo manda al dashboard en vez de preguntar saldos cuenta por cuenta.
+- El agente tiene prohibido pedir datos para algo que no puede guardar (presupuesto, deudas, configuracion: eso lo manda al dashboard). El corte de liquidez ya lo puede proponer.
 - Pruebas: `scripts/test-memoria-milo.js` y los casos HC1-HC4 de `scripts/test-telegram-flow.js`.
 
 #### audit_log ya se escribe
