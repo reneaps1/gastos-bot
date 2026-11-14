@@ -526,6 +526,26 @@ Lo que evita que se repita:
 - **Red de seguridad**: si la IA falla despues de traer datos, contesta con la plantilla del ultimo resultado bueno (`src/plantillasMilo.js`). En `TELEGRAM_QA` sale como ruta `agente-plantilla`. "No pude contestar" queda solo para cuando no hay ningun dato.
 - `/health` trae `ai: { ok, error, modelo, revisadoEn }` (un `GET /models` a DeepSeek con cache de 10 min) y el watchdog avisa al chat con `AI_PROVIDER_DOWN`.
 
+### Milo: Claude Sonnet 5.5 primero, DeepSeek de respaldo (2026-11-13)
+
+Decision del dueño: el **agente** (`src/financeAgent.js`) usa **Claude Sonnet 5.5** como modelo principal y **DeepSeek como respaldo**. Reemplaza "DeepSeek es el unico modelo" solo para el agente: el clasificador de mensajes ambiguos (`aiRouter.classify`, en `src/deepseek.js`) sigue en DeepSeek. Motivo: con las acciones confirmadas el agente ya no solo contesta, tambien propone cambios, y ahi importa mas que elija bien el movimiento y la herramienta que ahorrar centavos.
+
+- `src/claude.js` tiene el mismo contrato que `deepseek.completeDetallado` (`{ content, finishReason, tokens, error }`, nunca lanza). El agente no sabe cual contesto.
+- **Respaldo**: si Claude falla con error (llave invalida, limite de uso, caida, rechazo de seguridad), el mismo paso se pide a DeepSeek y el resto de esa respuesta sigue con DeepSeek. Un vacio o un corte NO cambia de proveedor: usa el reintento "mas corto" de siempre. En los logs: `FINANCE_AGENT_RESPALDO`.
+- **Sin `ANTHROPIC_API_KEY` todo funciona como antes** (solo DeepSeek). Quitar la variable es la salida de emergencia.
+- Sonnet 5.5 rechaza con 400 `thinking: {type: "disabled"}` y `temperature`/`top_p`: no se mandan. Se usa el razonamiento adaptativo con `effort` `low` (`CLAUDE_EFFORT`) y se suman 2000 tokens de holgura a `max_tokens` porque el razonamiento cuenta contra ese tope. La respuesta se lee por tipo de bloque: puede empezar con un bloque `thinking` vacio.
+- Ante un rechazo de los filtros de seguridad, la API reintenta sola en otro modelo (`fallbacks: "default"`, beta `server-side-fallback-2026-07-01`).
+- Cache del prefijo (`cache_control` automatico): cada paso del agente reenvia el mismo system con las herramientas. `CLAUDE_USO` en los logs trae entrada, lecturas y escrituras de cache y salida por llamada, para medir el costo real.
+- Pruebas: `scripts/test-claude.js` (sin red).
+
+| Variable | Donde | Default |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | `gastos-bot` y `milo-telegram-bot` | sin ella, solo DeepSeek |
+| `CLAUDE_MODEL` | opcional | `claude-sonnet-5-5` |
+| `CLAUDE_EFFORT` | opcional | `low` |
+
+Pendiente conocido: `/health` y el watchdog solo revisan a DeepSeek (`AI_PROVIDER_DOWN`). Una llave de Anthropic invalida no se ve ahi; se ve en `FINANCE_AGENT_RESPALDO` y `CLAUDE_ERROR` en los logs, y Milo sigue contestando con DeepSeek.
+
 ## Stack Oficial
 
 - **Next.js** full-stack
