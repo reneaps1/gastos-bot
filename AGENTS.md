@@ -445,6 +445,28 @@ El bot se autentica contra la API del dashboard con `Authorization: Bearer <MILO
 - El actor queda como `milo:<nombre de quien toco Confirmar>` y el id de la persona viaja en `x-milo-user-id`.
 - `DASHBOARD_URL` del bot es **obligatoria** para las acciones y tiene que ser el dashboard real: **`https://gastos-dashboard-tfxp.onrender.com`**. `gastos-dashboard.onrender.com` (sin sufijo) no es nuestro, igual que pasa con `gastos-bot`. `src/dashboardApi.js` no tiene default a proposito: sin la variable (o sin https) no manda el token y la accion queda `fallida` con el motivo. Configurada el 2026-11-13 en `gastos-bot` y `milo-telegram-bot`.
 
+#### Milo en el dashboard web (chat flotante, 2026-11-13)
+
+El mismo agente, con las mismas acciones confirmadas, vive tambien en el dashboard (y por lo tanto en la app iOS): un boton "Milo" abajo a la derecha abre el chat desde cualquier pagina (pantalla completa en el celular, encima de la barra inferior).
+
+**El agente NO se copio al dashboard.** El navegador habla con `/api/milo/chat` y `/api/milo/acciones/[id]` (exigen la sesion de un USUARIO; el token de servicio no puede usar el chat), y esas rutas reenvian al bot con `MILO_SERVICE_TOKEN`. El bot atiende en `POST /agente/web` y `POST /agente/web/acciones/:id` (`src/agenteWeb.js`), que llaman a `financeAgent.answer` y `miloAcciones` como el handler de Telegram. Un solo agente, una sola implementacion de cada accion.
+
+```
+navegador -> /api/milo/* (dashboard, sesion) -> MILO_BOT_URL/agente/web* (bot, token) -> agente / miloAcciones -> API del dashboard (audit_log)
+```
+
+- **El chatId del canal web siempre empieza con `web:`** (lo validan el dashboard y el bot). Una propuesta hecha en Telegram no se puede confirmar desde la web, ni al reves.
+- **Quien habla**: el dashboard tiene un solo login, sin relacion con `users`. La primera vez el chat pregunta "¿Quien eres?" y lo recuerda en el dispositivo; ese nombre es el actor de la bitacora.
+- Tras una accion confirmada, el chat dispara `milo:datos-cambiaron` (`dashboard/src/lib/milo-eventos.ts`) y `useResumenQuincena` y Transacciones recargan solos.
+- Cada pregunta deja `TELEGRAM_QA` con `route: "web"` (o `web-fallo`), para medir igual que Telegram.
+- La primera pregunta puede tardar hasta un minuto si `gastos-bot` esta dormido (plan free); el chat lo avisa.
+- Pruebas: `scripts/test-agente-web.js` (rutas del bot, puerta del proxy del dashboard y una vuelta completa dashboard -> bot).
+
+| Variable | Servicio | Valor |
+|---|---|---|
+| `MILO_BOT_URL` | `gastos-dashboard` | `https://gastos-bot-csca.onrender.com` (sin default: sin ella el chat contesta "Milo no esta configurado") |
+| `MILO_SERVICE_TOKEN` | los tres | el mismo valor (ya configurado) |
+
 #### audit_log ya se escribe
 
 Hasta este cambio la tabla `audit_log` existia y **nadie la escribia**. Ahora `POST`, `PUT` y `DELETE` de `/api/transacciones` dejan una fila por campo cambiado (`dashboard/src/lib/audit-log.ts`), en la misma transaccion de base que el cambio: `source = 'dashboard'` desde la web y `'telegram-agente'` desde el bot. Un DELETE guarda todos los campos con `valorNuevo = null`, asi que un movimiento borrado se puede reconstruir.

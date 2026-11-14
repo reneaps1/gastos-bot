@@ -3,6 +3,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Plus, Pencil, Trash2, ChevronLeft, ChevronRight, Search, X, ArrowUpRight, ArrowDownRight, Wallet, Calendar, User, CreditCard, StickyNote, Check, AlertCircle, Download, Unlink } from 'lucide-react'
 import { formatMXN, formatDate } from '@/lib/utils'
 import { useToast } from '@/components/Toast'
+import { useAlCambiarDatosMilo } from '@/lib/milo-eventos'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { FormModal } from '@/components/ui/FormModal'
 import { formatQuincenaRange, getInitialQuincenaId, getMexicoDateString, getQuincenaIdForDate, isDateInQuincenaGap, persistQuincenaId } from '@/lib/quincena-selection'
@@ -258,6 +259,9 @@ export default function TransaccionesPage() {
     const timer = window.setTimeout(() => { void fetchTxs() }, 0)
     return () => window.clearTimeout(timer)
   }, [fetchTxs])
+
+  // Milo puede registrar, editar o borrar movimientos desde su chat.
+  useAlCambiarDatosMilo(() => { void fetchTxs() })
 
   // La seleccion solo alcanza a la pagina visible, asi que al cambiar de pagina
   // o de filtro hay que soltarla: arrastrar ids de una vista anterior dejaria al

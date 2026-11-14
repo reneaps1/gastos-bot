@@ -66,6 +66,7 @@ const resumenDiario = require('./resumenDiario')
 const { lineasPara } = require('./sugerenciaLinea')
 const financeAgent = require('./financeAgent')
 const miloAcciones = require('./miloAcciones')
+const agenteWeb = require('./agenteWeb')
 const { clasificarMensaje } = require('./telegramRouting')
 const {
   TIPOS_CON_LINEA,
@@ -1620,6 +1621,15 @@ app.get('/', async (req, res) => {
 // arma nada. `?dry=1` devuelve el texto sin mandarlo; `?forzar=1` lo manda
 // aunque ya se haya mandado. Antes de mediodia de Mexico resume el dia
 // anterior: el cron de GitHub llega a veces horas tarde.
+// Milo en el dashboard web (chat flotante): el dashboard reenvia aqui con
+// MILO_SERVICE_TOKEN. Ver src/agenteWeb.js.
+agenteWeb.montar(app, {
+  financeAgent,
+  miloAcciones,
+  findUserByName: nombre => db.findUserByName(nombre),
+  logQA: logTelegramQA,
+})
+
 app.post('/cron/resumen-diario', async (req, res) => {
   if (!resumenDiario.autorizado(req.get('X-Cron-Token'))) {
     console.warn('RESUMEN_DIARIO_RECHAZADO: X-Cron-Token ausente o incorrecto')

@@ -7,7 +7,7 @@
     "start": "node src/index.js",
     "start:telegram": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node scripts/check-prisma-sync.js && node scripts/test-bot-flow.js && node scripts/test-telegram-flow.js && node scripts/test-clasificador.js && node scripts/test-resumen-diario.js && node scripts/test-watchdog.js && node scripts/test-calculos.js && node scripts/test-agente.js && node scripts/test-claude.js && node --experimental-strip-types scripts/test-service-auth.mjs && node scripts/test-plantillas-milo.js && node scripts/test-deepseek-salud.js && node scripts/test-cuadre.js && node scripts/test-milo-finanzas.js && node scripts/test-milo-preguntas.js",
+    "test": "node scripts/check-prisma-sync.js && node scripts/test-bot-flow.js && node scripts/test-telegram-flow.js && node scripts/test-clasificador.js && node scripts/test-resumen-diario.js && node scripts/test-watchdog.js && node scripts/test-calculos.js && node scripts/test-agente.js && node scripts/test-claude.js && node scripts/test-agente-web.js && node --experimental-strip-types scripts/test-service-auth.mjs && node scripts/test-plantillas-milo.js && node scripts/test-deepseek-salud.js && node scripts/test-cuadre.js && node scripts/test-milo-finanzas.js && node scripts/test-milo-preguntas.js",
     "test:prisma": "node scripts/check-prisma-sync.js",
     "test:whatsapp": "node scripts/test-bot-flow.js",
     "test:telegram": "node scripts/test-telegram-flow.js",
@@ -21,6 +21,7 @@
     "test:calculos": "node scripts/test-calculos.js",
     "test:agente": "node scripts/test-agente.js",
     "test:claude": "node scripts/test-claude.js",
+    "test:agente-web": "node scripts/test-agente-web.js",
     "test:cuadre": "node scripts/test-cuadre.js",
     "test:milo-finanzas": "node scripts/test-milo-finanzas.js",
     "test:milo-preguntas": "node scripts/test-milo-preguntas.js"
