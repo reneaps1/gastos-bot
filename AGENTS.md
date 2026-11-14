@@ -467,6 +467,19 @@ navegador -> /api/milo/* (dashboard, sesion) -> MILO_BOT_URL/agente/web* (bot, t
 | `MILO_BOT_URL` | `gastos-dashboard` | `https://gastos-bot-csca.onrender.com` (sin default: sin ella el chat contesta "Milo no esta configurado") |
 | `MILO_SERVICE_TOKEN` | los tres | el mismo valor (ya configurado) |
 
+#### Milo sigue el hilo de la conversacion (2026-11-14)
+
+El 2026-11-14 Milo pregunto "¿que saldo hay en BBVA?" y el "0" de respuesta nunca le llego. Dos causas, las dos arregladas:
+
+1. **Un numero suelto se iba al parser de gastos antes de que el agente lo viera.** Ahora, si la ultima respuesta de Milo en ese chat termino con "?", tiene menos de 10 minutos y contesta la misma persona, un mensaje con ruta `gasto` o `ambiguo` va al agente (log `TELEGRAM_RESPUESTA_A_MILO`). Si de verdad era un gasto nuevo, el agente lo propone con su boton Confirmar. En un grupo, el gasto de otra persona se registra normal.
+2. **La memoria vivia solo en el proceso** y se perdia cada vez que Render dormia el servicio (15 min sin trafico) o habia un deploy. Ahora `src/memoriaMilo.js` la respalda en la tabla `milo_conversacion` (migracion `20261114120000_milo_conversacion`): al recibir un mensaje, si el proceso no tiene la platica, la trae de la base.
+
+- Siguen siendo 6 vueltas y 30 minutos. La tabla no es un historial: se borra lo que tenga mas de 24 horas en cada escritura.
+- La base es respaldo, no requisito: si falla, Milo contesta igual con el cache y deja `MILO_MEMORIA_ERROR`.
+- Un gasto registrado tambien queda en la memoria ("200 super" y luego "cambia ese a 250").
+- El agente tiene prohibido pedir datos para algo que no puede guardar: mientras no existan las acciones de liquidez (PR 3), un corte de liquidez lo manda al dashboard en vez de preguntar saldos cuenta por cuenta.
+- Pruebas: `scripts/test-memoria-milo.js` y los casos HC1-HC4 de `scripts/test-telegram-flow.js`.
+
 #### audit_log ya se escribe
 
 Hasta este cambio la tabla `audit_log` existia y **nadie la escribia**. Ahora `POST`, `PUT` y `DELETE` de `/api/transacciones` dejan una fila por campo cambiado (`dashboard/src/lib/audit-log.ts`), en la misma transaccion de base que el cambio: `source = 'dashboard'` desde la web y `'telegram-agente'` desde el bot. Un DELETE guarda todos los campos con `valorNuevo = null`, asi que un movimiento borrado se puede reconstruir.
