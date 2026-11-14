@@ -46,11 +46,19 @@ function guardar(almacen: 'local' | 'session', clave: string, valor: string) {
   try { (almacen === 'local' ? localStorage : sessionStorage).setItem(clave, valor) } catch { /* sin almacenamiento */ }
 }
 
-function nuevoChatId() {
-  const letras = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+// A nivel de modulo y con un for simple, a proposito. La version anterior
+// declaraba el alfabeto dentro de la funcion y lo leia desde un callback de
+// Array.from; el minificador de produccion la inlineo en el useEffect, borro
+// la declaracion y dejo las referencias: "ReferenceError: letras is not
+// defined" y el dashboard entero caido (2026-11-14). En dev no pasaba.
+const ALFABETO_CHAT_ID = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+
+function nuevoChatId(): string {
   const bytes = new Uint8Array(24)
   crypto.getRandomValues(bytes)
-  return `web:${Array.from(bytes, b => letras[b % letras.length]).join('')}`
+  let id = 'web:'
+  for (let i = 0; i < bytes.length; i++) id += ALFABETO_CHAT_ID.charAt(bytes[i] % ALFABETO_CHAT_ID.length)
+  return id
 }
 
 function idLocal() {
