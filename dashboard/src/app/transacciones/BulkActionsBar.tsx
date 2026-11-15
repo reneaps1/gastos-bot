@@ -1,5 +1,7 @@
 'use client'
 import { CalendarRange, Tag, User, Wallet, CheckCheck, Unlink, Trash2, X } from 'lucide-react'
+import { formatMXN } from '@/lib/utils'
+import type { ResumenSeleccion } from './resumen-seleccion'
 
 // Barra de acciones masivas de /transacciones. No sabe escribir nada: cada
 // boton llama a una prop y la pagina decide si escribe directo o abre un
@@ -18,6 +20,8 @@ export const SIN_ASIGNAR = '__sin_asignar__'
 interface Props {
   count: number
   progress: { hechas: number; total: number } | null
+  /** Suma/Promedio/Min/Max de lo seleccionado, como la barra de estado de Excel. */
+  resumen: ResumenSeleccion | null
   quincenas: AccionOpcion[]
   categorias: AccionOpcion[]
   users: AccionOpcion[]
@@ -87,7 +91,7 @@ function AccionBoton({ icon, label, onClick, disabled, tono = 'indigo' }: {
 }
 
 export function BulkActionsBar({
-  count, progress, quincenas, categorias, users,
+  count, progress, resumen, quincenas, categorias, users,
   onMoverQuincena, onCambiarCategoria, onCambiarUsuario,
   onAsignarLinea, onQuitarAsignacion, onEstatus, onEliminar, onClear,
 }: Props) {
@@ -99,6 +103,18 @@ export function BulkActionsBar({
         {corriendo
           ? `Aplicando ${progress.hechas} de ${progress.total}...`
           : `${count} seleccionada${count > 1 ? 's' : ''}`}
+        {!corriendo && resumen && (
+          <span className="ml-3 inline-flex flex-wrap gap-x-3 text-xs font-normal text-indigo-600/90 dark:text-indigo-300/90 tabular-nums">
+            <span>Suma <b className={resumen.suma < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}>{formatMXN(resumen.suma)}</b></span>
+            {resumen.cuenta > 1 && (
+              <>
+                <span>Promedio <b>{formatMXN(resumen.promedio)}</b></span>
+                <span>Mín <b>{formatMXN(resumen.min)}</b></span>
+                <span>Máx <b>{formatMXN(resumen.max)}</b></span>
+              </>
+            )}
+          </span>
+        )}
       </span>
       <div className="flex items-center gap-2 flex-wrap">
         <AccionSelect icon={<CalendarRange size={13} />} label="Mover a quincena"

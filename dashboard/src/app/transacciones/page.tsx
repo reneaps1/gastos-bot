@@ -11,6 +11,8 @@ import { QuincenaStatus } from '@/components/ui/QuincenaStatus'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
+import { ColumnHeaderMenu, type FiltroColumna, type OpcionFiltro, type SortDir } from '@/components/ui/ColumnHeaderMenu'
+import { resumenSeleccion } from './resumen-seleccion'
 import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
 import { useColumnVisibility } from '@/lib/use-column-visibility'
 import { useSearchShortcut } from '@/lib/use-search-shortcut'
@@ -116,6 +118,22 @@ const TX_COLUMNS = [
 ]
 const TX_COLUMNS_DEFAULT = TX_COLUMNS.map(c => c.key)
 
+// Columnas por las que se puede ordenar. Deben coincidir con la lista blanca
+// ORDENES de /api/transacciones.
+type SortKey = 'descripcion' | 'categoria' | 'presupuesto' | 'quincena' | 'fecha' | 'usuario' | 'metodoPago' | 'tipo' | 'estatus' | 'monto'
+
+const SORT_OPCIONES_MOVIL: Array<{ value: string; label: string }> = [
+  { value: 'fecha:desc', label: 'Más recientes' },
+  { value: 'fecha:asc', label: 'Más antiguas' },
+  { value: 'monto:desc', label: 'Monto mayor a menor' },
+  { value: 'monto:asc', label: 'Monto menor a mayor' },
+  { value: 'descripcion:asc', label: 'Descripción A → Z' },
+  { value: 'categoria:asc', label: 'Categoría A → Z' },
+]
+
+// "Sin usuario" / "Sin método": el API lo traduce a IS NULL.
+const SIN_VALOR_FILTRO = 'none'
+
 function fieldClass(error?: string) {
   return `w-full border rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-700 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-400 ${error ? 'border-rose-400' : 'border-slate-200 dark:border-slate-700'}`
 }
@@ -157,11 +175,19 @@ export default function TransaccionesPage() {
   // Quincenas extra combinadas via Ctrl/Cmd+clic (mismo patron que en
   // Presupuesto). Sin efecto si quincenaId === ALL_QUINCENAS.
   const [extraQuincenaIds, setExtraQuincenaIds] = useState<Set<string>>(new Set())
-  const [tipo, setTipo] = useState('')
-  const [categoriaId, setCategoriaId] = useState('')
-  const [userId, setUserId] = useState('')
-  const [estatus, setEstatus] = useState('')
+  // Filtros de varios valores: los escriben tanto los chips de arriba (uno a
+  // la vez) como el autofiltro de cada encabezado (varios). Arreglo vacio =
+  // sin filtro.
+  const [tipos, setTipos] = useState<string[]>([])
+  const [categoriaIds, setCategoriaIds] = useState<string[]>([])
+  const [userIds, setUserIds] = useState<string[]>([])
+  const [estatuses, setEstatuses] = useState<string[]>([])
+  const [metodoPagoIds, setMetodoPagoIds] = useState<string[]>([])
   const [asignacion, setAsignacion] = useState('')
+  const [montoRango, setMontoRango] = useState({ min: '', max: '' })
+  const [fechaRango, setFechaRango] = useState({ desde: '', hasta: '' })
+  // null = orden de siempre (fecha desc, lo decide el servidor).
+  const [orden, setOrden] = useState<{ key: SortKey; dir: SortDir } | null>(null)
   const [busqueda, setBusqueda] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const busquedaInputRef = useRef<HTMLInputElement>(null)
@@ -233,17 +259,31 @@ export default function TransaccionesPage() {
     return Array.from(new Set([quincenaId, ...extraQuincenaIds].filter(Boolean)))
   }, [quincenaId, extraQuincenaIds])
 
+  // Query de filtros + orden, compartida por la tabla y la descarga CSV para
+  // que el archivo salga exactamente como se ve en pantalla. Es un string (y
+  // no el URLSearchParams) para que sirva de dependencia estable.
+  const filtrosQS = useMemo(() => {
+    const params = new URLSearchParams()
+    for (const id of selectedQuincenaIds) params.append('quincenaId', id)
+    for (const v of tipos) params.append('tipo', v)
+    for (const v of categoriaIds) params.append('categoriaId', v)
+    for (const v of userIds) params.append('userId', v)
+    for (const v of estatuses) params.append('estatus', v)
+    for (const v of metodoPagoIds) params.append('metodoPagoId', v)
+    if (asignacion) params.set('asignado', asignacion)
+    if (debouncedSearch) params.set('busqueda', debouncedSearch)
+    if (montoRango.min) params.set('montoMin', montoRango.min)
+    if (montoRango.max) params.set('montoMax', montoRango.max)
+    if (fechaRango.desde) params.set('fechaDesde', fechaRango.desde)
+    if (fechaRango.hasta) params.set('fechaHasta', fechaRango.hasta)
+    if (orden) { params.set('sort', orden.key); params.set('dir', orden.dir) }
+    return params.toString()
+  }, [selectedQuincenaIds, tipos, categoriaIds, userIds, estatuses, metodoPagoIds, asignacion, debouncedSearch, montoRango, fechaRango, orden])
+
   const fetchTxs = useCallback(async () => {
     if (!quincenaId) { setLoading(false); return }
     setLoading(true)
-    const params = new URLSearchParams()
-    for (const id of selectedQuincenaIds) params.append('quincenaId', id)
-    if (tipo) params.set('tipo', tipo)
-    if (categoriaId) params.set('categoriaId', categoriaId)
-    if (userId) params.set('userId', userId)
-    if (estatus) params.set('estatus', estatus)
-    if (asignacion) params.set('asignado', asignacion)
-    if (debouncedSearch) params.set('busqueda', debouncedSearch)
+    const params = new URLSearchParams(filtrosQS)
     params.set('page', page.toString())
     params.set('limit', LIMIT.toString())
     try {
@@ -253,7 +293,7 @@ export default function TransaccionesPage() {
       setTotal(json.pagination?.total ?? 0)
       setTotales(json.totales ?? { Gasto: 0, Ingreso: 0, Ahorro: 0, GastoPagado: 0 })
     } finally { setLoading(false) }
-  }, [quincenaId, selectedQuincenaIds, tipo, categoriaId, userId, estatus, asignacion, debouncedSearch, page])
+  }, [quincenaId, filtrosQS, page])
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void fetchTxs() }, 0)
@@ -477,16 +517,23 @@ export default function TransaccionesPage() {
   // Una sola regla en un solo lugar, en vez de decidirlo en cada handler.
   const filtroActivo: Record<CampoEditable, boolean> = {
     quincena: quincenaId !== ALL_QUINCENAS,
-    categoria: !!categoriaId,
-    usuario: !!userId,
-    metodoPago: false, // no hay filtro de metodo de pago en esta vista
+    categoria: categoriaIds.length > 0,
+    usuario: userIds.length > 0,
+    metodoPago: metodoPagoIds.length > 0,
     presupuesto: !!asignacion,
-    estatus: !!estatus,
+    estatus: estatuses.length > 0,
+  }
+
+  // Con un orden por columna activo, editar esa columna puede mover la fila de
+  // lugar (o de pagina): se refetchea para que la tabla no mienta.
+  const columnaDeOrden: Record<CampoEditable, SortKey> = {
+    quincena: 'quincena', categoria: 'categoria', usuario: 'usuario',
+    metodoPago: 'metodoPago', presupuesto: 'presupuesto', estatus: 'estatus',
   }
 
   function requiereRefetch(campos: CampoEditable[]) {
     if (campos.includes('categoria')) return true // puede voltear el tipo -> mueve los totales
-    return campos.some(c => filtroActivo[c])
+    return campos.some(c => filtroActivo[c] || orden?.key === columnaDeOrden[c])
   }
 
   async function updateTx(
@@ -776,14 +823,7 @@ export default function TransaccionesPage() {
   async function handleExportCsv() {
     setExporting(true)
     try {
-      const params = new URLSearchParams()
-      for (const id of selectedQuincenaIds) params.append('quincenaId', id)
-      if (tipo) params.set('tipo', tipo)
-      if (categoriaId) params.set('categoriaId', categoriaId)
-      if (userId) params.set('userId', userId)
-      if (estatus) params.set('estatus', estatus)
-      if (asignacion) params.set('asignado', asignacion)
-      if (debouncedSearch) params.set('busqueda', debouncedSearch)
+      const params = new URLSearchParams(filtrosQS)
       params.set('page', '1')
       params.set('limit', '9999')
       const res = await fetch(`/api/transacciones?${params}`)
@@ -907,6 +947,110 @@ export default function TransaccionesPage() {
     return !!sugerida && sugerida !== tx.quincenaId.toString()
   }
 
+  // --- Orden y autofiltro por columna ---------------------------------------
+
+  function conPagina1<T>(set: (v: T) => void) {
+    return (v: T) => { set(v); setPage(1) }
+  }
+
+  function sortDirDe(key: SortKey): SortDir | null {
+    return orden?.key === key ? orden.dir : null
+  }
+
+  function ordenarPor(key: SortKey) {
+    return (dir: SortDir | null) => { setOrden(dir ? { key, dir } : null); setPage(1) }
+  }
+
+  const opcionesFiltroCategoria: OpcionFiltro[] = useMemo(
+    () => [...categorias].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map(c => ({ value: c.id.toString(), label: c.nombre })),
+    [categorias],
+  )
+  const opcionesFiltroUsuario: OpcionFiltro[] = useMemo(
+    () => [{ value: SIN_VALOR_FILTRO, label: '(Sin usuario)' }, ...users.map(u => ({ value: u.id.toString(), label: u.nombre }))],
+    [users],
+  )
+  const opcionesFiltroMetodo: OpcionFiltro[] = useMemo(
+    () => [{ value: SIN_VALOR_FILTRO, label: '(Sin método)' }, ...metodosPago.map(m => ({ value: m.id.toString(), label: m.nombre }))],
+    [metodosPago],
+  )
+  // Mas recientes primero: es donde casi siempre esta lo que se busca.
+  const opcionesFiltroQuincena: OpcionFiltro[] = useMemo(
+    () => [...quincenas].sort((a, b) => b.fechaInicio.localeCompare(a.fechaInicio)).map(q => ({ value: q.id.toString(), label: q.codigo })),
+    [quincenas],
+  )
+  const OPCIONES_TIPO: OpcionFiltro[] = [
+    { value: 'Gasto', label: 'Gasto' }, { value: 'Ingreso', label: 'Ingreso' }, { value: 'Ahorro', label: 'Ahorro' },
+  ]
+  const OPCIONES_ESTATUS: OpcionFiltro[] = [{ value: 'Pagado', label: 'Pagado' }, { value: 'Pendiente', label: 'Pendiente' }]
+  const OPCIONES_ASIGNACION: OpcionFiltro[] = [{ value: 'si', label: 'Asignada' }, { value: 'no', label: 'Sin asignar' }]
+
+  function lista(opciones: OpcionFiltro[], seleccion: string[], set: (v: string[]) => void): FiltroColumna {
+    return { kind: 'lista', opciones, seleccion, onChange: conPagina1(set) }
+  }
+
+  // Quincena no tiene estado de filtro propio: la columna escribe en la
+  // seleccion de chips de arriba (la primera es la principal, el resto se
+  // combinan como con Ctrl/Cmd+clic).
+  const filtroQuincena: FiltroColumna = {
+    kind: 'lista',
+    opciones: opcionesFiltroQuincena,
+    seleccion: quincenaId === ALL_QUINCENAS ? [] : selectedQuincenaIds,
+    onChange: ids => {
+      if (ids.length === 0) { selectQuincena(ALL_QUINCENAS); return }
+      selectQuincena(ids[0])
+      setExtraQuincenaIds(new Set(ids.slice(1)))
+    },
+  }
+
+  // Presup. es un filtro de un solo valor en el API (asignado=si|no): marcar
+  // ambas equivale a no filtrar.
+  const filtroAsignacion: FiltroColumna = {
+    kind: 'lista',
+    opciones: OPCIONES_ASIGNACION,
+    seleccion: asignacion ? [asignacion] : [],
+    onChange: v => { setAsignacion(v.length === 1 ? v[0] : ''); setPage(1) },
+  }
+
+  /** Texto de la pastilla del chip cuando hay mas de un valor. */
+  function resumenDe(seleccion: string[], opciones: OpcionFiltro[]): string | undefined {
+    if (seleccion.length < 2) return undefined
+    const primero = opciones.find(o => o.value === seleccion[0])?.label ?? seleccion[0]
+    return `${primero}, +${seleccion.length - 1}`
+  }
+
+  const hayFiltros = tipos.length > 0 || categoriaIds.length > 0 || userIds.length > 0 || estatuses.length > 0
+    || metodoPagoIds.length > 0 || !!asignacion || !!busqueda
+    || !!montoRango.min || !!montoRango.max || !!fechaRango.desde || !!fechaRango.hasta
+
+  function limpiarFiltros() {
+    setTipos([]); setCategoriaIds([]); setUserIds([]); setEstatuses([]); setMetodoPagoIds([])
+    setAsignacion(''); setBusqueda('')
+    setMontoRango({ min: '', max: '' }); setFechaRango({ desde: '', hasta: '' })
+    setPage(1)
+  }
+
+  const resumenSel = resumenSeleccion(selectedTxs)
+
+  // Fila de totales al pie. Neto con la misma regla de signo de la columna
+  // Monto: Ingreso suma, Gasto y Ahorro restan.
+  const netoFiltrado = totales.Ingreso - totales.Gasto - totales.Ahorro
+  const opcionalesVisibles = TX_COLUMNS.filter(c => colVisible.has(c.key))
+  const columnasAntesDeMonto = {
+    // checkbox + Descripción + opcionales visibles (Usuario y Método se
+    // ocultan abajo de lg).
+    lg: 2 + opcionalesVisibles.length,
+    md: 2 + opcionalesVisibles.filter(c => c.key !== 'usuario' && c.key !== 'metodoPago').length,
+  }
+  const pieTotales = (
+    <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-slate-500 dark:text-slate-400 tabular-nums">
+      <span className="font-medium text-slate-700 dark:text-slate-200">{total} registro{total === 1 ? '' : 's'}</span>
+      <span>Ingresos <b className="text-emerald-600 dark:text-emerald-400">+{formatMXN(totales.Ingreso)}</b></span>
+      <span>Gastos <b className="text-rose-600 dark:text-rose-400">-{formatMXN(totales.Gasto)}</b></span>
+      {totales.Ahorro !== 0 && <span>Ahorro <b className="text-blue-600 dark:text-blue-400">{formatMXN(-totales.Ahorro)}</b></span>}
+      {totalPages > 1 && <span className="text-slate-400 dark:text-slate-500">· todas las páginas</span>}
+    </span>
+  )
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-4">
@@ -941,20 +1085,25 @@ export default function TransaccionesPage() {
         </div>
         {/* Filtros */}
         <div className="flex flex-wrap items-center gap-2">
-          <FilterChip value={tipo} onChange={v => { setTipo(v); setPage(1) }} onClear={() => { setTipo(''); setPage(1) }} placeholder="Tipo">
-            <option value="Gasto">Gasto</option>
-            <option value="Ingreso">Ingreso</option>
-            <option value="Ahorro">Ahorro</option>
+          <FilterChip value={tipos[0] ?? ''} resumen={resumenDe(tipos, OPCIONES_TIPO)}
+            onChange={v => { setTipos(v ? [v] : []); setPage(1) }} onClear={() => { setTipos([]); setPage(1) }} placeholder="Tipo">
+            {OPCIONES_TIPO.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </FilterChip>
-          <FilterChip value={categoriaId} onChange={v => { setCategoriaId(v); setPage(1) }} onClear={() => { setCategoriaId(''); setPage(1) }} placeholder="Categoría">
+          <FilterChip value={categoriaIds[0] ?? ''} resumen={resumenDe(categoriaIds, opcionesFiltroCategoria)}
+            onChange={v => { setCategoriaIds(v ? [v] : []); setPage(1) }} onClear={() => { setCategoriaIds([]); setPage(1) }} placeholder="Categoría">
             {categorias.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </FilterChip>
-          <FilterChip value={userId} onChange={v => { setUserId(v); setPage(1) }} onClear={() => { setUserId(''); setPage(1) }} placeholder="Usuario">
-            {users.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+          <FilterChip value={userIds[0] ?? ''} resumen={resumenDe(userIds, opcionesFiltroUsuario)}
+            onChange={v => { setUserIds(v ? [v] : []); setPage(1) }} onClear={() => { setUserIds([]); setPage(1) }} placeholder="Usuario">
+            {opcionesFiltroUsuario.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </FilterChip>
-          <FilterChip value={estatus} onChange={v => { setEstatus(v); setPage(1) }} onClear={() => { setEstatus(''); setPage(1) }} placeholder="Estatus">
-            <option value="Pagado">Pagado</option>
-            <option value="Pendiente">Pendiente</option>
+          <FilterChip value={metodoPagoIds[0] ?? ''} resumen={resumenDe(metodoPagoIds, opcionesFiltroMetodo)}
+            onChange={v => { setMetodoPagoIds(v ? [v] : []); setPage(1) }} onClear={() => { setMetodoPagoIds([]); setPage(1) }} placeholder="Método de pago">
+            {opcionesFiltroMetodo.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </FilterChip>
+          <FilterChip value={estatuses[0] ?? ''} resumen={resumenDe(estatuses, OPCIONES_ESTATUS)}
+            onChange={v => { setEstatuses(v ? [v] : []); setPage(1) }} onClear={() => { setEstatuses([]); setPage(1) }} placeholder="Estatus">
+            {OPCIONES_ESTATUS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </FilterChip>
           <FilterChip value={asignacion} onChange={v => { setAsignacion(v); setPage(1) }} onClear={() => { setAsignacion(''); setPage(1) }} placeholder="Asignación">
             <option value="si">Asignada</option>
@@ -971,7 +1120,37 @@ export default function TransaccionesPage() {
               </button>
             )}
           </div>
+          {/* Orden en movil: la vista de tarjetas no tiene encabezados. */}
+          <select aria-label="Ordenar por" value={orden ? `${orden.key}:${orden.dir}` : ''}
+            onChange={e => {
+              const [key, dir] = e.target.value.split(':') as [SortKey, SortDir]
+              setOrden(e.target.value ? { key, dir } : null); setPage(1)
+            }}
+            className="md:hidden text-sm rounded-full px-3 py-2 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+            <option value="">Ordenar por…</option>
+            {SORT_OPCIONES_MOVIL.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
         </div>
+        {(montoRango.min || montoRango.max || fechaRango.desde || fechaRango.hasta || hayFiltros) && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            {(montoRango.min || montoRango.max) && (
+              <FilterChip value="" placeholder="Monto" onChange={() => {}}
+                resumen={montoRango.min && montoRango.max ? `${formatMXN(Number(montoRango.min))} – ${formatMXN(Number(montoRango.max))}` : montoRango.min ? `≥ ${formatMXN(Number(montoRango.min))}` : `≤ ${formatMXN(Number(montoRango.max))}`}
+                onClear={() => { setMontoRango({ min: '', max: '' }); setPage(1) }}>{null}</FilterChip>
+            )}
+            {(fechaRango.desde || fechaRango.hasta) && (
+              <FilterChip value="" placeholder="Fecha" onChange={() => {}}
+                resumen={fechaRango.desde && fechaRango.hasta ? `${formatDate(fechaRango.desde)} – ${formatDate(fechaRango.hasta)}` : fechaRango.desde ? `desde ${formatDate(fechaRango.desde)}` : `hasta ${formatDate(fechaRango.hasta)}`}
+                onClear={() => { setFechaRango({ desde: '', hasta: '' }); setPage(1) }}>{null}</FilterChip>
+            )}
+            {hayFiltros && (
+              <button type="button" onClick={limpiarFiltros}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                Limpiar filtros
+              </button>
+            )}
+          </div>
+        )}
         {quincenaId !== ALL_QUINCENAS && <QuincenaStatus quincenas={quincenas} selectedId={quincenaId} today={today} />}
       </div>
 
@@ -994,6 +1173,7 @@ export default function TransaccionesPage() {
         <BulkActionsBar
           count={selected.size}
           progress={bulkProgress}
+          resumen={resumenSel}
           quincenas={opcionesQuincena}
           categorias={opcionesCategoria}
           users={[{ value: SIN_USUARIO, label: 'Sin asignar' }, ...opcionesUsuario]}
@@ -1032,10 +1212,18 @@ export default function TransaccionesPage() {
             </div>
             <p className="font-medium text-slate-600 dark:text-slate-400">Sin transacciones</p>
             <p className="text-sm mt-1">
-              {quincenaId || tipo || categoriaId || userId || estatus || asignacion || debouncedSearch
+              {quincenaId || hayFiltros
                 ? 'No hay resultados para los filtros seleccionados'
                 : 'Crea una transacción para comenzar'}
             </p>
+            {/* Sin filas tampoco hay encabezados (y sus autofiltros): la salida
+                tiene que estar aqui. */}
+            {hayFiltros && (
+              <button type="button" onClick={limpiarFiltros}
+                className="mt-4 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                Limpiar filtros
+              </button>
+            )}
           </div>
         ) : (
           <>
@@ -1105,9 +1293,11 @@ export default function TransaccionesPage() {
               )
             })}
           </div>
-          <div className="hidden overflow-x-auto md:block">
+          {/* Contenedor con scroll propio: sin el, `sticky` en thead/tfoot no
+              funciona (overflow-x-auto ya crea un contexto de scroll). */}
+          <div className="hidden overflow-auto max-h-[calc(100vh-10rem)] md:block">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+              <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900 shadow-[inset_0_-1px_0] shadow-slate-200 dark:shadow-slate-700">
                 <tr>
                   <th className="px-4 py-3 w-10">
                     <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
@@ -1115,16 +1305,44 @@ export default function TransaccionesPage() {
                       aria-label="Seleccionar todas las de esta página"
                       className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 text-indigo-600 dark:text-indigo-400 focus:ring-indigo-500 dark:focus:ring-indigo-400 cursor-pointer disabled:cursor-default" />
                   </th>
-                  <th className="text-left px-5 py-3 text-slate-500 dark:text-slate-400 font-medium">Descripción</th>
-                  {colVisible.has('categoria') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Categoría</th>}
-                  {colVisible.has('presupuesto') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Presup.</th>}
-                  {colVisible.has('quincena') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Quincena</th>}
-                  {colVisible.has('fecha') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Fecha</th>}
-                  {colVisible.has('usuario') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Usuario</th>}
-                  {colVisible.has('metodoPago') && <th className="text-left px-4 py-3 text-slate-500 dark:text-slate-400 font-medium hidden lg:table-cell">Método de pago</th>}
-                  {colVisible.has('tipo') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Tipo</th>}
-                  {colVisible.has('estatus') && <th className="text-center px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Estatus</th>}
-                  <th className="text-right px-4 py-3 text-slate-500 dark:text-slate-400 font-medium">Monto</th>
+                  <ColumnHeaderMenu label="Descripción" sortDir={sortDirDe('descripcion')} onSort={ordenarPor('descripcion')}
+                    filtro={{ kind: 'texto', valor: busqueda, onChange: setBusqueda }} />
+                  {colVisible.has('categoria') && (
+                    <ColumnHeaderMenu label="Categoría" sortDir={sortDirDe('categoria')} onSort={ordenarPor('categoria')}
+                      filtro={lista(opcionesFiltroCategoria, categoriaIds, setCategoriaIds)} />
+                  )}
+                  {colVisible.has('presupuesto') && (
+                    <ColumnHeaderMenu label="Presup." align="center" sortDir={sortDirDe('presupuesto')} onSort={ordenarPor('presupuesto')}
+                      sortLabels={['asignadas primero', 'sin asignar primero']} filtro={filtroAsignacion} />
+                  )}
+                  {colVisible.has('quincena') && (
+                    <ColumnHeaderMenu label="Quincena" sortDir={sortDirDe('quincena')} onSort={ordenarPor('quincena')}
+                      sortLabels={['más antigua primero', 'más reciente primero']} filtro={filtroQuincena} />
+                  )}
+                  {colVisible.has('fecha') && (
+                    <ColumnHeaderMenu label="Fecha" sortDir={sortDirDe('fecha')} onSort={ordenarPor('fecha')}
+                      sortLabels={['más antigua primero', 'más reciente primero']}
+                      filtro={{ kind: 'rango-fecha', desde: fechaRango.desde, hasta: fechaRango.hasta, onChange: (desde, hasta) => { setFechaRango({ desde, hasta }); setPage(1) } }} />
+                  )}
+                  {colVisible.has('usuario') && (
+                    <ColumnHeaderMenu label="Usuario" className="hidden lg:table-cell" sortDir={sortDirDe('usuario')} onSort={ordenarPor('usuario')}
+                      filtro={lista(opcionesFiltroUsuario, userIds, setUserIds)} />
+                  )}
+                  {colVisible.has('metodoPago') && (
+                    <ColumnHeaderMenu label="Método de pago" className="hidden lg:table-cell" sortDir={sortDirDe('metodoPago')} onSort={ordenarPor('metodoPago')}
+                      filtro={lista(opcionesFiltroMetodo, metodoPagoIds, setMetodoPagoIds)} />
+                  )}
+                  {colVisible.has('tipo') && (
+                    <ColumnHeaderMenu label="Tipo" align="center" sortDir={sortDirDe('tipo')} onSort={ordenarPor('tipo')}
+                      filtro={lista(OPCIONES_TIPO, tipos, setTipos)} />
+                  )}
+                  {colVisible.has('estatus') && (
+                    <ColumnHeaderMenu label="Estatus" align="center" sortDir={sortDirDe('estatus')} onSort={ordenarPor('estatus')}
+                      filtro={lista(OPCIONES_ESTATUS, estatuses, setEstatuses)} />
+                  )}
+                  <ColumnHeaderMenu label="Monto" align="right" sortDir={sortDirDe('monto')} onSort={ordenarPor('monto')}
+                    sortLabels={['menor a mayor', 'mayor a menor']}
+                    filtro={{ kind: 'rango-num', min: montoRango.min, max: montoRango.max, onChange: (min, max) => { setMontoRango({ min, max }); setPage(1) } }} />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
@@ -1289,6 +1507,22 @@ export default function TransaccionesPage() {
                   )
                 })}
               </tbody>
+              {/* Totales de TODO lo filtrado (no solo esta pagina): vienen del
+                  servidor, igual que las tarjetas de arriba. Dos celdas de
+                  etiqueta porque Usuario y Metodo se ocultan abajo de lg y el
+                  colSpan tiene que cuadrar en ambos tamaños. */}
+              <tfoot className="sticky bottom-0 z-10 bg-slate-50 dark:bg-slate-900 shadow-[inset_0_1px_0] shadow-slate-200 dark:shadow-slate-700 text-xs">
+                <tr>
+                  <td colSpan={columnasAntesDeMonto.md} className="lg:hidden px-5 py-3">{pieTotales}</td>
+                  <td colSpan={columnasAntesDeMonto.lg} className="hidden lg:table-cell px-5 py-3">{pieTotales}</td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <span className="block text-slate-500 dark:text-slate-400">Neto</span>
+                    <span className={`text-sm font-bold tabular-nums ${netoFiltrado < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+                      {formatMXN(netoFiltrado)}
+                    </span>
+                  </td>
+                </tr>
+              </tfoot>
             </table>
           </div>
           </>
