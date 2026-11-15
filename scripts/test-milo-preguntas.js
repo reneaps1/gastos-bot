@@ -40,6 +40,7 @@ const { crearFakePrisma } = require('./fake-prisma')
 const { datosMilo } = require('./fixture-milo')
 const { cuadreSegunDashboard } = require('./dashboard-ts')
 const { clasificarMensaje } = require(path.join(SRC, 'telegramRouting'))
+const { detectReassign } = require(path.join(SRC, 'reassignIntent'))
 const { formatMXN } = require(path.join(SRC, 'lib', 'finanzas-quincena'))
 const { normalize } = require(path.join(SRC, 'financeUtils'))
 
@@ -138,6 +139,21 @@ function elegirHerramienta(pregunta, messages) {
   return { tool: 'get_money_status', args: {} }
 }
 
+async function movimientoDeTelegram(pregunta) {
+  const { ruta } = clasificarMensaje(pregunta)
+  if (ruta === 'reasignar') {
+    const d = detectReassign(pregunta)
+    return { tool: 'proponer_reasignar_gasto', args: { reference: d.referencia, destination: d.destino } }
+  }
+  if (ruta === 'gasto') return { tool: 'registrar_gasto', args: { text: pregunta } }
+  if (ruta === 'ambiguo' || ruta === 'quiza-reasignar') {
+    const c = await fakeDeepseek.classify(pregunta)
+    if (c?.type === 'expense' && ruta === 'ambiguo') return { tool: 'registrar_gasto', args: { text: pregunta } }
+    if (c?.type === 'reassign') return { tool: 'proponer_reasignar_gasto', args: { reference: c.referencia, destination: c.destino } }
+  }
+  return null
+}
+
 function redactar(tool, r) {
   if (!r?.ok) return `No encontré el dato: ${r?.error || 'sin detalle'}`
   switch (tool) {
@@ -171,7 +187,14 @@ const fakeDeepseek = {
       const m = /^TOOL_RESULT (\w+):\n([\s\S]*?)\n\nContinúa/.exec(ultimo)
       return JSON.stringify({ action: 'answer', answer: redactar(m[1], JSON.parse(m[2])) })
     }
-    const eleccion = elegirHerramienta(preguntaActual(messages), messages)
+    // En Telegram Milo ve TODOS los mensajes: un movimiento claro lo registra
+    // con registrar_gasto y una reasignacion va a proponer_reasignar_gasto. El
+    // modelo falso decide como lo haria el real: con el ruteo de siempre y,
+    // en lo ambiguo, con lo que diga el clasificador.
+    const pregunta = preguntaActual(messages)
+    const conRegistro = messages[0]?.content?.includes('"registrar_gasto"')
+    let eleccion = conRegistro ? await movimientoDeTelegram(pregunta) : null
+    if (!eleccion) eleccion = elegirHerramienta(pregunta, messages)
     herramientasPedidas.push(eleccion)
     return JSON.stringify({ action: 'tool', ...eleccion })
   },
@@ -458,8 +481,8 @@ async function main() {
       /gasolina/i.test(propuesta?.message || '') && (propuesta?.buttons || []).length > 0, propuesta?.message)
 
     const resp = await preguntar('pon la gasolina en transporte')
-    check('"pon la gasolina en transporte": el clasificador la reconoce y se propone con boton',
-      /gasolina/i.test(resp?.message || '') && (resp?.buttons || []).length > 0 && logs.some(l => l.startsWith('TELEGRAM_QA') && l.includes('"route":"reasignar-clasificado"')), resp?.message)
+    check('"pon la gasolina en transporte": Milo la reconoce y se propone con boton',
+      /gasolina/i.test(resp?.message || '') && (resp?.buttons || []).length > 0 && logs.some(l => l.startsWith('TELEGRAM_QA') && l.includes('"route":"reasignar-agente"')), resp?.message)
     check('...sin escribir nada', creadas().length === antes)
 
     const n1 = creadas().length
