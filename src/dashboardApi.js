@@ -77,9 +77,28 @@ async function llamar(metodo, ruta, { body, actor, userId } = {}) {
   return cuerpo
 }
 
+// Autoverificacion al arrancar: una lectura autenticada al dashboard. Dice en
+// el log si el enlace sirve, SIN imprimir el token: si DASHBOARD_URL o
+// MILO_SERVICE_TOKEN estan mal, las confirmaciones de Milo (Telegram y web)
+// fallan, y antes eso solo se descubria al tocar Confirmar.
+async function verificarEnlace() {
+  const url = DASHBOARD_URL()
+  let host = '(vacia)'
+  try { host = url ? new URL(url).host : host } catch { host = '(invalida)' }
+  if (!process.env.MILO_SERVICE_TOKEN) return { ok: false, estado: 'sin-token', host }
+  try {
+    await llamar('GET', '/api/categorias', { actor: 'verificacion' })
+    return { ok: true, estado: 'ok', host }
+  } catch (error) {
+    if (error.status === 401) return { ok: false, estado: 'token-no-coincide', host }
+    return { ok: false, estado: 'sin-respuesta', host, detalle: String(error.message).slice(0, 160) }
+  }
+}
+
 module.exports = {
   isEnabled,
   llamar,
+  verificarEnlace,
   DashboardApiError,
   _interno: { DASHBOARD_URL, TIMEOUT_MS },
 }
