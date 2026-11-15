@@ -4,9 +4,20 @@ import { parseMontoReferencia } from '@/lib/referencia'
 
 const TIPOS_VALIDOS = ['QUINCENAL', 'SEMANAL', 'MENSUAL']
 
+// La fila de Configuracion tambien guarda el usuario y el HASH de la
+// contraseña del login (authUsername, authPasswordHash). Antes el GET devolvia
+// la fila completa a cualquier sesion, incluido el token del bot. Solo salen
+// los campos que la app usa.
+const CAMPOS_PUBLICOS = {
+  id: true,
+  frecuenciaPagoDefault: true,
+  ingresoReferencia: true,
+  limiteGastoReferencia: true,
+} as const
+
 export async function GET() {
   try {
-    const config = await prisma.configuracion.findFirst()
+    const config = await prisma.configuracion.findFirst({ select: CAMPOS_PUBLICOS })
     return NextResponse.json(config ?? { id: 1, frecuenciaPagoDefault: 'QUINCENAL', ingresoReferencia: null, limiteGastoReferencia: null })
   } catch (error) {
     console.error('Error fetching configuracion:', error)
@@ -42,6 +53,7 @@ export async function PUT(request: Request) {
         ingresoReferencia: ingreso.value ?? null,
         limiteGastoReferencia: limite.value ?? null,
       },
+      select: CAMPOS_PUBLICOS,
     })
 
     return NextResponse.json(config)

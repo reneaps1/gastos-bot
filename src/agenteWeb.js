@@ -34,7 +34,7 @@ function tokenValido(header, esperado = process.env.MILO_SERVICE_TOKEN) {
   return crypto.timingSafeEqual(digest(m[1].trim()), digest(esperado))
 }
 
-function montar(app, { financeAgent, miloAcciones, findUserByName, logQA = () => {} }) {
+function montar(app, { financeAgent, miloAcciones, findUserByName, logQA = () => {}, memoriaMilo = null }) {
   function autorizar(req, res) {
     if (!process.env.MILO_SERVICE_TOKEN) {
       res.status(503).json({ error: 'El bot no tiene MILO_SERVICE_TOKEN configurado.' })
@@ -78,6 +78,7 @@ function montar(app, { financeAgent, miloAcciones, findUserByName, logQA = () =>
       resultado = await financeAgent.answer(texto, {
         senderName,
         chatId,
+        canal: 'web',
         acciones: { chatId, userId: user?.id ?? null, solicitante: senderName },
       })
     } catch (error) {
@@ -118,7 +119,10 @@ function montar(app, { financeAgent, miloAcciones, findUserByName, logQA = () =>
       chatId,
       userId: user?.id ?? null,
       actor: user?.nombre || 'web',
+      canal: 'web',
     })
+    // El resultado queda en la platica: "¿ya quedo?" se entiende sin buscar.
+    if (r && memoriaMilo) memoriaMilo.guardarTurno(chatId, `(tocó Confirmar en la propuesta #${req.params.id})`, r.texto, Date.now())
     return res.json(r)
   })
 }

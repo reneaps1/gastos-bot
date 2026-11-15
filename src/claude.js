@@ -36,14 +36,53 @@ const HOLGURA_RAZONAMIENTO = 2000
 // El agente tiene su propio tope total (45 s); una llamada no debe comerselo.
 const TIMEOUT_MS = Number(process.env.CLAUDE_TIMEOUT_MS) || 25000
 
+// La llave tal como debe verse: "sk-ant-" y sin espacios ni saltos de linea.
+// En produccion (2026-11-14) la variable traia pegado un comando curl completo:
+// cada llamada fallaba con "Headers.append: Bearer curl ..." -- que ademas
+// imprimia en los logs el contenido de la variable -- y todo caia a DeepSeek
+// sin que nadie lo notara. Una llave con mala forma apaga el proveedor y lo
+// dice UNA vez, sin mostrar su valor.
+function llave() {
+  return String(process.env.ANTHROPIC_API_KEY || '').trim()
+}
+
+function problemaDeLlave(valor = llave()) {
+  if (!valor) return null
+  if (/\s/.test(valor)) return 'trae espacios o saltos de línea (¿se pegó un comando completo en vez de solo la llave?)'
+  if (!valor.startsWith('sk-ant-')) return 'no empieza con "sk-ant-"'
+  if (valor.length < 40) return 'es demasiado corta'
+  return null
+}
+
+let avisado = false
+function isEnabled() {
+  const valor = llave()
+  if (!valor) return false
+  const problema = problemaDeLlave(valor)
+  if (problema) {
+    if (!avisado) {
+      avisado = true
+      console.error(`CLAUDE_LLAVE_INVALIDA: ANTHROPIC_API_KEY ${problema} (longitud ${valor.length}). Claude queda apagado y el agente usa el respaldo. Corrige la variable en Render.`)
+    }
+    return false
+  }
+  return true
+}
+
 let cliente = null
 function obtenerCliente() {
-  if (!cliente) cliente = new Anthropic({ timeout: TIMEOUT_MS, maxRetries: 1 })
+  // apiKey explicita (ya recortada) y authToken nulo: que el SDK no tome por su
+  // cuenta otra variable del entorno (ANTHROPIC_AUTH_TOKEN).
+  if (!cliente) cliente = new Anthropic({ apiKey: llave(), authToken: null, timeout: TIMEOUT_MS, maxRetries: 1 })
   return cliente
 }
 
-function isEnabled() {
-  return Boolean(process.env.ANTHROPIC_API_KEY)
+// Un error de red puede traer el valor de una cabecera (la llave) en el texto.
+// Nunca llega a los logs ni al modelo.
+function mensajeSeguro(texto) {
+  const t = String(texto || '')
+  if (/headers?\.(append|set)|bearer|sk-ant-|x-api-key/i.test(t)) return 'cabecera inválida (revisa ANTHROPIC_API_KEY)'
+  return t.slice(0, 200)
 }
 
 // El agente arma mensajes estilo chat (system/user/assistant, contenido en
@@ -95,7 +134,14 @@ async function completeDetallado(messages, { maxTokens = 500 } = {}) {
     if (response.stop_reason === 'refusal') {
       const categoria = response.stop_details?.category || 'sin categoria'
       console.error(`CLAUDE_REFUSAL categoria=${categoria}`)
-      return { content: null, finishReason: 'refusal', tokens, error: `refusal: ${categoria}` }
+      // Una negativa de seguridad NO es una falla tecnica: mandarle lo mismo a
+      // DeepSeek seria brincarse la negativa. Se contesta que no.
+      return {
+        content: JSON.stringify({ action: 'answer', answer: 'Con eso no te puedo ayudar.' }),
+        finishReason: 'refusal',
+        tokens,
+        error: null,
+      }
     }
 
     const content = textoDe(response)
@@ -114,8 +160,8 @@ async function completeDetallado(messages, { maxTokens = 500 } = {}) {
     let detalle
     if (error instanceof Anthropic.AuthenticationError) detalle = `401: ANTHROPIC_API_KEY invalida`
     else if (error instanceof Anthropic.RateLimitError) detalle = `429: limite de uso`
-    else if (error instanceof Anthropic.APIError) detalle = `${error.status ?? 'network'}: ${error.message}`
-    else detalle = `network: ${error.message}`
+    else if (error instanceof Anthropic.APIError) detalle = `${error.status ?? 'network'}: ${mensajeSeguro(error.message)}`
+    else detalle = `network: ${mensajeSeguro(error.message)}`
     console.error(`CLAUDE_ERROR ${detalle}`)
     return { content: null, finishReason: null, tokens: null, error: detalle }
   }
@@ -125,5 +171,5 @@ module.exports = {
   isEnabled,
   completeDetallado,
   CLAUDE_MODEL,
-  _interno: { convertir, textoDe, HOLGURA_RAZONAMIENTO, CLAUDE_EFFORT, _reiniciarCliente: () => { cliente = null } },
+  _interno: { problemaDeLlave, mensajeSeguro, convertir, textoDe, HOLGURA_RAZONAMIENTO, CLAUDE_EFFORT, _reiniciarCliente: () => { cliente = null; avisado = false } },
 }

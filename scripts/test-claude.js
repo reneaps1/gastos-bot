@@ -103,7 +103,27 @@ async function main() {
   check('devuelve error en vez de lanzar', apagado.content === null && /ANTHROPIC_API_KEY/.test(apagado.error), JSON.stringify(apagado))
   check('no hizo peticion', peticiones.length === 0)
 
-  process.env.ANTHROPIC_API_KEY = 'sk-ant-prueba'
+  console.log('\n=== A2: una llave con mala forma apaga a Claude sin mostrar su valor ===')
+  const { problemaDeLlave, mensajeSeguro } = claude._interno
+  // El caso real de produccion (2026-11-14): un comando curl pegado en la variable.
+  const CURL = 'curl https://api.anthropic.com/v1/messages \\\n -H x'
+  check('curl pegado -> problema de espacios/saltos', /espacios|saltos/.test(problemaDeLlave(CURL) || ''))
+  check('sin prefijo sk-ant- -> problema', /sk-ant-/.test(problemaDeLlave('abc'.repeat(20)) || ''))
+  check('llave bien formada -> sin problema', problemaDeLlave('sk-ant-api03-' + 'x'.repeat(60)) === null)
+  claude._interno._reiniciarCliente()
+  process.env.ANTHROPIC_API_KEY = CURL
+  const avisos = []
+  const errorOriginal = console.error
+  console.error = (...a) => avisos.push(a.join(' '))
+  const apagadoMalaLlave = claude.isEnabled()
+  console.error = errorOriginal
+  check('isEnabled() false con la llave mal formada', apagadoMalaLlave === false)
+  check('el aviso NO trae el valor de la variable', avisos.length === 1 && !avisos[0].includes('curl'), avisos.join('|'))
+  check('un error con la cabecera no se imprime', !/curl|Bearer/.test(mensajeSeguro('Headers.append: "Bearer curl https://x" is an invalid header value')))
+  check('un error comun si se conserva', mensajeSeguro('socket hang up') === 'socket hang up')
+
+  claude._interno._reiniciarCliente()
+  process.env.ANTHROPIC_API_KEY = 'sk-ant-api03-prueba-' + 'x'.repeat(40)
 
   console.log('\n=== B: la peticion cumple con Sonnet 5.5 ===')
   respuestaSdk = {
@@ -138,7 +158,8 @@ async function main() {
 
   respuestaSdk = { stop_reason: 'refusal', stop_details: { type: 'refusal', category: 'cyber' }, content: [], usage: {} }
   const rechazo = await silenciar(claude.completeDetallado)([{ role: 'user', content: 'x' }])
-  check('refusal -> error con la categoria, sin contenido', rechazo.content === null && rechazo.error === 'refusal: cyber', JSON.stringify(rechazo))
+  // Una negativa NO cae al respaldo (seria brincarse la negativa): se contesta que no.
+  check('refusal -> respuesta de negativa, sin error (no cae a DeepSeek)', rechazo.error === null && rechazo.finishReason === 'refusal' && /no te puedo ayudar/.test(JSON.parse(rechazo.content).answer), JSON.stringify(rechazo))
 
   respuestaSdk = new AuthenticationError(401, 'invalid x-api-key')
   const auth = await silenciar(claude.completeDetallado)([{ role: 'user', content: 'x' }])

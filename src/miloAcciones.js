@@ -143,12 +143,30 @@ function huella(tx) {
     fecha: dateOnly(tx.fecha),
     categoriaId: tx.categoriaId,
     presupuestoId: tx.presupuestoId ?? null,
+    metodoPagoId: tx.metodoPagoId ?? null,
     estatus: tx.estatus,
   }
 }
 
-function mismaHuella(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b)
+// JSON con las llaves ordenadas. La huella viaja en milo_acciones.payload, una
+// columna JSONB, y Postgres REORDENA las llaves de un objeto jsonb (primero las
+// cortas). Comparar con JSON.stringify a secas hacia que TODA confirmacion de
+// editar o borrar fallara con "el movimiento cambio" aunque nadie lo tocara
+// (produccion, 2026-11-14: acciones #1 y #2).
+function jsonCanonico(valor) {
+  if (Array.isArray(valor)) return `[${valor.map(jsonCanonico).join(',')}]`
+  if (valor && typeof valor === 'object') {
+    return `{${Object.keys(valor).sort().map(k => `${JSON.stringify(k)}:${jsonCanonico(valor[k])}`).join(',')}}`
+  }
+  return JSON.stringify(valor === undefined ? null : valor)
+}
+
+// Una huella guardada antes de que existiera un campo no lo trae: ese campo no
+// se compara (no se bloquea una propuesta vieja por un campo que no conocia).
+function mismaHuella(actual, guardada) {
+  if (!guardada || typeof guardada !== 'object') return false
+  const comparable = Object.fromEntries(Object.keys(guardada).map(k => [k, actual[k] === undefined ? null : actual[k]]))
+  return jsonCanonico(comparable) === jsonCanonico(guardada)
 }
 
 async function cargarMovimiento(id) {
@@ -306,9 +324,27 @@ const TIPOS = {
       return { ok: true, payload, resumen: renglones.join('\n') }
     },
 
+    // Reintento de una confirmacion que quedo a medias (timeout del dashboard
+    // despues de guardar, reinicio del bot): si el movimiento ya existe, no se
+    // registra otra vez.
+    async yaAplicada(payload, fila) {
+      const existente = await prisma.transaccion.findFirst({
+        where: {
+          fecha: dbDate(payload.fecha),
+          monto: payload.monto,
+          descripcion: payload.descripcion,
+          categoriaId: payload.categoriaId,
+          fechaRegistro: { gte: fila.createdAt },
+        },
+        orderBy: { id: 'desc' },
+      })
+      if (!existente) return null
+      return { mensaje: `Ya estaba registrado: ${payload.descripcion} por ${formatMXN(payload.monto)} (#${existente.id}).`, resultado: { transaccionId: existente.id } }
+    },
+
     async ejecutar(payload, ctx) {
       const creada = await dashboardApi.llamar('POST', '/api/transacciones', {
-        body: { ...payload, source: 'telegram' },
+        body: { ...payload, source: ctx.canal === 'web' ? 'web-milo' : 'telegram' },
         actor: ctx.actor,
         userId: ctx.userId,
       })
@@ -446,6 +482,13 @@ const TIPOS = {
       }
     },
 
+    async yaAplicada(payload) {
+      // Un borrado que quedo a medias y ya no encuentra el movimiento: se hizo.
+      const tx = await cargarMovimiento(payload.id)
+      if (tx) return null
+      return { mensaje: `El movimiento #${payload.id} ya estaba borrado.`, resultado: { transaccionId: payload.id } }
+    },
+
     async ejecutar(payload, ctx) {
       const tx = await cargarMovimiento(payload.id)
       if (!tx) throw new Error(`El movimiento #${payload.id} ya no existe.`)
@@ -516,6 +559,15 @@ const TIPOS = {
         payload: { fecha, quincenaId: quincena.id, montos, notas, validado: aBooleano(args.validated) === true },
         resumen: lineas.join('\n'),
       }
+    },
+
+    async yaAplicada(payload, fila) {
+      const existente = await prisma.liquidezSnapshot.findFirst({
+        where: { fechaCorte: dbDate(payload.fecha), quincenaId: payload.quincenaId, fechaRegistro: { gte: fila.createdAt } },
+        orderBy: { id: 'desc' },
+      })
+      if (!existente) return null
+      return { mensaje: `Ese corte ya estaba guardado (#${existente.id}).`, resultado: { snapshotId: existente.id } }
     },
 
     async ejecutar(payload, ctx) {
@@ -632,6 +684,11 @@ const TIPOS = {
       }
     },
 
+    async yaAplicada(payload) {
+      if (await cargarCorte(payload.id)) return null
+      return { mensaje: `El corte #${payload.id} ya estaba borrado.`, resultado: { snapshotId: payload.id } }
+    },
+
     async ejecutar(payload, ctx) {
       const corte = await cargarCorte(payload.id)
       if (!corte) throw new Error(`El corte #${payload.id} ya no existe.`)
@@ -654,13 +711,18 @@ async function proponer(tipo, args, ctx = {}) {
   const preparado = await def.preparar(args || {}, ctx)
   if (!preparado.ok) return { ok: false, error: preparado.error }
 
+  // `_autor`: quien pidio el cambio (id de Telegram). En un grupo solo esa
+  // persona (o un administrador) puede confirmarlo. Va en el payload para no
+  // tocar el esquema; confirmar() lo quita antes de ejecutar.
+  const payload = ctx.autor ? { ...preparado.payload, _autor: String(ctx.autor) } : preparado.payload
+
   const fila = await prisma.miloAccion.create({
     data: {
       chatId: String(ctx.chatId),
       userId: ctx.userId ?? null,
       solicitante: ctx.solicitante ? String(ctx.solicitante).slice(0, 60) : null,
       tipo,
-      payload: preparado.payload,
+      payload,
       resumen: preparado.resumen,
       expiraEn: new Date(Date.now() + TTL_MS),
     },
@@ -681,12 +743,36 @@ function botonesDeAccion(accionId) {
   ]]
 }
 
-// Reclama la fila: solo UNO de varios toques simultaneos pasa de pendiente a
-// ejecutando. Una accion fallida se puede reintentar con el mismo boton.
-async function reclamar(accionId, chatId) {
+// Tiempo maximo razonable de una ejecucion (la llamada al dashboard tiene un
+// timeout de 90 s). Una fila que lleva mas que esto en 'ejecutando' quedo a
+// medias: el bot se reinicio o fallo al marcarla.
+const ATORADA_MS = 3 * 60 * 1000
+
+function reclamadaEn(fila) {
+  const t = fila?.resultado && typeof fila.resultado === 'object' ? Date.parse(fila.resultado.reclamadaEn) : NaN
+  return Number.isFinite(t) ? t : fila.createdAt.getTime()
+}
+
+// Una fila atorada en 'ejecutando' pasa a 'fallida' marcada como incierta: el
+// siguiente toque la reintenta, y yaAplicada() evita duplicar si el cambio si
+// se alcanzo a guardar.
+async function recuperarSiAtorada(fila) {
+  if (fila?.estado !== 'ejecutando' || Date.now() - reclamadaEn(fila) < ATORADA_MS) return fila
   const r = await prisma.miloAccion.updateMany({
-    where: { id: accionId, chatId: String(chatId), estado: { in: ['pendiente', 'fallida'] }, expiraEn: { gt: new Date() } },
-    data: { estado: 'ejecutando' },
+    where: { id: fila.id, estado: 'ejecutando' },
+    data: { estado: 'fallida', resultado: { error: 'Quedó a medias (el bot se reinició o no respondió).', incierta: true } },
+  })
+  if (r.count === 1) console.error(`MILO_ACCION_RECUPERADA: id=${fila.id} estaba atorada en ejecutando`)
+  return prisma.miloAccion.findUnique({ where: { id: fila.id } })
+}
+
+// Reclama la fila: solo UNO de varios toques simultaneos pasa de pendiente a
+// ejecutando. Una accion fallida se puede reintentar con el mismo boton; en
+// `resultado` queda si es reintento, para revisar que no se duplique.
+async function reclamar(fila, chatId) {
+  const r = await prisma.miloAccion.updateMany({
+    where: { id: fila.id, chatId: String(chatId), estado: { in: ['pendiente', 'fallida'] }, expiraEn: { gt: new Date() } },
+    data: { estado: 'ejecutando', resultado: { reclamadaEn: new Date().toISOString(), reintento: fila.estado === 'fallida' } },
   })
   return r.count === 1
 }
@@ -706,24 +792,68 @@ async function porQueNoSePuede(accionId, chatId) {
   return 'No pude aplicar esa acción.'
 }
 
+// ¿Puede quien toco el boton confirmar esta accion? En un grupo, solo quien la
+// pidio o un administrador (MILO_ADMINS, default "Rene"). Sin autor guardado
+// (web, o propuestas viejas) no se restringe: el chat ya es del que pregunta.
+function puedeConfirmar(fila, quien = {}) {
+  const autor = fila.payload && typeof fila.payload === 'object' ? fila.payload._autor : null
+  if (!autor || !quien.telegramUserId) return true
+  if (String(quien.telegramUserId) === String(autor)) return true
+  return Boolean(quien.esAdmin)
+}
+
+// Para que Telegram revise ANTES de tocar el mensaje: si no le toca a quien
+// presiono, el mensaje con sus botones se queda igual. null = puede.
+async function motivoParaNoConfirmar(accionId, chatId, quien = {}) {
+  const fila = await prisma.miloAccion.findUnique({ where: { id: parseId(accionId) ?? -1 } })
+  if (!fila || fila.chatId !== String(chatId)) return null // confirmar() dara el mensaje de "no existe"
+  if (puedeConfirmar(fila, quien)) return null
+  return `Solo ${fila.solicitante || 'quien lo pidió'} puede confirmar o cancelar este cambio.`
+}
+
+// Administradores: pueden confirmar lo que pidio otra persona en el grupo.
+function esAdministrador(nombre) {
+  const admins = String(process.env.MILO_ADMINS || 'Rene').split(',').map(n => normalize(n)).filter(Boolean)
+  return Boolean(nombre) && admins.includes(normalize(nombre))
+}
+
+function sinMetadatos(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload
+  const { _autor, ...resto } = payload
+  return resto
+}
+
 // Devuelve { ok, texto, reintentable } para editar el mensaje del boton.
-async function confirmar({ accionId, chatId, userId = null, actor = 'telegram' }) {
+// `quien` = { telegramUserId, esAdmin } de quien toco (solo Telegram).
+async function confirmar({ accionId, chatId, userId = null, actor = 'telegram', canal = 'telegram', quien = {} }) {
   const id = parseId(accionId)
   if (!id) return { ok: false, texto: 'Esa acción no existe.' }
 
-  if (!(await reclamar(id, chatId))) {
+  let fila = await prisma.miloAccion.findUnique({ where: { id } })
+  if (!fila || fila.chatId !== String(chatId)) return { ok: false, texto: 'Esa acción no existe.' }
+  if (!puedeConfirmar(fila, quien)) {
+    return { ok: false, texto: `Solo ${fila.solicitante || 'quien lo pidió'} puede confirmar este cambio.`, reintentable: true, soloAutor: true }
+  }
+  fila = await recuperarSiAtorada(fila)
+  // Antes de reclamar: despues la fila ya dice 'ejecutando'.
+  const reintento = fila.estado === 'fallida'
+
+  if (!(await reclamar(fila, chatId))) {
     return { ok: false, texto: await porQueNoSePuede(id, chatId) }
   }
 
-  const fila = await prisma.miloAccion.findUnique({ where: { id } })
   const def = TIPOS[fila.tipo]
+  const payload = sinMetadatos(fila.payload)
   // Quien TOCO el boton, no quien lo pidio: en un grupo pueden ser distintos.
-  const ctx = { actor, userId: userId ?? fila.userId ?? null }
+  const ctx = { actor, userId: userId ?? fila.userId ?? null, canal }
 
   let salida
   try {
     if (!def) throw new Error(`Acción desconocida: ${fila.tipo}`)
-    salida = await def.ejecutar(fila.payload, ctx)
+    // Un reintento primero revisa si el intento anterior SI se guardo (el
+    // dashboard tardo en contestar, el bot se reinicio): no se duplica.
+    if (reintento && typeof def.yaAplicada === 'function') salida = await def.yaAplicada(payload, fila)
+    if (!salida) salida = await def.ejecutar(payload, ctx)
   } catch (error) {
     console.error(`MILO_ACCION_FALLIDA: id=${id} tipo=${fila.tipo}: ${error.message}`)
     await prisma.miloAccion.update({
@@ -734,8 +864,8 @@ async function confirmar({ accionId, chatId, userId = null, actor = 'telegram' }
   }
 
   // Aparte del try de arriba: si el cambio YA se aplico y lo que falla es
-  // marcar la fila, no debe quedar como 'fallida' (reintentarla duplicaria un
-  // registro). Se queda en 'ejecutando', que no se puede volver a reclamar.
+  // marcar la fila, se queda en 'ejecutando'. recuperarSiAtorada() la libera
+  // despues de ATORADA_MS y yaAplicada() evita duplicar al reintentar.
   try {
     await prisma.miloAccion.update({
       where: { id },
@@ -748,9 +878,13 @@ async function confirmar({ accionId, chatId, userId = null, actor = 'telegram' }
   return { ok: true, texto: `✅ ${salida.mensaje}` }
 }
 
-async function cancelar({ accionId, chatId }) {
+async function cancelar({ accionId, chatId, quien = {} }) {
   const id = parseId(accionId)
   if (!id) return { ok: false, texto: 'Esa acción no existe.' }
+  const fila = await prisma.miloAccion.findUnique({ where: { id } })
+  if (fila && fila.chatId === String(chatId) && !puedeConfirmar(fila, quien)) {
+    return { ok: false, texto: `Solo ${fila.solicitante || 'quien lo pidió'} puede cancelar este cambio.`, reintentable: true, soloAutor: true }
+  }
   const r = await prisma.miloAccion.updateMany({
     where: { id, chatId: String(chatId), estado: { in: ['pendiente', 'fallida'] } },
     data: { estado: 'cancelada' },
@@ -768,11 +902,13 @@ module.exports = {
   proponer,
   confirmar,
   cancelar,
+  motivoParaNoConfirmar,
+  esAdministrador,
   resumenDe,
   botonesDeAccion,
   ACCIONES_CALLBACK,
   PREFIJO_CONFIRMAR,
   PREFIJO_CANCELAR,
   TIPOS_DISPONIBLES: Object.keys(TIPOS),
-  _interno: { parseFecha, parseMonto, parseSaldo, parseId, elegirPorNombre, huella, huellaCorte, TTL_MS },
+  _interno: { parseFecha, parseMonto, parseSaldo, parseId, elegirPorNombre, huella, huellaCorte, jsonCanonico, mismaHuella, puedeConfirmar, sinMetadatos, recuperarSiAtorada, TTL_MS, ATORADA_MS },
 }

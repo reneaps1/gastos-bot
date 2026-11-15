@@ -67,6 +67,7 @@ const { lineasPara } = require('./sugerenciaLinea')
 const financeAgent = require('./financeAgent')
 const miloAcciones = require('./miloAcciones')
 const agenteWeb = require('./agenteWeb')
+const claude = require('./claude')
 const { clasificarMensaje } = require('./telegramRouting')
 const memoriaMilo = require('./memoriaMilo')
 
@@ -109,9 +110,24 @@ const SHEETS_ENABLED = process.env.GOOGLE_SHEETS_ENABLED !== 'false'
 
 // Previene race condition cuando Meta envía el mismo webhook dos veces en rápida sucesión
 const processingMessages = new Set()
-// Mismo proposito que processingMessages, pero para updates de Telegram
-// (update_id numerico, espacio de ids distinto al de WhatsApp)
-const processingUpdates = new Set()
+// Updates de Telegram ya vistos (update_id -> cuando). NO se borran al
+// terminar: si Telegram no recibe el 200 a tiempo (el plan gratis de Render
+// tarda en despertar: "Read timeout expired" en los logs) reenvia el MISMO
+// update, y procesarlo dos veces registraria dos veces el gasto.
+const updatesVistos = new Map()
+const UPDATE_VISTO_MS = 15 * 60 * 1000
+
+function yaVistoUpdate(updateId) {
+  if (updateId == null) return false
+  const ahora = Date.now()
+  for (const [id, t] of updatesVistos) {
+    if (ahora - t <= UPDATE_VISTO_MS) break
+    updatesVistos.delete(id)
+  }
+  if (updatesVistos.has(updateId)) return true
+  updatesVistos.set(updateId, ahora)
+  return false
+}
 
 async function assuredSend(to, message, context) {
   const result = await sendWhatsAppMessage(to, message)
@@ -983,8 +999,19 @@ async function handleAccionCallback(callback, accion, accionId) {
 
 ` : ''
 
+  // En un grupo solo quien pidio el cambio (o un administrador, MILO_ADMINS)
+  // puede confirmarlo o cancelarlo. Se revisa ANTES de tocar el mensaje: si no
+  // le toca, los botones se quedan para quien si.
+  const user = await resolveMiloUser(callback).catch(() => null)
+  const quien = { telegramUserId: callback.telegramUserId, esAdmin: miloAcciones.esAdministrador(user?.nombre) }
+  const motivo = await miloAcciones.motivoParaNoConfirmar(accionId, callback.chatId, quien).catch(() => null)
+  if (motivo) {
+    await telegram.sendTelegramMessage(callback.chatId, motivo, callback.messageId, { plain: true })
+    return
+  }
+
   if (accion === miloAcciones.PREFIJO_CANCELAR) {
-    const r = await miloAcciones.cancelar({ accionId, chatId: callback.chatId })
+    const r = await miloAcciones.cancelar({ accionId, chatId: callback.chatId, quien })
     await telegram.editMessageText(callback.chatId, callback.messageId, `${encabezado}${r.texto}`, { plain: true })
     return
   }
@@ -992,13 +1019,17 @@ async function handleAccionCallback(callback, accion, accionId) {
   // El dashboard puede tardar en despertar: que se vea que algo esta pasando
   // y que el boton ya no se puede volver a tocar.
   await telegram.editMessageText(callback.chatId, callback.messageId, `${encabezado}⏳ Aplicando…`, { plain: true })
-  const user = await resolveMiloUser(callback).catch(() => null)
   const r = await miloAcciones.confirmar({
     accionId,
     chatId: callback.chatId,
     userId: user?.id ?? null,
     actor: user?.nombre || callback.senderName || 'telegram',
+    canal: 'telegram',
+    quien,
   })
+  // El resultado queda en la memoria de la platica: "¿ya quedo?" o "ahora
+  // cambia el monto" se entienden sin volver a buscar.
+  memoriaMilo.guardarTurno(callback.chatId, `(tocó ${r.ok ? 'Confirmar' : 'Confirmar, sin éxito'} en la propuesta #${accionId})`, r.texto, Date.now(), { autor: callback.telegramUserId })
   await telegram.editMessageText(
     callback.chatId,
     callback.messageId,
@@ -1421,6 +1452,8 @@ app.post('/telegram/webhook', async (req, res) => {
       )
       return
     }
+    // Un toque reenviado por Telegram no se procesa dos veces.
+    if (yaVistoUpdate(callback.updateId)) return
     await handleBudgetCallback(callback)
     return
   }
@@ -1449,8 +1482,10 @@ app.post('/telegram/webhook', async (req, res) => {
     return
   }
 
-  if (processingUpdates.has(message.updateId)) return
-  processingUpdates.add(message.updateId)
+  if (yaVistoUpdate(message.updateId)) {
+    console.warn(`TELEGRAM_UPDATE_REPETIDO: update=${message.updateId} ignorado (Telegram lo reenvio)`)
+    return
+  }
 
   // "Escribiendo..." ANTES de cualquier llamada a la IA o a la base, y se
   // repite hasta contestar. En el plan gratis de Render el primer mensaje al
@@ -1487,100 +1522,98 @@ app.post('/telegram/webhook', async (req, res) => {
     const user = await resolveMiloUser(message)
     const senderName = user?.nombre || message.senderName
 
-    // Ruteo simple (ver src/telegramRouting.js). Los regex solo deciden lo
-    // inequivoco; las preguntas las contesta el agente y NADA que tenga cara
-    // de pregunta puede terminar registrado como gasto.
-    let { ruta } = clasificarMensaje(message.text)
-
-    // Si Milo le acaba de preguntar algo a esta persona, un numero suelto es
-    // su RESPUESTA, no un gasto: "0" o "4690.34" despues de "¿que saldo hay en
-    // BBVA?" se iba al parser y la platica se cortaba (2026-11-14). El agente
-    // lee el mensaje con la conversacion a la vista; si de verdad era un gasto
-    // nuevo, lo propone con su boton Confirmar.
+    // TODO pasa por Milo (decision del dueño, 2026-11-15). Antes un parser con
+    // regex registraba los mensajes con monto ANTES de que el agente los viera,
+    // sin la platica a la vista: en pleno corte de liquidez, "En Banamex tengo
+    // 12,623" se guardo como un GASTO de $12,623 (2026-11-14, #649). Ahora el
+    // agente decide: un gasto nuevo y claro lo registra al momento con
+    // registrar_gasto (mismo flujo de siempre: reglas, clasificador y botones
+    // de linea); lo demas lo contesta o lo propone con boton.
     await memoriaMilo.cargar(message.chatId)
-    if ((ruta === 'gasto' || ruta === 'ambiguo') &&
-        memoriaMilo.preguntaPendiente(message.chatId, { autor: message.telegramUserId })) {
-      console.log(`TELEGRAM_RESPUESTA_A_MILO: chat=${message.chatId} ruta=${ruta} -> agente (Milo esperaba respuesta)`)
-      ruta = 'agente'
-    }
 
-    // 1. "el gasto de suerox mandalo a diversion" (o "30 suerox mandalo a
-    // diversion"): habla de un gasto que ya existe. Va ANTES que el gasto, como
-    // en main: si no, un monto al inicio lo registraba como gasto nuevo. Solo
-    // PROPONE con un boton; escribe el toque. handleReassign solo devuelve
-    // false si no hay quincena activa, y entonces contesta el agente: jamas se
-    // registra.
-    if (ruta === 'reasignar') {
-      if (await handleReassign(message, detectReassign(message.text))) {
-        logTelegramQA({ chatId: message.chatId, ruta: 'reasignar', inicio, pregunta: message.text })
-        return
-      }
-    }
-
-    // 2. Lo que necesita al clasificador:
-    //   - 'gasto' (formato claro): classify solo ENRIQUECE tipo y categoria,
-    //     como en main ("200 suerox" -> Salud). Si no dice expense o no
-    //     contesta, se registra con el parser local: el formato claro no
-    //     depende de que la IA este viva.
-    //   - 'ambiguo' ("super 200 ayer", "me pagaron 5000"): se registra SOLO si
-    //     dice expense. Sin IA no se adivina: se pide el formato claro.
-    //   - 'quiza-reasignar' ("pon el uber en transporte"): solo se actua si
-    //     dice reassign; si no, contesta el agente.
-    if (ruta === 'gasto' || ruta === 'ambiguo' || ruta === 'quiza-reasignar') {
+    let registrado = null
+    const registrarGasto = async texto => {
+      // Un mensaje, a lo mas un registro directo: si el modelo repite la
+      // herramienta no se duplica el gasto.
+      if (registrado) return { ok: false, error: `Ya registré el movimiento #${registrado.id} con este mensaje.` }
       let aiData = null
       if (aiRouter.isEnabled()) {
         try {
-          aiData = await aiRouter.classify(message.text, null)
+          aiData = await aiRouter.classify(texto, null)
         } catch (error) {
           console.error('Telegram AI classify error:', error.message)
         }
       }
-
-      if (ruta !== 'quiza-reasignar' && aiData?.type === 'expense') {
-        const tx = await registrarGastoTelegram(message, user, senderName, aiData)
-        recordarGasto(message, tx)
-        logTelegramQA({ chatId: message.chatId, ruta: `${ruta}-clasificado`, inicio, pregunta: message.text, respuesta: tx ? `registrado #${tx.id}` : 'sin registrar', proveedor: aiData._provider || null })
-        return
-      }
-
-      if (ruta === 'gasto') {
-        const tx = await registrarGastoTelegram(message, user, senderName, null)
-        recordarGasto(message, tx)
-        logTelegramQA({ chatId: message.chatId, ruta: 'gasto', inicio, pregunta: message.text, respuesta: tx ? `registrado #${tx.id}` : 'sin registrar', proveedor: aiData?._provider || null })
-        return
-      }
-
-      // Respaldo del detector local de reasignacion. Igual que el local: solo
-      // PROPONE con un boton.
-      if (aiData?.type === 'reassign' && aiData.referencia && aiData.destino &&
-          await handleReassign(message, { referencia: aiData.referencia, destino: aiData.destino })) {
-        logTelegramQA({ chatId: message.chatId, ruta: 'reasignar-clasificado', inicio, pregunta: message.text, proveedor: aiData._provider || null })
-        return
-      }
-
-      if (ruta === 'ambiguo' && !aiData) {
-        await telegram.sendTelegramMessage(message.chatId, NO_SE_SI_ES_GASTO, message.messageId)
-        logTelegramQA({ chatId: message.chatId, ruta: 'ambiguo-sin-ia', inicio, pregunta: message.text, respuesta: NO_SE_SI_ES_GASTO })
-        return
-      }
-      // question / chat / task, o quiza-reasignar sin reassign: lo contesta el
-      // agente, abajo.
+      const tx = await registrarGastoTelegram({ ...message, text: texto }, user, senderName, aiData?.type === 'expense' ? aiData : null)
+      if (!tx) return { ok: false, error: 'No se registró; el bot ya le dijo al usuario por qué.' }
+      registrado = tx
+      return { ok: true, movimiento: { id: tx.id, descripcion: tx.descripcion, monto: Number(tx.monto) } }
     }
 
-    // 3. Todo lo demas: el agente. Si falla, se dice; JAMAS se cae al parser.
+    let reasignado = false
+    const reasignarGasto = async (referencia, destino) => {
+      if (reasignado) return true
+      reasignado = await handleReassign(message, { referencia, destino })
+      return reasignado
+    }
+
     let agentResult = null
     try {
       agentResult = await financeAgent.answer(message.text, {
         senderName,
         chatId: message.chatId,
         // Quien pregunta: en un grupo, solo su siguiente mensaje cuenta como
-        // respuesta a lo que Milo le pregunte.
+        // respuesta a lo que Milo le pregunte, y solo esa persona confirma
+        // las propuestas que salgan de aqui.
         autor: message.telegramUserId,
-        // Habilita las proponer_*: solo Telegram, que tiene botones.
-        acciones: { chatId: message.chatId, userId: user?.id ?? null, solicitante: senderName },
+        canal: 'telegram',
+        registrarGasto,
+        reasignarGasto,
+        acciones: { chatId: message.chatId, userId: user?.id ?? null, solicitante: senderName, autor: message.telegramUserId },
       })
     } catch (error) {
       console.error('Telegram finance agent error:', error)
+    }
+
+    // Sin IA (Claude y DeepSeek caidos o sin llave) quedan los caminos
+    // deterministas de antes, para que lo basico no dependa de un proveedor
+    // externo: un gasto en formato claro se registra con el parser, "el gasto
+    // de X mandalo a Y" propone con boton, y un numero ambiguo pide el
+    // formato. Nunca si Milo esta esperando una respuesta de esta persona.
+    if (!agentResult && !registrado && !reasignado) {
+      const { ruta } = clasificarMensaje(message.text)
+      const esperaRespuesta = memoriaMilo.preguntaPendiente(message.chatId, { autor: message.telegramUserId })
+      if (esperaRespuesta && (ruta === 'gasto' || ruta === 'ambiguo')) {
+        console.log(`TELEGRAM_RESPUESTA_A_MILO: chat=${message.chatId} ruta=${ruta}: Milo esperaba respuesta; sin IA no se registra`)
+      }
+      if (ruta === 'reasignar' && await handleReassign(message, detectReassign(message.text))) {
+        console.error(`TELEGRAM_SIN_IA: el agente no contesto; reasignacion por el camino determinista chat=${message.chatId}`)
+        logTelegramQA({ chatId: message.chatId, ruta: 'reasignar', inicio, pregunta: message.text })
+        return
+      }
+      if (ruta === 'gasto' && !esperaRespuesta) {
+        console.error(`TELEGRAM_SIN_IA: el agente no contesto; se registra con el parser chat=${message.chatId}`)
+        const tx = await registrarGastoTelegram(message, user, senderName, null)
+        recordarGasto(message, tx)
+        logTelegramQA({ chatId: message.chatId, ruta: 'gasto', inicio, pregunta: message.text, respuesta: tx ? `registrado #${tx.id}` : 'sin registrar' })
+        return
+      }
+      if (ruta === 'ambiguo' && !esperaRespuesta) {
+        await telegram.sendTelegramMessage(message.chatId, NO_SE_SI_ES_GASTO, message.messageId)
+        logTelegramQA({ chatId: message.chatId, ruta: 'ambiguo-sin-ia', inicio, pregunta: message.text, respuesta: NO_SE_SI_ES_GASTO })
+        return
+      }
+    }
+
+    // Ya se registro y el bot ya mando la confirmacion con sus botones: un
+    // "Anotado." del agente seria un mensaje de mas. Si el agente tiene algo
+    // que agregar (una alerta, una propuesta), si se manda.
+    if ((registrado || reasignado) && agentResult && !(agentResult.acciones || []).length && String(agentResult.reply || '').length < 60) {
+      logTelegramQA({
+        chatId: message.chatId, ruta: registrado ? 'gasto-agente' : 'reasignar-agente', inicio, pregunta: message.text, respuesta: registrado ? `registrado #${registrado.id}` : 'opciones de linea',
+        herramientas: (agentResult.trace || []).map(t => t.tool), proveedor: agentResult.provider,
+      })
+      return
     }
 
     if (agentResult?.reply) {
@@ -1614,7 +1647,6 @@ app.post('/telegram/webhook', async (req, res) => {
     } catch {}
   } finally {
     dejarDeEscribir()
-    processingUpdates.delete(message.updateId)
   }
 })
 
@@ -1629,7 +1661,8 @@ app.get('/', async (req, res) => {
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
-    financeAgentEnabled: ai.deepseekEnabled,
+    financeAgentEnabled: claude.isEnabled() || ai.deepseekEnabled,
+    claudeEnabled: claude.isEnabled(),
     telegramWebhookUrl: telegram.getWebhookUrl(),
     database: await db.checkDatabase(),
     timestamp: new Date().toISOString(),
@@ -1654,6 +1687,7 @@ agenteWeb.montar(app, {
   miloAcciones,
   findUserByName: nombre => db.findUserByName(nombre),
   logQA: logTelegramQA,
+  memoriaMilo,
 })
 
 app.post('/cron/resumen-diario', async (req, res) => {
@@ -1682,7 +1716,8 @@ app.get('/health', async (req, res) => {
     whatsapp: whatsappStatus(),
     aiEnabled: aiRouter.isEnabled(),
     ...ai,
-    financeAgentEnabled: ai.deepseekEnabled,
+    financeAgentEnabled: claude.isEnabled() || ai.deepseekEnabled,
+    claudeEnabled: claude.isEnabled(),
     // DeepSeek es el unico modelo: si se cae, Milo solo contesta con plantillas.
     // El watchdog lo lee y avisa con AI_PROVIDER_DOWN.
     ai: salud,
@@ -1711,7 +1746,8 @@ app.get('/telegram/status', async (req, res) => {
     // cuentas: los ids de chat autorizados no se exponen por HTTP.
     ...telegram.describeAccess(),
     // El agente corre con cualquiera de los dos proveedores, no solo DeepSeek.
-    financeAgentEnabled: ai.deepseekEnabled,
+    financeAgentEnabled: claude.isEnabled() || ai.deepseekEnabled,
+    claudeEnabled: claude.isEnabled(),
     ...ai,
   })
 })

@@ -1,17 +1,22 @@
-// El agente de Milo: el UNICO cerebro para preguntas de Telegram.
+// El agente de Milo: el UNICO cerebro de Telegram y del chat del dashboard.
 //
-// Recibe una pregunta en espanol libre, decide que herramientas consultar
-// (src/miloTools.js) y contesta con esos datos. En Telegram tambien puede
-// PROPONER cambios (proponer_*), que se aplican solo con el boton Confirmar. Antes de el
-// habia siete capas en cascada (regex, clasificadores, intents fijos, un
-// prompt con 50 movimientos pegados) y cualquiera podia comerse la pregunta:
-// "cuanto queda de dinero" caia en un regex que buscaba la linea "dinero".
+// Recibe un mensaje en espanol libre, decide que herramientas consultar
+// (src/miloTools.js) y contesta con esos datos. En Telegram y en la web
+// tambien PROPONE cambios (proponer_*), que se aplican solo con el boton
+// Confirmar. Antes de el habia siete capas en cascada (regex, clasificadores,
+// intents fijos, un prompt con 50 movimientos pegados) y cualquiera podia
+// comerse la pregunta: "cuanto queda de dinero" caia en un regex que buscaba
+// la linea "dinero".
 //
 // Reglas que no se relajan:
-//   - La IA propone y contesta; NUNCA escribe datos financieros. Las
-//     proponer_* solo dejan una propuesta pendiente (src/miloAcciones.js) y el
-//     cambio lo aplica el toque humano en "Confirmar". Fuera de Telegram (sin
-//     `acciones`) ni siquiera existen.
+//   - La IA propone y contesta. Las proponer_* solo dejan una propuesta
+//     pendiente (src/miloAcciones.js) y el cambio lo aplica el toque humano en
+//     "Confirmar". Sin `acciones` (WhatsApp) ni siquiera existen.
+//   - UNICA excepcion: en Telegram, un movimiento nuevo en formato claro
+//     ("200 super") se registra al momento con registrar_gasto, como siempre
+//     se hizo; la diferencia es que ahora lo decide el agente con la platica a
+//     la vista, no un regex que corria antes que el (decision del dueño,
+//     2026-11-15). Lo ejecuta index.js con el flujo de siempre.
 //   - Los numeros salen de las herramientas, nunca del modelo.
 //   - Si la IA falla despues de traer datos, contesta con la plantilla del
 //     ultimo resultado (src/plantillasMilo.js, provider 'plantilla'). Si no hay
@@ -165,16 +170,31 @@ const FORMATO = `FORMATO DE LA RESPUESTA:
 
 const REGLA_SOLO_LECTURA = '- No puedes registrar, borrar ni mover nada. Si te piden registrar un gasto, di que lo manden empezando con el monto, por ejemplo "200 super". Si piden mover un gasto a otra línea, di que lo escriban así: "el gasto de <qué> mándalo a <línea>" (eso arma un botón para confirmar).'
 
-const REGLAS_DE_CAMBIOS = `- Puedes PROPONER cambios con las herramientas proponer_*. Nada cambia hasta que el usuario toca "Confirmar" en el mensaje: NUNCA digas que algo ya quedó hecho; di "Te dejo el cambio para confirmar" o similar.
+// Telegram: Milo ve TODOS los mensajes (ya no hay un parser que registre antes
+// que el). Un gasto claro y nuevo se registra al momento con registrar_gasto;
+// lo demas se propone con boton. El caso que esto evita: en pleno corte de
+// liquidez, "En Banamex tengo 12,623" se registro como un GASTO (2026-11-14).
+const REGLA_GASTO_TELEGRAM = `- Movimiento nuevo en formato claro (monto + qué, p. ej. "200 super", "1581, 3b", "uber 85 ayer con tarjeta", "me pagaron 5000"): llama registrar_gasto con el texto TAL CUAL lo escribió el usuario; se guarda al momento, sin botón, y el bot manda su propia confirmación. Tu respuesta después: una línea corta ("Anotado.") o nada más que agregar.
+- NO uses registrar_gasto si el mensaje responde a algo que tú preguntaste o a la tarea en curso (un saldo de cuenta durante un corte de liquidez, un monto que pediste para una propuesta, "0", "nada"), ni si es algo que no es claramente un movimiento nuevo: en esos casos sigue la tarea o usa proponer_registrar_movimiento.
+- Mover un gasto que ya existe a otra línea o categoría ("el gasto de suerox mándalo a diversión", "pon la gasolina en transporte"): proponer_reasignar_gasto.
+- Si dudas si es un gasto nuevo o la respuesta a la plática, pregunta en una línea.`
+
+const REGLA_GASTO_WEB = '- Para registrar un movimiento nuevo usa proponer_registrar_movimiento (en el dashboard todo se confirma con botón).'
+
+function reglasDeCambios(canal) {
+  return `- Puedes PROPONER cambios con las herramientas proponer_*. Nada cambia hasta que el usuario toca "Confirmar" en el mensaje: NUNCA digas que algo ya quedó hecho; di "Te dejo el cambio para confirmar" o similar.
 - Para editar o borrar necesitas el id: primero search_transactions. Si hay más de un candidato y no es obvio cuál, NO propongas: lista los candidatos (con fecha y monto) y pregunta cuál.
 - Una propuesta por cosa. Si piden varias, propone cada una (hasta 3).
 - Si la herramienta de propuesta devuelve un error, corrige con otra herramienta o pregunta lo que falta; no lo inventes.
-- Un gasto con formato "200 super" el bot ya lo registra solo; usa proponer_registrar_movimiento cuando te lo pidan con otras palabras, o cuando el mensaje sea claramente un gasto nuevo que no responde a tu pregunta anterior.
-- Puedes proponer cambios a MOVIMIENTOS (registrar, editar, borrar) y a CORTES DE LIQUIDEZ (nuevo, corregir, borrar). Presupuesto, traspasos, deudas, créditos, cuentas y configuración todavía NO se pueden cambiar desde aquí: dilo en una línea y manda al dashboard, sin pedir datos para algo que no puedes guardar.
+${canal === 'telegram' ? REGLA_GASTO_TELEGRAM : REGLA_GASTO_WEB}
+${REGLAS_DE_CAMBIOS_RESTO}`
+}
+
+const REGLAS_DE_CAMBIOS_RESTO = `- Puedes proponer cambios a MOVIMIENTOS (registrar, editar, borrar) y a CORTES DE LIQUIDEZ (nuevo, corregir, borrar). Presupuesto, traspasos, deudas, créditos, cuentas y configuración todavía NO se pueden cambiar desde aquí: dilo en una línea y manda al dashboard, sin pedir datos para algo que no puedes guardar.
 - Corte de liquidez: consulta list_accounts para saber qué cuentas hay. Si el usuario no dio los saldos, pídeselos: puede mandarlos todos en un mensaje o cuenta por cuenta, como prefiera. Junta lo que ya te dijo en la conversación (no lo vuelvas a preguntar) y, cuando tengas todas las cuentas, propone UNA sola vez con proponer_corte_liquidez. "0", "nada" o "no hay" es saldo 0. Para corregir un saldo de un corte ya guardado usa proponer_editar_corte_liquidez, no uno nuevo.`
 
-function buildSystemPrompt(contexto, { acciones = false } = {}) {
-  const tools = getToolDefinitions({ acciones })
+function buildSystemPrompt(contexto, { acciones = false, canal = 'telegram', registroDirecto = false } = {}) {
+  const tools = getToolDefinitions({ acciones, registroDirecto })
   return `Eres Milo, el asistente financiero de una familia mexicana, conectado a sus datos reales.
 Entiendes lo que te piden, consultas herramientas y contestas con esos datos.${acciones ? ' También puedes proponer cambios que el usuario confirma con un botón.' : ''}
 
@@ -187,7 +207,7 @@ REGLAS:
 - Si la pregunta es de seguimiento ("¿y la pasada?", "¿y en super?"), usa la conversación previa para saber de qué se habla.
 - Si tu mensaje anterior terminó con una pregunta, lee el mensaje nuevo como su respuesta, aunque sea solo un número ("0", "4690.34") o un par de palabras. No lo trates como un tema nuevo ni vuelvas a preguntar lo que ya te contestaron.
 - Solo pregunta algo si de verdad lo necesitas para contestar o proponer. No pidas datos para algo que no puedes hacer.
-${acciones ? REGLAS_DE_CAMBIOS : REGLA_SOLO_LECTURA}
+${acciones ? reglasDeCambios(registroDirecto ? 'telegram' : canal === 'telegram' ? 'telegram-sin-registro' : canal) : REGLA_SOLO_LECTURA}
 - Si una herramienta no tiene el dato, dilo claro en una línea.
 
 ${GLOSARIO}
@@ -239,7 +259,7 @@ function conTope(promesa, ms) {
 // `acciones` ({ chatId, userId, solicitante }) solo lo pasa Telegram: habilita
 // las proponer_*. Devuelve tambien `acciones: [id...]`, las propuestas que
 // quedaron pendientes en este turno, para que index.js les ponga botones.
-async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS, acciones = null, autor = null } = {}) {
+async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_MS, acciones = null, autor = null, canal = 'telegram', registrarGasto = null, reasignarGasto = null } = {}) {
   const limite = Date.now() + deadlineMs
   const quedaTiempo = () => limite - Date.now()
   const lista = proveedores()
@@ -263,7 +283,7 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
   ])
 
   const messages = [
-    { role: 'system', content: buildSystemPrompt(await contextoDelDia(senderName), { acciones: Boolean(acciones) }) },
+    { role: 'system', content: buildSystemPrompt(await contextoDelDia(senderName), { acciones: Boolean(acciones), canal, registroDirecto: Boolean(acciones && registrarGasto) }) },
     ...historial,
     { role: 'user', content: question },
   ]
@@ -377,7 +397,8 @@ async function answer(question, { senderName, chatId = null, deadlineMs = TOPE_M
 
     seenCalls.add(signature)
     console.log('FINANCE_AGENT_TOOL_CALL:', JSON.stringify({ tool: plan.tool, args }))
-    const result = await executeTool(plan.tool, args, { acciones })
+    // El autor viaja con la propuesta: en un grupo solo esa persona la confirma.
+    const result = await executeTool(plan.tool, args, { acciones: acciones ? { ...acciones, autor: acciones.autor ?? autor } : null, registrarGasto, reasignarGasto })
     trace.push({ tool: plan.tool, args, ok: result?.ok !== false, result })
 
     messages.push({ role: 'assistant', content: JSON.stringify(plan) })

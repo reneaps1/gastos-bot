@@ -1,10 +1,10 @@
 // Herramientas del agente de Milo (src/financeAgent.js).
 //
-// Las de consulta son de solo lectura. Las proponer_* (WRITE_TOOLS, solo en
-// Telegram) tampoco escriben datos financieros: dejan una propuesta pendiente
-// en milo_acciones y el cambio ocurre solo cuando el usuario toca "Confirmar"
-// (ver src/miloAcciones.js). Lo unico que el bot escribe sale de un toque
-// humano en un boton.
+// Las de consulta son de solo lectura. Las proponer_* (WRITE_TOOLS, Telegram y
+// web) tampoco escriben datos financieros: dejan una propuesta pendiente en
+// milo_acciones y el cambio ocurre solo cuando el usuario toca "Confirmar"
+// (ver src/miloAcciones.js). La unica que escribe sin boton es registrar_gasto
+// (solo Telegram): un movimiento nuevo en formato claro, ver abajo.
 //
 // Los numeros de dinero salen de src/lib/finanzas-quincena.js, la copia
 // probada al centavo de la matematica del dashboard
@@ -17,6 +17,23 @@ const finanzas = require('./lib/finanzas-quincena')
 const miloAcciones = require('./miloAcciones')
 
 const { formatMXN } = finanzas
+
+const TIPOS_MOVIMIENTO = ['Gasto', 'Ingreso', 'Ahorro']
+const ESTATUS_PAGO = ['Pagado', 'Pendiente']
+const ESTADOS_LINEA = ['Abierta', 'Cumplida', 'Absorbida', 'Cancelada']
+
+// El modelo manda "gasto" o "pendiente": se acepta sin importar mayusculas.
+function enumValido(valor, opciones) {
+  const t = normalize(String(valor ?? ''))
+  return opciones.find(o => normalize(o) === t) || null
+}
+
+function fechaValida(valor) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(valor).trim())
+  if (!m) return false
+  const d = new Date(`${m[0]}T00:00:00Z`)
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === m[0]
+}
 
 function num(value) {
   return value == null ? null : Number(value)
@@ -400,9 +417,16 @@ async function listBudgetLines(args = {}) {
   // uno de los dos filtros.
   const where = {}
   const categoriaWhere = {}
-  if (args.type && String(args.type).toLowerCase() !== 'all') categoriaWhere.tipo = args.type
-  else if (!args.type) categoriaWhere.tipo = 'Gasto'
-  if (args.status) where.estadoLinea = args.status
+  if (args.type && String(args.type).toLowerCase() !== 'all') {
+    const tipo = enumValido(args.type, TIPOS_MOVIMIENTO)
+    if (!tipo) return { ok: false, error: `type debe ser uno de: ${TIPOS_MOVIMIENTO.join(", ")} o all.` }
+    categoriaWhere.tipo = tipo
+  } else if (!args.type) categoriaWhere.tipo = 'Gasto'
+  if (args.status) {
+    const estado = enumValido(args.status, ESTADOS_LINEA)
+    if (!estado) return { ok: false, error: `status debe ser uno de: ${ESTADOS_LINEA.join(", ")}.` }
+    where.estadoLinea = estado
+  }
   if (args.category) categoriaWhere.nombre = { contains: String(args.category), mode: 'insensitive' }
   if (Object.keys(categoriaWhere).length > 0) where.categoria = categoriaWhere
   if (args.search) where.descripcion = { contains: String(args.search), mode: 'insensitive' }
@@ -491,8 +515,18 @@ async function searchTransactions(args = {}) {
     where.quincenaId = period.id
   }
 
-  if (args.type) where.tipo = args.type
-  if (args.status) where.estatus = args.status
+  // Valores que van directo a un enum de Prisma: uno invalido tronaba la
+  // consulta y le costaba un paso al agente. Se avisa con las opciones.
+  if (args.type) {
+    const tipo = enumValido(args.type, TIPOS_MOVIMIENTO)
+    if (!tipo) return { ok: false, error: `type debe ser uno de: ${TIPOS_MOVIMIENTO.join(", ")}.` }
+    where.tipo = tipo
+  }
+  if (args.status) {
+    const estatus = enumValido(args.status, ESTATUS_PAGO)
+    if (!estatus) return { ok: false, error: `status debe ser uno de: ${ESTATUS_PAGO.join(", ")}.` }
+    where.estatus = estatus
+  }
   if (args.unassigned === true || args.unassigned === 'true') where.presupuestoId = null
   if (args.unassigned === false || args.unassigned === 'false') where.presupuestoId = { not: null }
 
@@ -508,6 +542,9 @@ async function searchTransactions(args = {}) {
 
   if (args.dateFrom || args.dateTo) {
     where.fecha = {}
+    for (const campo of ["dateFrom", "dateTo"]) {
+      if (args[campo] && !fechaValida(args[campo])) return { ok: false, error: `${campo} debe ser YYYY-MM-DD.` }
+    }
     if (args.dateFrom) where.fecha.gte = dbDate(args.dateFrom)
     if (args.dateTo) where.fecha.lte = dbDate(args.dateTo)
   }
@@ -986,7 +1023,7 @@ const TOOL_HANDLERS = {
   get_system_overview: getSystemOverview,
 }
 
-// ---- Proponer cambios (solo Telegram) ---------------------------------------
+// ---- Proponer cambios (Telegram y web) ---------------------------------------
 //
 // Ninguna escribe datos financieros: validan, resuelven nombres a ids y dejan
 // una fila pendiente en milo_acciones. El usuario confirma con un boton.
@@ -1037,9 +1074,66 @@ const WRITE_TOOL_HANDLERS = {
   proponer_borrar_corte_liquidez: herramientaDePropuesta('liquidez.borrar'),
 }
 
-// `ctx.acciones` solo lo pasa Telegram (chatId, userId, solicitante). Sin el,
-// las proponer_* no existen: WhatsApp sigue siendo de solo lectura.
+// Registro directo de un gasto nuevo en formato claro (solo Telegram). Es la
+// unica herramienta que escribe sin boton: reemplaza al parser que antes
+// registraba ANTES de que Milo viera el mensaje. El agente decide con la
+// platica a la vista si el mensaje es un gasto nuevo; quien la ejecuta es
+// index.js (ctx.registrarGasto), con el mismo flujo de siempre: reglas +
+// clasificador, y la confirmacion con los botones de linea.
+const REGISTRO_DIRECTO_DEFINITION = {
+  name: 'registrar_gasto',
+  description: 'Registra AL MOMENTO (sin botón) un movimiento NUEVO escrito en formato claro: monto + qué ("200 super", "1581, 3b", "uber 85 ayer", "me pagaron 5000"). Pasa el texto tal cual lo escribió el usuario. NO lo uses para saldos de cuentas, respuestas a tus preguntas ni nada dudoso.',
+  args: { text: 'el mensaje del usuario tal cual, requerido' },
+}
+
+// "el gasto de suerox mandalo a diversion", "pon la gasolina en transporte":
+// mover un gasto que YA existe a otra linea. Usa el flujo de Telegram de
+// siempre (index.js, handleReassign): busca el movimiento, arma botones con
+// las lineas candidatas y solo escribe con el toque.
+const REASIGNAR_DEFINITION = {
+  name: 'proponer_reasignar_gasto',
+  description: 'Para mover un gasto que YA existe a otra línea de presupuesto o categoría ("el gasto de suerox mándalo a diversión", "pon la gasolina en transporte"). Busca el movimiento y manda botones con las líneas candidatas; nada cambia hasta el toque.',
+  args: { reference: 'qué gasto (descripción o monto), requerido', destination: 'línea o categoría destino, requerido' },
+}
+
+async function registrarGastoDirecto(args, registrarGasto) {
+  const texto = String(args.text ?? args.texto ?? '').trim().slice(0, 300)
+  if (!texto) return { ok: false, error: 'Falta text: el mensaje del usuario tal cual.' }
+  if (!/\d/.test(texto)) return { ok: false, error: 'Ese texto no trae monto. Pregunta cuánto fue.' }
+  const r = await registrarGasto(texto)
+  if (!r?.ok) return { ok: false, error: r?.error || 'No se registró.' }
+  return { ok: true, registrado: r.movimiento, nota: 'Ya quedó guardado y el bot ya mandó la confirmación con sus botones. Contesta con una línea corta o nada que agregar.' }
+}
+
+// `ctx.acciones` lo pasan Telegram y la web (chatId, userId, solicitante). Sin
+// el, las proponer_* no existen: WhatsApp sigue siendo de solo lectura.
+// `ctx.registrarGasto` solo lo pasa Telegram: habilita registrar_gasto.
 async function executeTool(name, args = {}, ctx = {}) {
+  if (name === REASIGNAR_DEFINITION.name) {
+    if (!ctx.reasignarGasto) return { ok: false, error: `Herramienta no permitida: ${name}` }
+    const referencia = String(args?.reference ?? args?.referencia ?? '').trim().slice(0, 100)
+    const destino = String(args?.destination ?? args?.destino ?? '').trim().slice(0, 100)
+    if (!referencia || !destino) return { ok: false, error: 'Faltan reference (qué gasto) y destination (a qué línea).' }
+    try {
+      const ok = await ctx.reasignarGasto(referencia, destino)
+      return ok
+        ? { ok: true, nota: 'El bot ya mandó las opciones con botones. Contesta con una línea corta o nada que agregar.' }
+        : { ok: false, error: 'No hay quincena activa para reasignar.' }
+    } catch (error) {
+      console.error(`MILO_TOOL_ERROR ${name}:`, error.message)
+      return { ok: false, error: `No pude reasignar: ${error.message}` }
+    }
+  }
+  if (name === REGISTRO_DIRECTO_DEFINITION.name) {
+    if (!ctx.registrarGasto) return { ok: false, error: `Herramienta no permitida: ${name}` }
+    try {
+      return await registrarGastoDirecto(args || {}, ctx.registrarGasto)
+    } catch (error) {
+      console.error(`MILO_TOOL_ERROR ${name}:`, error.message)
+      return { ok: false, error: `No pude registrar: ${error.message}` }
+    }
+  }
+
   const esPropuesta = Object.prototype.hasOwnProperty.call(WRITE_TOOL_HANDLERS, name)
   const handler = esPropuesta
     ? (ctx.acciones ? WRITE_TOOL_HANDLERS[name] : null)
@@ -1054,12 +1148,15 @@ async function executeTool(name, args = {}, ctx = {}) {
   }
 }
 
-function getToolDefinitions({ acciones = false } = {}) {
-  return acciones ? [...TOOL_DEFINITIONS, ...WRITE_TOOL_DEFINITIONS] : TOOL_DEFINITIONS
+function getToolDefinitions({ acciones = false, registroDirecto = false } = {}) {
+  if (!acciones) return TOOL_DEFINITIONS
+  return registroDirecto
+    ? [...TOOL_DEFINITIONS, REGISTRO_DIRECTO_DEFINITION, REASIGNAR_DEFINITION, ...WRITE_TOOL_DEFINITIONS]
+    : [...TOOL_DEFINITIONS, ...WRITE_TOOL_DEFINITIONS]
 }
 
 function esHerramientaDePropuesta(name) {
   return Object.prototype.hasOwnProperty.call(WRITE_TOOL_HANDLERS, name)
 }
 
-module.exports = { executeTool, getToolDefinitions, esHerramientaDePropuesta, resolvePeriod, infoPeriodo, parseMonto }
+module.exports = { executeTool, getToolDefinitions, esHerramientaDePropuesta, resolvePeriod, infoPeriodo, parseMonto, _interno: { enumValido, fechaValida } }
