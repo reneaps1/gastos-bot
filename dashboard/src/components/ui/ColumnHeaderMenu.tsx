@@ -243,10 +243,10 @@ function PanelFiltro({ filtro, onDone }: { filtro: FiltroColumna; onDone: () => 
 
       {filtro.kind === 'rango-num' && (
         <div className="flex items-center gap-2">
-          <input autoFocus type="number" inputMode="decimal" min="0" step="0.01" placeholder="Mínimo" aria-label="Monto mínimo"
+          <input autoFocus type="number" inputMode="decimal" step="0.01" placeholder="Mínimo" aria-label="Monto mínimo"
             value={a} onChange={e => setA(e.target.value)} className={inputClass} />
           <span className="text-slate-400">–</span>
-          <input type="number" inputMode="decimal" min="0" step="0.01" placeholder="Máximo" aria-label="Monto máximo"
+          <input type="number" inputMode="decimal" step="0.01" placeholder="Máximo" aria-label="Monto máximo"
             value={b} onChange={e => setB(e.target.value)} className={inputClass} />
         </div>
       )}

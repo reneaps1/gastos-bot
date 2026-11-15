@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, ChevronUp, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, ArrowRight, ArrowRightLeft } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Repeat, ChevronDown, ChevronRight, CalendarClock, AlertTriangle, Loader2, Download, Search, X, LayoutGrid, Table2, Sparkles, SlidersHorizontal, Droplets, TrendingUp, ArrowRight, ArrowRightLeft } from 'lucide-react'
 import { ReporteButton } from '@/components/ReporteButton'
 import { formatMXN, formatDateStr, formatDate } from '@/lib/utils'
 import { computeQuincenasTarget } from '@/lib/recurrencia'
@@ -14,6 +14,8 @@ import { KpiCard } from '@/components/ui/KpiCard'
 import { toCsv, downloadCsv } from '@/lib/csv'
 import { QuincenaChips, ALL_QUINCENAS } from '@/components/ui/QuincenaChips'
 import { FilterChip } from '@/components/ui/FilterChip'
+import { ColumnHeaderMenu, type FiltroColumna, type OpcionFiltro, type SortDir } from '@/components/ui/ColumnHeaderMenu'
+import { COL_FILTROS_VACIOS, NO_RECURRENTE, SIN_CLASIFICACION, hayColFiltros, matchesColFiltros, restanteDe, type ColFiltros, type RangoNum } from './filtros-columna'
 import { ColumnsMenu } from '@/components/ui/ColumnsMenu'
 import { useColumnVisibility } from '@/lib/use-column-visibility'
 import { useSearchShortcut } from '@/lib/use-search-shortcut'
@@ -136,7 +138,7 @@ function matchesBusqueda(g: PresupuestoGrupo, q: string) {
   )
 }
 
-type SortKey = 'quincena' | 'categoria' | 'descripcion' | 'presupuestado' | 'real' | 'pct' | 'restante' | 'recurrente' | 'vence'
+type SortKey = 'quincena' | 'categoria' | 'descripcion' | 'clasificacion' | 'presupuestado' | 'real' | 'pct' | 'restante' | 'recurrente' | 'vence'
 
 interface TablaFiltros {
   categoriaId: string
@@ -181,10 +183,11 @@ function getSortValue(p: Presupuesto, key: SortKey): string | number {
     case 'quincena': return p.quincena.fechaInicio
     case 'categoria': return p.categoria.nombre
     case 'descripcion': return p.descripcion
+    case 'clasificacion': return p.clasificacion ?? ''
     case 'presupuestado': return p.montoEfectivo
     case 'real': return p.real
     case 'pct': return p.pct
-    case 'restante': return p.montoEfectivo - p.real
+    case 'restante': return restanteDe(p)
     case 'recurrente': return p.recurrente ? 1 : 0
     case 'vence': return p.fechaVencimiento ?? ''
   }
@@ -412,9 +415,10 @@ export default function PresupuestoPage() {
     setQuincenas(qs => qs.map(q => q.id === updated.id ? { ...q, ...normalizeReferencia(updated) } : q))
   }
 
-  function toggleSort(key: SortKey) {
-    if (sortKey === key) { setSortDir(d => d === 'asc' ? 'desc' : 'asc') }
-    else { setSortKey(key); setSortDir('desc') }
+  // dir null = volver al orden default (quincena mas reciente primero).
+  function setSort(key: SortKey, dir: SortDir | null) {
+    if (dir) { setSortKey(key); setSortDir(dir) }
+    else { setSortKey('quincena'); setSortDir('desc') }
   }
 
   const fetchPresupuestos = useCallback(async () => {
@@ -788,7 +792,7 @@ export default function PresupuestoPage() {
           tablaOcultarIngresos={tablaOcultarIngresos} setTablaOcultarIngresos={setTablaOcultarIngresos}
           tablaMostrarCanceladas={tablaMostrarCanceladas} setTablaMostrarCanceladas={setTablaMostrarCanceladas}
           busquedaTabla={busquedaTabla} setBusquedaTabla={setBusquedaTabla}
-          sortKey={sortKey} sortDir={sortDir} toggleSort={toggleSort}
+          sortKey={sortKey} sortDir={sortDir} setSort={setSort}
           openEdit={openEdit} setDeleteTarget={setDeleteTarget} setDetalleP={setDetalleP} setTraspasoOrigen={setTraspasoOrigen}
         />
       ) : vista === 'analisis' ? (
@@ -1747,22 +1751,6 @@ export default function PresupuestoPage() {
   )
 }
 
-function SortableTh({ label, sortKeyName, align, sortKey, sortDir, onSort }: {
-  label: string; sortKeyName: SortKey; align?: 'right'
-  sortKey: SortKey; sortDir: 'asc' | 'desc'; onSort: (key: SortKey) => void
-}) {
-  const active = sortKey === sortKeyName
-  return (
-    <th className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}>
-      <button onClick={() => onSort(sortKeyName)}
-        className={`inline-flex items-center gap-1 font-medium cursor-pointer transition-colors ${active ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400'}`}>
-        {label}
-        {active && (sortDir === 'asc' ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-      </button>
-    </th>
-  )
-}
-
 interface PresupuestoTablaProps {
   quincenas: Quincena[]; categorias: Categoria[]; today: string
   tablaQuincenaId: string; setTablaQuincenaId: (id: string) => void
@@ -1780,7 +1768,7 @@ interface PresupuestoTablaProps {
   tablaOcultarIngresos: boolean; setTablaOcultarIngresos: (v: boolean) => void
   tablaMostrarCanceladas: boolean; setTablaMostrarCanceladas: (v: boolean) => void
   busquedaTabla: string; setBusquedaTabla: (v: string) => void
-  sortKey: SortKey; sortDir: 'asc' | 'desc'; toggleSort: (key: SortKey) => void
+  sortKey: SortKey; sortDir: SortDir; setSort: (key: SortKey, dir: SortDir | null) => void
   openEdit: (p: Presupuesto) => void
   setDeleteTarget: (v: { id: number; p: Presupuesto } | null) => void
   setDetalleP: (p: Presupuesto | null) => void
@@ -2010,7 +1998,7 @@ function PresupuestoTabla({
   tablaSaldo, setTablaSaldo, tablaPorCubrir, setTablaPorCubrir,
   tablaOcultarIngresos, setTablaOcultarIngresos,
   tablaMostrarCanceladas, setTablaMostrarCanceladas,
-  busquedaTabla, setBusquedaTabla, sortKey, sortDir, toggleSort,
+  busquedaTabla, setBusquedaTabla, sortKey, sortDir, setSort,
   openEdit, setDeleteTarget, setDetalleP, setTraspasoOrigen,
 }: PresupuestoTablaProps) {
   const busquedaTablaInputRef = useRef<HTMLInputElement>(null)
@@ -2031,8 +2019,16 @@ function PresupuestoTabla({
     p => p.estadoLinea === 'Cancelada' && matchesFiltrosTabla(p, { ...filtros, mostrarCanceladas: true }),
   ).length
 
+  // Autofiltro de cada encabezado (estilo Excel). Vive aqui y no en el
+  // padre: es estado de esta vista, y se suma a los chips de arriba.
+  const [colFiltros, setColFiltros] = useState<ColFiltros>(COL_FILTROS_VACIOS)
+  const hayFiltrosColumna = hayColFiltros(colFiltros)
+  function setColFiltro<K extends keyof ColFiltros>(key: K, valor: ColFiltros[K]) {
+    setColFiltros(f => ({ ...f, [key]: valor }))
+  }
+
   const filasTabla = presupuestosTabla
-    .filter(p => matchesFiltrosTabla(p, filtros))
+    .filter(p => matchesFiltrosTabla(p, filtros) && matchesColFiltros(p, colFiltros))
     .sort((a, b) => {
       const va = getSortValue(a, sortKey)
       const vb = getSortValue(b, sortKey)
@@ -2075,6 +2071,37 @@ function PresupuestoTabla({
   const balancePresupuestado = totalIngresoPresupuestadoFijo - totalPresupuestadoFijo
 
   const multiSelectTablaActivo = selectedTablaQuincenaIds.length > 1
+
+  // --- Menus de encabezado ----------------------------------------------------
+  // Las opciones de lista salen de las partidas cargadas (no de todo el
+  // catalogo): ofrecer una quincena o categoria sin filas solo lleva a una
+  // tabla vacia.
+  const opcionesQuincenaCol: OpcionFiltro[] = Array.from(
+    new Map(presupuestosTabla.map(p => [p.quincenaId, p.quincena])).values(),
+  ).sort((a, b) => b.fechaInicio.localeCompare(a.fechaInicio)).map(q => ({ value: String(q.id), label: q.codigo }))
+  const opcionesCategoriaCol: OpcionFiltro[] = Array.from(
+    new Map(presupuestosTabla.map(p => [p.categoriaId, p.categoria])).values(),
+  ).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es')).map(c => ({ value: String(c.id), label: c.nombre }))
+  const opcionesClasificacionCol: OpcionFiltro[] = [
+    { value: 'Fijo', label: 'Fijo' }, { value: 'Variable', label: 'Variable' }, { value: SIN_CLASIFICACION, label: '(Sin clasificación)' },
+  ]
+  const opcionesRecurrenteCol: OpcionFiltro[] = [
+    { value: 'QUINCENAL', label: 'Quincenal' }, { value: 'MENSUAL', label: 'Mensual' }, { value: NO_RECURRENTE, label: '(No recurrente)' },
+  ]
+
+  function sortDirDe(key: SortKey): SortDir | null {
+    return sortKey === key ? sortDir : null
+  }
+  function ordenarPor(key: SortKey) {
+    return (dir: SortDir | null) => setSort(key, dir)
+  }
+  function listaCol(key: 'quincena' | 'categoria' | 'clasificacion' | 'recurrente', opciones: OpcionFiltro[]): FiltroColumna {
+    return { kind: 'lista', opciones, seleccion: colFiltros[key], onChange: v => setColFiltro(key, v) }
+  }
+  function rangoCol(key: 'presupuestado' | 'real' | 'pct' | 'restante'): FiltroColumna {
+    const r: RangoNum = colFiltros[key]
+    return { kind: 'rango-num', min: r.min, max: r.max, onChange: (min, max) => setColFiltro(key, { min, max }) }
+  }
 
   // Liquidez es un corte puntual de cuentas bancarias (una foto en el
   // tiempo), no un flujo -- sumar el snapshot de varias quincenas no
@@ -2280,9 +2307,32 @@ function PresupuestoTabla({
           <div className="text-center py-20 text-slate-400 dark:text-slate-500">
             <p className="font-medium text-slate-600 dark:text-slate-400">Sin resultados</p>
             <p className="text-sm mt-1">Ninguna partida coincide con estos filtros</p>
+            {/* Sin filas no hay encabezados (ni sus autofiltros): la salida va aqui. */}
+            {hayFiltrosColumna && (
+              <button type="button" onClick={() => setColFiltros(COL_FILTROS_VACIOS)}
+                className="mt-4 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                Quitar filtros de columna
+              </button>
+            )}
           </div>
         ) : (
           <>
+            {/* Orden en movil: las tarjetas no tienen encabezados. */}
+            <div className="md:hidden px-4 pt-3">
+              <select aria-label="Ordenar por" value={`${sortKey}:${sortDir}`}
+                onChange={e => { const [k, d] = e.target.value.split(':') as [SortKey, SortDir]; setSort(k, d) }}
+                className="w-full text-sm rounded-lg px-3 py-2 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+                <option value="quincena:desc">Quincena más reciente</option>
+                <option value="quincena:asc">Quincena más antigua</option>
+                <option value="presupuestado:desc">Presupuestado mayor a menor</option>
+                <option value="real:desc">Real mayor a menor</option>
+                <option value="pct:desc">% usado mayor a menor</option>
+                <option value="restante:asc">Más excedidas primero</option>
+                <option value="descripcion:asc">Descripción A → Z</option>
+                <option value="categoria:asc">Categoría A → Z</option>
+                <option value="vence:asc">Vence primero</option>
+              </select>
+            </div>
             {/* Mobile cards */}
             <div className="divide-y divide-slate-100 dark:divide-slate-800 md:hidden">
               {filasTabla.map(p => (
@@ -2360,20 +2410,52 @@ function PresupuestoTabla({
               </div>
             </div>
             {/* Desktop table */}
-            <div className="hidden overflow-x-auto md:block">
+            {hayFiltrosColumna && (
+              <div className="hidden md:flex items-center justify-between gap-2 px-4 py-2 text-xs bg-indigo-50/60 dark:bg-indigo-950/20 border-b border-indigo-100 dark:border-indigo-900/40 text-indigo-700 dark:text-indigo-300">
+                <span>Filtros de columna activos · {filasTabla.length} de {presupuestosTabla.length} partidas</span>
+                <button type="button" onClick={() => setColFiltros(COL_FILTROS_VACIOS)} className="font-medium hover:underline cursor-pointer">
+                  Quitar filtros de columna
+                </button>
+              </div>
+            )}
+            {/* Scroll propio para que thead y tfoot queden fijos (sticky no
+                funciona contra la pagina dentro de un overflow-x-auto). */}
+            <div className="hidden overflow-auto max-h-[calc(100vh-10rem)] md:block">
               <table className="w-full text-sm">
-                <thead className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+                <thead className="sticky top-0 z-10 bg-slate-50 dark:bg-slate-900 shadow-[inset_0_-1px_0] shadow-slate-200 dark:shadow-slate-700">
                   <tr>
-                    {colVisible.has('quincena') && <SortableTh label="Quincena" sortKeyName="quincena" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-                    {colVisible.has('categoria') && <SortableTh label="Categoría" sortKeyName="categoria" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-                    <SortableTh label="Descripción" sortKeyName="descripcion" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    {colVisible.has('clasificacion') && <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Clasificación</th>}
-                    <SortableTh label="Presupuestado" sortKeyName="presupuestado" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Real" sortKeyName="real" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="% usado" sortKeyName="pct" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    <SortableTh label="Restante/Excedido" sortKeyName="restante" align="right" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                    {colVisible.has('recurrente') && <SortableTh label="Recurrente" sortKeyName="recurrente" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
-                    {colVisible.has('vence') && <SortableTh label="Vence" sortKeyName="vence" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />}
+                    {colVisible.has('quincena') && (
+                      <ColumnHeaderMenu label="Quincena" sortDir={sortDirDe('quincena')} onSort={ordenarPor('quincena')}
+                        sortLabels={['más antigua primero', 'más reciente primero']} filtro={listaCol('quincena', opcionesQuincenaCol)} />
+                    )}
+                    {colVisible.has('categoria') && (
+                      <ColumnHeaderMenu label="Categoría" sortDir={sortDirDe('categoria')} onSort={ordenarPor('categoria')}
+                        filtro={listaCol('categoria', opcionesCategoriaCol)} />
+                    )}
+                    <ColumnHeaderMenu label="Descripción" sortDir={sortDirDe('descripcion')} onSort={ordenarPor('descripcion')}
+                      filtro={{ kind: 'texto', valor: colFiltros.descripcion, onChange: v => setColFiltro('descripcion', v) }} />
+                    {colVisible.has('clasificacion') && (
+                      <ColumnHeaderMenu label="Clasificación" sortDir={sortDirDe('clasificacion')} onSort={ordenarPor('clasificacion')}
+                        filtro={listaCol('clasificacion', opcionesClasificacionCol)} />
+                    )}
+                    <ColumnHeaderMenu label="Presupuestado" align="right" sortDir={sortDirDe('presupuestado')} onSort={ordenarPor('presupuestado')}
+                      sortLabels={['menor a mayor', 'mayor a menor']} filtro={rangoCol('presupuestado')} />
+                    <ColumnHeaderMenu label="Real" align="right" sortDir={sortDirDe('real')} onSort={ordenarPor('real')}
+                      sortLabels={['menor a mayor', 'mayor a menor']} filtro={rangoCol('real')} />
+                    <ColumnHeaderMenu label="% usado" align="right" sortDir={sortDirDe('pct')} onSort={ordenarPor('pct')}
+                      sortLabels={['menor a mayor', 'mayor a menor']} filtro={rangoCol('pct')} />
+                    {/* Restante con signo: negativo = excedido. Un maximo de 0 deja solo las excedidas. */}
+                    <ColumnHeaderMenu label="Restante/Excedido" align="right" sortDir={sortDirDe('restante')} onSort={ordenarPor('restante')}
+                      sortLabels={['más excedidas primero', 'más restante primero']} filtro={rangoCol('restante')} />
+                    {colVisible.has('recurrente') && (
+                      <ColumnHeaderMenu label="Recurrente" sortDir={sortDirDe('recurrente')} onSort={ordenarPor('recurrente')}
+                        sortLabels={['no recurrentes primero', 'recurrentes primero']} filtro={listaCol('recurrente', opcionesRecurrenteCol)} />
+                    )}
+                    {colVisible.has('vence') && (
+                      <ColumnHeaderMenu label="Vence" sortDir={sortDirDe('vence')} onSort={ordenarPor('vence')}
+                        sortLabels={['más próximo primero', 'más lejano primero']}
+                        filtro={{ kind: 'rango-fecha', desde: colFiltros.vence.desde, hasta: colFiltros.vence.hasta, onChange: (desde, hasta) => setColFiltro('vence', { desde, hasta }) }} />
+                    )}
                     <th className="px-4 py-3 text-left text-slate-500 dark:text-slate-400 font-medium">Acciones</th>
                   </tr>
                 </thead>
@@ -2442,7 +2524,7 @@ function PresupuestoTabla({
                     </tr>
                   ))}
                 </tbody>
-                <tfoot className="bg-slate-50 dark:bg-slate-900 border-t-2 border-slate-200 dark:border-slate-700">
+                <tfoot className="sticky bottom-0 z-10 bg-slate-50 dark:bg-slate-900 shadow-[inset_0_2px_0] shadow-slate-200 dark:shadow-slate-700">
                   <tr>
                     <td colSpan={leadingCols} className="px-4 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
                       Total · {gastoFilasTabla.length} {gastoFilasTabla.length === 1 ? 'partida' : 'partidas'}
