@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import type { Prisma } from '@prisma/client'
 import { CAMPOS_TRANSACCION, origenDeLaPeticion, registrarAuditoria } from '@/lib/audit-log'
 import { prisma } from '@/lib/prisma'
 import { shiftMonth } from '@/lib/periodo'
@@ -16,6 +17,51 @@ async function findQuincenaIdForDate(date: Date): Promise<number | null> {
   return found?.id ?? null
 }
 
+// Valor especial para filtrar "sin usuario" / "sin metodo de pago" (columna NULL).
+const SIN_VALOR = 'none'
+
+function idOSinValor(v: string): number | null {
+  return v === SIN_VALOR ? null : parseInt(v)
+}
+
+// Condicion de un campo para 1..n valores. Un valor -> igualdad (lo que
+// siempre hizo este endpoint); varios -> IN. Si entre los valores viene
+// SIN_VALOR se agrega `OR campo IS NULL`, porque el IN de SQL nunca empata
+// con NULL. Devuelve un fragmento para el AND del where, o null si no filtra.
+function condicionCampo<T>(campo: string, valores: string[], parse: (v: string) => T | null): object | null {
+  if (valores.length === 0) return null
+  const parsed = valores.map(parse)
+  if (parsed.length === 1) return { [campo]: parsed[0] }
+  const noNulos = parsed.filter((v): v is T => v !== null)
+  if (noNulos.length === parsed.length) return { [campo]: { in: noNulos } }
+  return { OR: [{ [campo]: { in: noNulos } }, { [campo]: null }] }
+}
+
+// Orden de la lista. Lista blanca: cualquier `sort` desconocido cae al orden
+// de siempre (fecha desc). El `id` de desempate mantiene estable la
+// paginacion cuando muchas filas comparten valor (misma fecha, mismo monto).
+type Dir = 'asc' | 'desc'
+type Orden = Prisma.TransaccionOrderByWithRelationInput
+const ORDENES: Record<string, (dir: Dir) => Orden> = {
+  descripcion: dir => ({ descripcion: dir }),
+  fecha: dir => ({ fecha: dir }),
+  monto: dir => ({ monto: dir }),
+  tipo: dir => ({ tipo: dir }),
+  estatus: dir => ({ estatus: dir }),
+  categoria: dir => ({ categoria: { nombre: dir } }),
+  usuario: dir => ({ user: { nombre: dir } }),
+  metodoPago: dir => ({ metodoPago: { nombre: dir } }),
+  quincena: dir => ({ quincena: { fechaInicio: dir } }),
+  presupuesto: dir => ({ presupuestoId: { sort: dir, nulls: 'last' } }),
+}
+
+function ordenDeLaLista(sort: string | null, dirParam: string | null): Orden[] {
+  const dir: Dir = dirParam === 'asc' ? 'asc' : 'desc'
+  const orden = sort ? ORDENES[sort] : undefined
+  if (!orden) return [{ fecha: 'desc' }, { id: 'desc' }]
+  return [orden(dir), { id: dir }]
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
@@ -23,14 +69,20 @@ export async function GET(request: Request) {
     // Transacciones con Ctrl/Cmd+clic) -- un solo valor sigue siendo
     // where.quincenaId = N como antes, no cambia nada para el resto de callers.
     const quincenaIds = searchParams.getAll('quincenaId')
-    const tipo = searchParams.get('tipo')
-    const categoriaId = searchParams.get('categoriaId')
-    const userId = searchParams.get('userId')
+    // tipo, categoriaId, userId, estatus y metodoPagoId aceptan varios valores
+    // (?tipo=Gasto&tipo=Ingreso) para el autofiltro por columna de la tabla de
+    // Transacciones. Un solo valor sigue siendo igualdad, como antes.
+    const tipos = searchParams.getAll('tipo').filter(Boolean)
+    const categoriaIds = searchParams.getAll('categoriaId').filter(Boolean)
+    const userIds = searchParams.getAll('userId').filter(Boolean)
+    const estatuses = searchParams.getAll('estatus').filter(Boolean)
+    const metodoPagoIds = searchParams.getAll('metodoPagoId').filter(Boolean)
+    const montoMin = searchParams.get('montoMin')
+    const montoMax = searchParams.get('montoMax')
     const page = parseInt(searchParams.get('page') ?? '1')
     const limit = parseInt(searchParams.get('limit') ?? '50')
     const skip = (page - 1) * limit
 
-    const estatus = searchParams.get('estatus')
     const busqueda = searchParams.get('busqueda')
     const asignado = searchParams.get('asignado')
     const presupuestoId = searchParams.get('presupuestoId')
@@ -45,10 +97,24 @@ export async function GET(request: Request) {
       if (fechaDesde) where.fecha.gte = new Date(`${fechaDesde}T00:00:00.000Z`)
       if (fechaHasta) where.fecha.lte = new Date(`${fechaHasta}T23:59:59.999Z`)
     }
-    if (tipo) where.tipo = tipo
-    if (categoriaId) where.categoriaId = parseInt(categoriaId)
-    if (userId) where.userId = parseInt(userId)
-    if (estatus) where.estatus = estatus
+    // `tipo` va directo en where (no en el AND): el agregado de
+    // GastoParaLimite de abajo lo sobreescribe con tipo:'Gasto' a proposito.
+    if (tipos.length === 1) where.tipo = tipos[0]
+    else if (tipos.length > 1) where.tipo = { in: tipos }
+    const condiciones = [
+      condicionCampo('categoriaId', categoriaIds, v => parseInt(v)),
+      condicionCampo('userId', userIds, idOSinValor),
+      condicionCampo('estatus', estatuses, v => v),
+      condicionCampo('metodoPagoId', metodoPagoIds, idOSinValor),
+    ].filter((c): c is object => c !== null)
+    if (condiciones.length > 0) where.AND = condiciones
+    const min = montoMin !== null && montoMin !== '' ? Number(montoMin) : NaN
+    const max = montoMax !== null && montoMax !== '' ? Number(montoMax) : NaN
+    if (Number.isFinite(min) || Number.isFinite(max)) {
+      where.monto = {}
+      if (Number.isFinite(min)) where.monto.gte = min
+      if (Number.isFinite(max)) where.monto.lte = max
+    }
     if (busqueda) where.descripcion = { contains: busqueda, mode: 'insensitive' }
     // presupuestoId gana sobre `asignado`: filtra a una linea concreta, que es
     // lo que consume el detalle de gasto en la pagina de Presupuesto. Con
@@ -60,7 +126,7 @@ export async function GET(request: Request) {
     const [transacciones, total, totalesPorTipo, gastoParaLimiteAgg] = await Promise.all([
       prisma.transaccion.findMany({
         where,
-        orderBy: { fecha: 'desc' },
+        orderBy: ordenDeLaLista(searchParams.get('sort'), searchParams.get('dir')),
         skip,
         take: limit,
         include: { categoria: true, user: true, quincena: true, metodoPago: true, presupuesto: true },
