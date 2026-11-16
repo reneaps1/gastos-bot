@@ -710,6 +710,12 @@ Object.assign(TIPOS, require('./miloAccionesPresupuesto').crearTiposPresupuesto(
   elegirPorNombre, resolverCategoria, mismaHuella,
 }))
 
+// ---- Configuracion (Fase B4) ---------------------------------------------------------
+// Cuentas, categorias, referencias de quincena, usuarios y formas de pago.
+Object.assign(TIPOS, require('./miloAccionesConfig').crearTiposConfig({
+  prisma, dashboardApi, formatMXN, parseMonto, parseId, normalize, elegirPorNombre,
+}))
+
 // ---- Proponer / confirmar / cancelar ------------------------------------------------
 
 async function proponer(tipo, args, ctx = {}) {

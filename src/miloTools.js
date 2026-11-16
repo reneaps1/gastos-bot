@@ -1085,6 +1085,52 @@ const WRITE_TOOL_DEFINITIONS = [
     description: 'Propone MOVER una línea de presupuesto (sin movimientos) a otra quincena, p. ej. un pago que se recorre a la siguiente. No se aplica hasta que el usuario toca Confirmar.',
     args: { id: 'id de la línea, o usa line+period', line: 'nombre', period: 'quincena actual de la línea; default la actual', toPeriod: '"siguiente" o código "Q40", requerido' },
   },
+  // ---- Configuracion ----
+  {
+    name: 'proponer_crear_cuenta',
+    description: 'Propone CREAR una cuenta (banco, efectivo, vales, inversión...). Sale en los cortes de liquidez. No se crea hasta que el usuario toca Confirmar.',
+    args: { name: 'nombre, requerido', type: 'Debito|Credito|Efectivo|Vales|Inversion|Otro, opcional' },
+  },
+  {
+    name: 'proponer_editar_cuenta',
+    description: 'Propone CAMBIAR una cuenta: nombre, tipo, o activarla/desactivarla (active). Desactivar es lo correcto para una cuenta que ya no se usa. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id (list_accounts) o usa name', name: 'nombre actual', newName: 'opcional', type: 'opcional', active: 'true|false, opcional' },
+  },
+  {
+    name: 'proponer_borrar_cuenta',
+    description: 'Propone BORRAR una cuenta. Solo si nunca se usó en cortes ni créditos; si sí, la herramienta lo dice y hay que desactivarla. No se borra hasta que el usuario toca Confirmar.',
+    args: { id: 'id o usa name', name: 'nombre' },
+  },
+  {
+    name: 'proponer_crear_categoria',
+    description: 'Propone CREAR una categoría de Gasto, Ingreso o Ahorro. No se crea hasta que el usuario toca Confirmar.',
+    args: { name: 'nombre, requerido', type: 'Gasto|Ingreso|Ahorro, requerido', classification: 'Fijo|Variable, opcional', examples: 'palabras de ejemplo, opcional' },
+  },
+  {
+    name: 'proponer_editar_categoria',
+    description: 'Propone CAMBIAR una categoría: nombre, clasificación, ejemplos, activarla/desactivarla o si cuenta para el límite de gasto. El TIPO no se cambia desde aquí. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id (list_categories) o usa name', name: 'nombre actual', newName: 'opcional', classification: 'Fijo|Variable|ninguna, opcional', examples: 'opcional', active: 'true|false, opcional', countsForLimit: 'true|false, opcional' },
+  },
+  {
+    name: 'proponer_referencias_quincena',
+    description: 'Propone fijar el ingreso de referencia y/o el límite de gasto de UNA quincena ("ninguna" la quita y se usa la general). No se aplica hasta que el usuario toca Confirmar.',
+    args: { period: '"actual" (default), "siguiente" o código', income: 'monto o "ninguna", opcional', spendingLimit: 'monto o "ninguna", opcional' },
+  },
+  {
+    name: 'proponer_crear_usuario',
+    description: 'Propone dar de ALTA a una persona (sale como persona en los movimientos; no es un acceso al dashboard). No se crea hasta que el usuario toca Confirmar.',
+    args: { name: 'nombre, requerido', phone: 'WhatsApp, opcional' },
+  },
+  {
+    name: 'proponer_editar_usuario',
+    description: 'Propone CAMBIAR a una persona: nombre, WhatsApp o activarla/desactivarla. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id o usa name', name: 'nombre actual', newName: 'opcional', phone: 'opcional', active: 'true|false, opcional' },
+  },
+  {
+    name: 'proponer_crear_forma_pago',
+    description: 'Propone CREAR una forma de pago (p. ej. "Tarjeta Nu"). No se crea hasta que el usuario toca Confirmar.',
+    args: { name: 'nombre, requerido' },
+  },
 ]
 
 function herramientaDePropuesta(tipo) {
@@ -1103,6 +1149,15 @@ const WRITE_TOOL_HANDLERS = {
   proponer_cancelar_linea: herramientaDePropuesta('presupuesto.cancelar'),
   proponer_traspaso: herramientaDePropuesta('presupuesto.traspasar'),
   proponer_mover_linea: herramientaDePropuesta('presupuesto.mover'),
+  proponer_crear_cuenta: herramientaDePropuesta('cuenta.crear'),
+  proponer_editar_cuenta: herramientaDePropuesta('cuenta.editar'),
+  proponer_borrar_cuenta: herramientaDePropuesta('cuenta.borrar'),
+  proponer_crear_categoria: herramientaDePropuesta('categoria.crear'),
+  proponer_editar_categoria: herramientaDePropuesta('categoria.editar'),
+  proponer_referencias_quincena: herramientaDePropuesta('quincena.referencias'),
+  proponer_crear_usuario: herramientaDePropuesta('usuario.crear'),
+  proponer_editar_usuario: herramientaDePropuesta('usuario.editar'),
+  proponer_crear_forma_pago: herramientaDePropuesta('metodo_pago.crear'),
 }
 
 // Registro directo de un gasto nuevo en formato claro (solo Telegram). Es la
