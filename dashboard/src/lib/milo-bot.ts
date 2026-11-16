@@ -49,7 +49,9 @@ export async function llamarBot<T>(ruta: string, body: unknown): Promise<T> {
   const datos = await res.json().catch(() => null)
   if (!res.ok) {
     const detalle = datos && typeof datos === 'object' && 'error' in datos ? String((datos as { error: unknown }).error) : `HTTP ${res.status}`
-    console.error(`MILO_BOT_ERROR ${res.status}: ${detalle}`)
+    // El host (no el token) dice si la peticion fue al bot o a otro lado: un
+    // 429 o un 404 de un host ajeno es MILO_BOT_URL mal puesta.
+    console.error(`MILO_BOT_ERROR ${res.status}: ${detalle} host=${new URL(url).host}`)
     throw new MiloBotError(res.status === 400 ? detalle : 'Milo tuvo un problema. Intenta de nuevo en un momento.', res.status === 400 ? 400 : 502)
   }
   return datos as T

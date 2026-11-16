@@ -1788,4 +1788,12 @@ app.listen(PORT, async () => {
     // demas (token, webhook, lista blanca) este bien.
     await telegram.checkGroupPrivacyMode()
   }
+
+  // Enlace bot -> dashboard (lo usan las confirmaciones de Milo). No bloquea
+  // el arranque: el dashboard del plan free puede tardar en despertar.
+  const { verificarEnlace } = require('./dashboardApi')
+  if (typeof verificarEnlace === 'function') verificarEnlace().then(r => {
+    const log = r.ok ? console.log : console.error
+    log(`DASHBOARD_ENLACE: ${r.estado} host=${r.host}${r.detalle ? ` (${r.detalle})` : ''}`)
+  }).catch(() => {})
 })

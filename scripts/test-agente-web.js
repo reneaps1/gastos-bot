@@ -138,6 +138,17 @@ async function main() {
   const conf = await rutaAccion.POST(pedir({ accion: 'confirmar', chatId: CHAT, usuario: 'Rene' }), params)
   check('dashboard -> bot -> confirmar', conf.status === 200 && conf.body.ok === true, JSON.stringify(conf.body))
 
+  console.log('\n=== G: ping de autoverificacion (dashboard al arrancar) ===')
+  const ping = async token => {
+    const headers = token ? { Authorization: `Bearer ${token}` } : {}
+    const res = await fetch(`${base}/agente/web/ping`, { headers })
+    return { status: res.status, body: await res.json().catch(() => null) }
+  }
+  const pingOk = await ping(TOKEN)
+  check('ping con el token -> 200 ok', pingOk.status === 200 && pingOk.body?.ok === true, JSON.stringify(pingOk))
+  check('ping con otro token -> 401 (el dashboard lo reporta como token-no-coincide)', (await ping('otro-token')).status === 401)
+  check('ping sin token -> 401', (await ping(null)).status === 401)
+
   server.close()
   console.log(`\n${pass} pasaron, ${fail} fallaron`)
   process.exit(fail > 0 ? 1 : 0)

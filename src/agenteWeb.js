@@ -61,7 +61,17 @@ function montar(app, { financeAgent, miloAcciones, findUserByName, logQA = () =>
     }
   }
 
+  // El dashboard la llama al arrancar para saber si el enlace sirve (URL y
+  // token). No toca la IA ni la base.
+  app.get('/agente/web/ping', (req, res) => {
+    if (!autorizar(req, res)) return
+    res.json({ ok: true })
+  })
+
   app.post('/agente/web', async (req, res) => {
+    // Traza de entrada ANTES de cualquier puerta (como TELEGRAM_UPDATE_IN):
+    // sin ella no se distingue "no llego" de "llego y fallo". Sin el texto.
+    console.log(`AGENTE_WEB_IN: chat=${typeof req.body?.chatId === 'string' ? req.body.chatId.slice(0, 40) : 'n/a'} largo=${typeof req.body?.pregunta === 'string' ? req.body.pregunta.length : 0}`)
     if (!autorizar(req, res)) return
     const inicio = Date.now()
     const { pregunta, chatId, usuario } = req.body || {}
