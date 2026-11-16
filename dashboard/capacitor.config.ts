@@ -8,7 +8,7 @@ const config: CapacitorConfig = {
   // En produccion apunta al servidor live.
   // Para desarrollo local, cambia a http://localhost:3000
   server: {
-    url: 'https://gastos-dashboard.onrender.com',
+    url: 'https://gastos-dashboard-tfxp.onrender.com',
     cleartext: false,
   },
 

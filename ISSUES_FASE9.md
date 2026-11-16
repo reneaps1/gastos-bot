@@ -66,7 +66,7 @@ Issue #28 completado (web app preparada).
    - App ID: com.milogastos.app
    - App Name: Milo Gastos
 3. Crear `capacitor.config.ts` con:
-   - server.url apuntando a https://gastos-dashboard.onrender.com
+   - server.url apuntando a https://gastos-dashboard-tfxp.onrender.com
    - SplashScreen plugin configurado
    - ios.preferredContentMode: mobile
    - ios.backgroundColor acorde al theme
@@ -251,7 +251,7 @@ Crear la app en App Store Connect, subir el build y someterlo a revision de Appl
 2. Llenar metadata:
    - Descripcion corta y larga (en espanol)
    - Palabras clave: gastos, presupuesto, finanzas personales, ahorro
-   - URL de soporte: https://gastos-dashboard.onrender.com
+   - URL de soporte: https://gastos-dashboard-tfxp.onrender.com
    - URL de privacidad: (crear pagina de politica de privacidad)
 3. Generar capturas de pantalla:
    - 6.5" (iPhone 14 Pro Max): 5-10 screenshots

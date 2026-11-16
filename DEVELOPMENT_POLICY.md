@@ -586,7 +586,7 @@ La app web de Milo Gastos se publicara en el App Store de iOS como una aplicacio
 #### Enfoque
 
 - Capacitor envuelve la web app existente en un WebView nativo de iOS.
-- La web app apunta a la URL de produccion (`gastos-dashboard.onrender.com`) para que las API routes de Next.js sigan funcionando sin cambios.
+- La web app apunta a la URL de produccion (`gastos-dashboard-tfxp.onrender.com`) para que las API routes de Next.js sigan funcionando sin cambios.
 - Se agregan plugins nativos (Face ID, notificaciones, hapticos) para cumplir con los requisitos de Apple y mejorar la experiencia.
 - No se modifica la arquitectura actual de la web app.
 
