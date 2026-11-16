@@ -1059,6 +1059,32 @@ const WRITE_TOOL_DEFINITIONS = [
     description: 'Propone BORRAR un corte de liquidez. Necesita el id (snapshotId de get_liquidity o list_liquidity_cuts). No se borra hasta que el usuario toca Confirmar.',
     args: { id: 'snapshotId, requerido' },
   },
+  // ---- Presupuesto ----
+  {
+    name: 'proponer_crear_linea',
+    description: 'Propone CREAR una línea de presupuesto (sola o recurrente). El tipo sale de la categoría. Si ya existe una parecida, el resumen lo avisa. No se crea hasta que el usuario toca Confirmar.',
+    args: { description: 'nombre de la línea, requerido', amount: 'monto, requerido', category: 'categoría, requerido (list_categories)', period: '"actual" (default), "siguiente" o código "Q40"', classification: 'Fijo|Variable, opcional', dueDate: 'YYYY-MM-DD, opcional', recurrent: 'boolean, opcional', frequency: 'quincenal|mensual (si recurrent)', occurrences: 'número de veces; vacío = sin fin', payDay: 'día de cobro 1-31, opcional' },
+  },
+  {
+    name: 'proponer_ajustar_linea',
+    description: 'Propone CAMBIAR una línea de presupuesto: el monto vigente (el original queda en el historial), el nombre, la clasificación o el vencimiento. Sin id, búscala por nombre en la quincena. En una serie recurrente, scope "en adelante" aplica a esta y las siguientes; si no, solo a esta. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id de la línea (list_budget_lines), o usa line+period', line: 'nombre de la línea', period: 'quincena de la línea; default la actual', amount: 'nuevo monto vigente, opcional', description: 'nuevo nombre, opcional', classification: 'Fijo|Variable|ninguna, opcional', dueDate: 'YYYY-MM-DD o "ninguna", opcional', scope: '"solo esta" (default) o "en adelante" (series)', reason: 'motivo, opcional' },
+  },
+  {
+    name: 'proponer_cancelar_linea',
+    description: 'Propone CANCELAR (retirar del plan) una línea de presupuesto; no se borra, queda como Cancelada. En una serie: scope "futuras" (las siguientes) o "toda la serie". Una línea con movimientos no se puede cancelar: la herramienta lo dice. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id de la línea, o usa line+period', line: 'nombre', period: 'quincena; default la actual', scope: '"solo esta" (default), "futuras" o "toda la serie"' },
+  },
+  {
+    name: 'proponer_traspaso',
+    description: 'Propone un TRASPASO de presupuesto: pasar monto de una línea a otra de la MISMA quincena (from -> to), o cubrir una línea con dinero sin asignar (sin from). La línea origen no puede quedar con menos de lo que ya gastó. No se aplica hasta que el usuario toca Confirmar.',
+    args: { amount: 'monto, requerido', to: 'línea destino (nombre) o toId', toId: 'id de la línea destino', from: 'línea origen (nombre), o "sin asignar"', fromId: 'id de la línea origen', period: 'quincena; default la actual', reason: 'nota, opcional' },
+  },
+  {
+    name: 'proponer_mover_linea',
+    description: 'Propone MOVER una línea de presupuesto (sin movimientos) a otra quincena, p. ej. un pago que se recorre a la siguiente. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id de la línea, o usa line+period', line: 'nombre', period: 'quincena actual de la línea; default la actual', toPeriod: '"siguiente" o código "Q40", requerido' },
+  },
 ]
 
 function herramientaDePropuesta(tipo) {
@@ -1072,6 +1098,11 @@ const WRITE_TOOL_HANDLERS = {
   proponer_corte_liquidez: herramientaDePropuesta('liquidez.registrar'),
   proponer_editar_corte_liquidez: herramientaDePropuesta('liquidez.editar'),
   proponer_borrar_corte_liquidez: herramientaDePropuesta('liquidez.borrar'),
+  proponer_crear_linea: herramientaDePropuesta('presupuesto.crear'),
+  proponer_ajustar_linea: herramientaDePropuesta('presupuesto.ajustar'),
+  proponer_cancelar_linea: herramientaDePropuesta('presupuesto.cancelar'),
+  proponer_traspaso: herramientaDePropuesta('presupuesto.traspasar'),
+  proponer_mover_linea: herramientaDePropuesta('presupuesto.mover'),
 }
 
 // Registro directo de un gasto nuevo en formato claro (solo Telegram). Es la

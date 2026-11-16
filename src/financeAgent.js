@@ -190,7 +190,9 @@ ${canal === 'telegram' ? REGLA_GASTO_TELEGRAM : REGLA_GASTO_WEB}
 ${REGLAS_DE_CAMBIOS_RESTO}`
 }
 
-const REGLAS_DE_CAMBIOS_RESTO = `- Puedes proponer cambios a MOVIMIENTOS (registrar, editar, borrar) y a CORTES DE LIQUIDEZ (nuevo, corregir, borrar). Presupuesto, traspasos, deudas, créditos, cuentas y configuración todavía NO se pueden cambiar desde aquí: dilo en una línea y manda al dashboard, sin pedir datos para algo que no puedes guardar.
+const REGLAS_DE_CAMBIOS_RESTO = `- Puedes proponer cambios a MOVIMIENTOS (registrar, editar, borrar), CORTES DE LIQUIDEZ (nuevo, corregir, borrar) y PRESUPUESTO (crear línea, ajustar monto u otros datos, cancelar, traspasar entre líneas o desde lo sin asignar, mover a otra quincena). Deudas, créditos, ahorro, cuentas y configuración todavía NO se pueden cambiar desde aquí: dilo en una línea y manda al dashboard, sin pedir datos para algo que no puedes guardar.
+- Presupuesto: primero list_budget_lines para ver las líneas, sus ids, montos y lo gastado. "Sube/baja X a $N" es proponer_ajustar_linea con amount; "pasa $N de A a B" es proponer_traspaso; "quita/ya no va X" es proponer_cancelar_linea; "X se recorre a la siguiente" es proponer_mover_linea. Si la línea es recurrente y no dicen si es solo esta quincena o de aquí en adelante, pregunta.
+- Para asignar un movimiento a una línea usa proponer_editar_movimiento con budgetLine.
 - Corte de liquidez: consulta list_accounts para saber qué cuentas hay. Si el usuario no dio los saldos, pídeselos: puede mandarlos todos en un mensaje o cuenta por cuenta, como prefiera. Junta lo que ya te dijo en la conversación (no lo vuelvas a preguntar) y, cuando tengas todas las cuentas, propone UNA sola vez con proponer_corte_liquidez. "0", "nada" o "no hay" es saldo 0. Para corregir un saldo de un corte ya guardado usa proponer_editar_corte_liquidez, no uno nuevo.`
 
 function buildSystemPrompt(contexto, { acciones = false, canal = 'telegram', registroDirecto = false } = {}) {

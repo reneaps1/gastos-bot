@@ -1766,7 +1766,7 @@ app.listen(PORT, async () => {
   // clasificador de mensajes es siempre DeepSeek. Sin esta linea no habia forma
   // de saber desde el log si la llave de Claude habia quedado puesta.
   const claudeActivo = require('./claude').isEnabled()
-  console.log(`AI: agente=${claudeActivo ? `claude (${require('./claude').CLAUDE_MODEL})${ai.deepseekEnabled ? ' con respaldo deepseek' : ''}` : ai.deepseekEnabled ? 'deepseek (sin ANTHROPIC_API_KEY)' : 'APAGADO'} clasificador=${ai.deepseekEnabled ? 'deepseek' : 'apagado'}`)
+  console.log(`AI: agente=${claudeActivo ? `claude (${require('./claude').CLAUDE_MODEL})${ai.deepseekEnabled ? ' con respaldo deepseek' : ''}` : ai.deepseekEnabled ? `deepseek (${process.env.ANTHROPIC_API_KEY ? 'ANTHROPIC_API_KEY invalida, ver CLAUDE_LLAVE_INVALIDA' : 'sin ANTHROPIC_API_KEY'})` : 'APAGADO'} clasificador=${ai.deepseekEnabled ? 'deepseek' : 'apagado'}`)
 
   if (telegram.isEnabled()) {
     // Deja claro en el arranque cual de los dos servicios (gastos-bot /

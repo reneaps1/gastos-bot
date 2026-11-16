@@ -701,6 +701,15 @@ const TIPOS = {
   },
 }
 
+// ---- Presupuesto (Fase B) -----------------------------------------------------------
+//
+// Crear, ajustar, cancelar, traspasar y mover lineas: viven en su archivo y
+// reusan las utilidades de aqui.
+Object.assign(TIPOS, require('./miloAccionesPresupuesto').crearTiposPresupuesto({
+  prisma, dashboardApi, formatMXN, fechaCorta, dateOnly, parseMonto, parseId, normalize, parseFecha,
+  elegirPorNombre, resolverCategoria, mismaHuella,
+}))
+
 // ---- Proponer / confirmar / cancelar ------------------------------------------------
 
 async function proponer(tipo, args, ctx = {}) {
