@@ -298,6 +298,25 @@ const TIPOS = {
         linea = r.valor
       }
 
+      // Ahorro: aporte o retiro, y a que apartado (meta) va. Mismo criterio que
+      // la pantalla de Ahorro: la categoria Ahorro siempre lleva direccion.
+      let direccion = null
+      let apartado = null
+      if (categoria.tipo === 'Ahorro') {
+        const d = normalize(String(args.direction || 'aporte'))
+        if (['aporte', 'aportacion', 'deposito', 'ahorro', 'meter'].includes(d)) direccion = 'Aporte'
+        else if (['retiro', 'sacar', 'retirar'].includes(d)) direccion = 'Retiro'
+        else return { ok: false, error: 'direction debe ser aporte o retiro.' }
+        if (args.savingsBucket && !SIN_LINEA.has(normalize(args.savingsBucket))) {
+          const apartados = await prisma.apartado.findMany({ where: { activo: true }, orderBy: { id: 'asc' } })
+          const ra = elegirPorNombre(apartados, args.savingsBucket, 'apartado')
+          if (!ra.ok) return ra
+          apartado = ra.valor
+        }
+      } else if (args.savingsBucket || args.direction) {
+        return { ok: false, error: `direction y savingsBucket son solo para la categoría de Ahorro; ${categoria.nombre} es de ${categoria.tipo}.` }
+      }
+
       const estatus = args.status === 'Pendiente' ? 'Pendiente' : 'Pagado'
       const userId = usuario?.id ?? ctx.userId ?? null
       const payload = {
@@ -311,9 +330,10 @@ const TIPOS = {
         presupuestoId: linea?.id ?? null,
         estatus,
         userId,
+        ...(direccion ? { direccion, apartadoId: apartado?.id ?? null } : {}),
       }
       const renglones = [
-        `Registrar ${categoria.tipo === 'Gasto' ? 'gasto' : categoria.tipo === 'Ingreso' ? 'ingreso' : 'ahorro'}: ${descripcion} — ${formatMXN(monto)}`,
+        `Registrar ${categoria.tipo === 'Gasto' ? 'gasto' : categoria.tipo === 'Ingreso' ? 'ingreso' : direccion === 'Retiro' ? 'retiro de ahorro' : 'aporte a ahorro'}: ${descripcion} — ${formatMXN(monto)}`,
         `• Fecha: ${fechaCorta(fecha)} (${quincena.codigo})`,
         `• Categoría: ${categoria.nombre}`,
         `• Estatus: ${estatus}`,
@@ -321,6 +341,7 @@ const TIPOS = {
       if (metodoPago) renglones.push(`• Forma de pago: ${metodoPago.nombre}`)
       if (linea) renglones.push(`• Línea: ${linea.descripcion}`)
       if (usuario) renglones.push(`• Persona: ${usuario.nombre}`)
+      if (apartado) renglones.push(`• Apartado: ${apartado.nombre}`)
       return { ok: true, payload, resumen: renglones.join('\n') }
     },
 
@@ -714,6 +735,15 @@ Object.assign(TIPOS, require('./miloAccionesPresupuesto').crearTiposPresupuesto(
 // Cuentas, categorias, referencias de quincena, usuarios y formas de pago.
 Object.assign(TIPOS, require('./miloAccionesConfig').crearTiposConfig({
   prisma, dashboardApi, formatMXN, parseMonto, parseId, normalize, elegirPorNombre,
+}))
+
+// ---- Cierre de quincena (Fase B2) y Ahorro / Deudas / Creditos (Fase B3) -----------
+Object.assign(TIPOS, require('./miloAccionesCierre').crearTiposCierre({
+  prisma, dashboardApi, formatMXN, fechaCorta, parseMonto, parseId, normalize, parseFecha, elegirPorNombre,
+}))
+Object.assign(TIPOS, require('./miloAccionesAhorroDeudas').crearTiposAhorroDeudas({
+  prisma, dashboardApi, formatMXN, fechaCorta, dateOnly, parseMonto, parseId, normalize, parseFecha,
+  elegirPorNombre, resolverCategoria, quincenaParaFecha,
 }))
 
 // ---- Proponer / confirmar / cancelar ------------------------------------------------

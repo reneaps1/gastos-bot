@@ -1003,7 +1003,25 @@ const TOOL_DEFINITIONS = [
     description: 'Mapa general de qué datos existen en Milo. Solo para preguntas muy amplias.',
     args: {},
   },
+  {
+    name: 'get_closing_status',
+    description: 'Cierre de quincena: qué quincenas ya terminaron y siguen sin cerrar, y qué líneas de gasto necesitan una decisión (sin registrar, pendiente de pago o excedido), con lineId, monto y las opciones válidas para cada una.',
+    args: {},
+  },
 ]
+
+// Cierre de quincena (misma regla que el asistente de cierre del dashboard).
+async function getClosingStatus() {
+  const grupos = await require('./miloAccionesCierre').pendientesDeCierre(prisma)
+  if (!grupos.length) return { ok: true, pending: false, summary: 'No hay quincenas pendientes de cierre.', periods: [] }
+  return {
+    ok: true,
+    pending: true,
+    summary: `${grupos.length} quincena(s) por cerrar: ${grupos.map(g => `${g.period} (${g.lines.length} línea(s), ${formatMXN(g.total)})`).join(', ')}`,
+    periods: grupos.map(g => ({ ...g, lines: g.lines.map(({ motivo, ...l }) => l) })),
+    howTo: 'Resuelve cada línea con proponer_resolver_cierre usando una de sus options. Un excedido también se puede cubrir con proponer_traspaso.',
+  }
+}
 
 const TOOL_HANDLERS = {
   get_money_status: getMoneyStatus,
@@ -1021,6 +1039,7 @@ const TOOL_HANDLERS = {
   list_credits: listCredits,
   list_savings: listSavings,
   get_system_overview: getSystemOverview,
+  get_closing_status: getClosingStatus,
 }
 
 // ---- Proponer cambios (Telegram y web) ---------------------------------------
@@ -1032,7 +1051,7 @@ const WRITE_TOOL_DEFINITIONS = [
   {
     name: 'proponer_registrar_movimiento',
     description: 'Propone REGISTRAR un movimiento nuevo (gasto, ingreso o ahorro; el tipo sale de la categoría). Úsalo cuando pidan anotar algo que no tiene el formato "200 super", p. ej. "registra un ingreso de 5000 de nómina ayer". No se guarda hasta que el usuario toca Confirmar.',
-    args: { amount: 'monto, requerido', description: 'texto corto, requerido', category: 'nombre de la categoría, requerido (list_categories)', date: 'YYYY-MM-DD, hoy o ayer; default hoy', paymentMethod: 'opcional', status: 'Pagado (default) o Pendiente', budgetLine: 'nombre de la línea, opcional', user: 'persona, opcional (default quien escribe)' },
+    args: { amount: 'monto, requerido', description: 'texto corto, requerido', category: 'nombre de la categoría, requerido (list_categories)', date: 'YYYY-MM-DD, hoy o ayer; default hoy', paymentMethod: 'opcional', status: 'Pagado (default) o Pendiente', budgetLine: 'nombre de la línea, opcional', user: 'persona, opcional (default quien escribe)', direction: 'solo Ahorro: aporte (default) o retiro', savingsBucket: 'solo Ahorro: apartado (list_savings), opcional' },
   },
   {
     name: 'proponer_editar_movimiento',
@@ -1131,6 +1150,50 @@ const WRITE_TOOL_DEFINITIONS = [
     description: 'Propone CREAR una forma de pago (p. ej. "Tarjeta Nu"). No se crea hasta que el usuario toca Confirmar.',
     args: { name: 'nombre, requerido' },
   },
+  // ---- Cierre de quincena ----
+  {
+    name: 'proponer_resolver_cierre',
+    description: 'Propone RESOLVER una línea pendiente del cierre de quincena (consulta antes get_closing_status). action según el motivo: registrar_pagado (sin registrar: crea el pago y la marca cumplida), pagar_existente (pendiente de pago: marca pagado lo registrado), mover (a la quincena actual), cancelar (no aplicó), absorber (excedido: aceptar la variación). No se aplica hasta que el usuario toca Confirmar.',
+    args: { lineId: 'id de la línea (get_closing_status), o usa line+period', line: 'nombre', period: 'código de la quincena', action: 'registrar_pagado|pagar_existente|mover|cancelar|absorber, requerido', amount: 'solo registrar_pagado; default lo presupuestado', date: 'solo registrar_pagado; YYYY-MM-DD, default el fin de esa quincena', note: 'cancelar/absorber, opcional' },
+  },
+  // ---- Ahorro ----
+  {
+    name: 'proponer_crear_apartado',
+    description: 'Propone CREAR un apartado de ahorro (una meta: "Viaje", "Fondo de emergencia"). Para aportar o retirar usa proponer_registrar_movimiento con la categoría de Ahorro y savingsBucket. No se crea hasta que el usuario toca Confirmar.',
+    args: { name: 'nombre, requerido', goal: 'meta en pesos, opcional' },
+  },
+  {
+    name: 'proponer_editar_apartado',
+    description: 'Propone CAMBIAR un apartado de ahorro: nombre, meta, o activarlo/desactivarlo. No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id (list_savings) o usa name', name: 'nombre actual', newName: 'opcional', goal: 'monto o "ninguna", opcional', active: 'true|false, opcional' },
+  },
+  // ---- Deudas ----
+  {
+    name: 'proponer_crear_deuda',
+    description: 'Propone REGISTRAR una deuda (a quién y cuánto). Un abono a la deuda es un movimiento: proponer_registrar_movimiento. No se crea hasta que el usuario toca Confirmar.',
+    args: { creditor: 'a quién se le debe, requerido', amount: 'monto, requerido', monthlyPayment: 'abono mensual, opcional', startDate: 'YYYY-MM-DD, opcional', notes: 'opcional' },
+  },
+  {
+    name: 'proponer_editar_deuda',
+    description: 'Propone CAMBIAR una deuda: acreedor, monto, abono mensual, notas, o marcarla liquidada (active=false; no se borra). No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id (list_debts) o usa name con el acreedor', name: 'acreedor actual', newCreditor: 'opcional', amount: 'opcional', monthlyPayment: 'monto o "ninguno", opcional', notes: 'opcional', active: 'true|false, opcional' },
+  },
+  // ---- Creditos ----
+  {
+    name: 'proponer_crear_credito',
+    description: 'Propone DAR DE ALTA un crédito: tarjeta, crédito de tienda, préstamo, MSI, línea de crédito o informal. No se crea hasta que el usuario toca Confirmar.',
+    args: { name: 'nombre (p. ej. "Tarjeta Nu"), requerido', creditor: 'banco o acreedor; default el nombre', type: 'Tarjeta|CreditoTienda|Prestamo|MSI|LineaCredito|Informal|Otro', limit: 'límite, opcional', fixedPayment: 'pago fijo, opcional', cutDay: 'día de corte 1-31, opcional', payDay: 'día de pago 1-31, opcional', payAccount: 'cuenta con la que se paga, opcional', notes: 'opcional' },
+  },
+  {
+    name: 'proponer_editar_credito',
+    description: 'Propone CAMBIAR un crédito: nombre, límite, pago fijo, días de corte/pago, o archivarlo (active=false; sus pagos se conservan). No se aplica hasta que el usuario toca Confirmar.',
+    args: { id: 'id (list_credits) o usa name', name: 'nombre actual', newName: 'opcional', limit: 'opcional', fixedPayment: 'opcional', cutDay: 'opcional', payDay: 'opcional', active: 'true|false, opcional' },
+  },
+  {
+    name: 'proponer_compra_a_meses',
+    description: 'Propone registrar una COMPRA con un crédito, a uno o varios meses: queda Pendiente y se crea un pago por mes en su quincena. El resumen muestra los pagos. Si el crédito no tiene día de pago, pregunta la fecha del primer pago. No se registra hasta que el usuario toca Confirmar.',
+    args: { credit: 'nombre del crédito, o creditId', creditId: 'id (list_credits)', amount: 'monto total, requerido', description: 'qué se compró, requerido', category: 'categoría, requerido', installments: 'meses, default 1', date: 'fecha de compra, default hoy', firstPaymentDate: 'YYYY-MM-DD del primer pago; default el día de pago del mes siguiente' },
+  },
 ]
 
 function herramientaDePropuesta(tipo) {
@@ -1158,6 +1221,14 @@ const WRITE_TOOL_HANDLERS = {
   proponer_crear_usuario: herramientaDePropuesta('usuario.crear'),
   proponer_editar_usuario: herramientaDePropuesta('usuario.editar'),
   proponer_crear_forma_pago: herramientaDePropuesta('metodo_pago.crear'),
+  proponer_resolver_cierre: herramientaDePropuesta('cierre.resolver'),
+  proponer_crear_apartado: herramientaDePropuesta('apartado.crear'),
+  proponer_editar_apartado: herramientaDePropuesta('apartado.editar'),
+  proponer_crear_deuda: herramientaDePropuesta('deuda.crear'),
+  proponer_editar_deuda: herramientaDePropuesta('deuda.editar'),
+  proponer_crear_credito: herramientaDePropuesta('credito.crear'),
+  proponer_editar_credito: herramientaDePropuesta('credito.editar'),
+  proponer_compra_a_meses: herramientaDePropuesta('credito.compra'),
 }
 
 // Registro directo de un gasto nuevo en formato claro (solo Telegram). Es la
